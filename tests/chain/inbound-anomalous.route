@@ -715,19 +715,19 @@ map c1a1 next c1a1a
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1724 timeout=40
   @face 60 left
   3
-  @align s40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=1668 hi=1684 timeout=100
+  # the opening of pane *67 spans x 1648..1700 and the player is 32 wide: x 1684 touches the post and the crouched player cannot pass (retail walks through at 1675 and 1742)
+  @hold s38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1666 timeout=60
+  20
+  @hold s-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1680 timeout=60
+  20
+  @hold s38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1666 timeout=60
+  20
   @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=1870 hi=1882 timeout=100
   @checkpoint c1a1-window
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
-  4 attack duck
-  12 duck
-  4 attack duck
-  12 duck
-  4 attack duck
-  12 duck
-  4 attack duck
-  12 duck
+  # swing the crowbar into the pane until it gives way: the player's y passes the pane (1882) only then
+  @hold f60 attack duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1890 timeout=200
   @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1960 timeout=80
   @checkpoint c1a1-window-crossed
   @probe
@@ -1177,13 +1177,26 @@ map c1a1f next c1a1b
   @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=218 timeout=40
   @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=190 hi=202 timeout=100
   @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-850 timeout=60
-  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=-872 hi=-862 timeout=100
-  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=184 hi=190 timeout=100
-  @hold f38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-888 timeout=60
+  # the nudges swing the crowbar: a headcrab (prop 7) hunting the player stands on the east side of the ledge on some builds and body-blocks f38
+  # continuous holds, not one-tick align nudges (a one-tick f40 or s40 nudge moves the player by zero or a few units depending on the build's tick phase)
+  @hold s-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=182 timeout=60
+  @hold s38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=196 timeout=60
+  @hold s-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=182 timeout=60
+  @hold f38 attack until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-888 timeout=60
   20
   @hold f-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-878 timeout=60
-  20
-  @hold f38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-888 timeout=60
+  # a headcrab can be standing on the east side by now: sweep the crowbar +-20 degrees with the view tipped down (the crab is below the trace of a level swing; a fixed pattern, harmless when nothing is there), then face east again
+  4 l-127
+  4 attack t-60
+  8 attack t60
+  8 attack t-60
+  8 attack t60
+  4 attack t-60
+  @hold l127 until sym=LOGIC_PLAYER_PITCH size=2 signed=true op=ge value=-8 timeout=20
+  @hold l-127 until sym=LOGIC_PLAYER_PITCH size=2 signed=true op=le value=8 timeout=20
+  @face 1018 right
+  10
+  @hold f38 attack until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-888 timeout=60
   20
   @checkpoint c1a1f-pre-jump
   @probe
@@ -1191,9 +1204,11 @@ map c1a1f next c1a1b
   20
   @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=178 timeout=30
   10
-  1 s127 jump
-  4 s127
-  14 s127 duck
+  # closed loop: jump until the feet leave the ground, strafe until the origin has risen 36 over the
+  # 49.5 high ledge (about the apex), then duck; no tick count decides the apex
+  @hold s127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=4 op=ge value=-168 timeout=20
+  @hold s127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-8 timeout=40
   @hold s127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-40 timeout=60
   @hold s127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-75 timeout=60
   @checkpoint c1a1f-walkway
@@ -1289,7 +1304,10 @@ map c1a1f next c1a1b
   # the exit room holds the dead guard's pistol (weapon_glock -256,-984): walk over it (autopickup), then back to the corridor line
   @checkpoint c1a1f-pre-glock
   @probe
-  @hold f60 s-90 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-990 timeout=60
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-262 timeout=40
+  @hold f-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-250 timeout=40
+  10
+  @hold s-90 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-996 timeout=60
   @checkpoint c1a1f-glock
   @probe
   @assert sym=LOGIC_PLAYER_CLIP_AMMO size=2 op=ge value=1
@@ -1313,12 +1331,16 @@ map c1a1f next c1a1b
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1060 timeout=40
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-90 timeout=40
   10
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1085 timeout=60
+  # the hole is y -1084..-1072 for the hull origin and the PS1 clip edge sits a unit or two inside it: aim for the middle (-1082..-1074), not the 12 wide band
+  @hold s-45 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1082 timeout=60
   8
-  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1073 timeout=60
+  @hold s45 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1074 timeout=60
   8
-  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1085 timeout=60
+  @hold s-45 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1082 timeout=60
   8
+  @checkpoint c1a1f-pre-crawl
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
   @hold f127 duck until sym=WORLD_ARENA offset=4 size=4 op=eq value=8133 timeout=240
 
 
