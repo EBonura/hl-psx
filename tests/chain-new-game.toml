@@ -13,6 +13,7 @@ max_ticks = 260000
 BEAM_RAND_END = 0x801c6ec8
 ENT_CACHE = 0x801eb9a4
 ENT_PHASE = 0x801ee6a4
+LOGIC_PLAYER_CLIP_AMMO = 0x800ca6f0
 LOGIC_PLAYER_HEALTH = 0x800ca2a4
 LOGIC_PLAYER_POS = 0x801d3698
 LOGIC_PLAYER_SUIT = 0x801d45b4
@@ -8142,6 +8143,110 @@ rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-324 }
 timeout = 270
+
+[[step]]
+checkpoint = "c1a1f-pre-glock"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+
+[[step]]
+lstick = [38, 68]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-990 }
+timeout = 360
+
+[[step]]
+checkpoint = "c1a1f-glock"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_CLIP_AMMO"
+size=2
+op="ge"
+value=1
+
+[[step]]
+lstick = [218, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1070 }
+timeout = 360
 
 [[step]]
 lstick = [58, 128]

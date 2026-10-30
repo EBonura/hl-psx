@@ -1286,6 +1286,14 @@ map c1a1f next c1a1b
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1100 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1072 timeout=40
   @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-324 timeout=45
+  # the exit room holds the dead guard's pistol (weapon_glock -256,-984): walk over it (autopickup), then back to the corridor line
+  @checkpoint c1a1f-pre-glock
+  @probe
+  @hold f60 s-90 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-990 timeout=60
+  @checkpoint c1a1f-glock
+  @probe
+  @assert sym=LOGIC_PLAYER_CLIP_AMMO size=2 op=ge value=1
+  @hold s90 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1070 timeout=60
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1112 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1056 timeout=40
   @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-281 timeout=45
