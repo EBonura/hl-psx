@@ -1216,7 +1216,10 @@ const PROP_LINK_MATCH_Y_EPS: i32 = 96;
 const PROP_GROUND_PROBE_UP: i32 = 24;
 const PROP_GROUND_PROBE_DOWN: i32 = 160;
 const PROP_SPAWN_DROP_DOWN: i32 = 256; // engine pfnDropToFloor endpoint
-const HEADCRAB_SPEED: i32 = 2;
+// A headcrab covers 5.02 units per 0.1 s think on the reference runtime (measured on c1a1f's
+// crab, 2.51 a tick). A walker steps every other tick with twice this, 6 here, and the per-axis
+// truncation of the step nets 5 to 6; 2 netted only 3 (60%).
+const HEADCRAB_SPEED: i32 = 3;
 const HEADCRAB_WAKE_RANGE2: i32 = 700 * 700;
 const HEADCRAB_STOP_RANGE: i32 = 34;
 const HEADCRAB_LEAP_RANGE2: i32 = 256 * 256;
