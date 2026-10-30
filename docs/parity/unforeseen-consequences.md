@@ -195,14 +195,14 @@ Findings from a first walk (evidence kind: emulator replay from the arrival, Xas
   | number | retail | PS1 |
   |---|---|---|
   | walk speed | 3.6 u/tick (325 units in 91 ticks) | about 4 u/tick |
-  | attack starts at | about 62 units from the player | about 62 units observed (its claw trigger is 83) |
-  | claw lands | both-claw `attack` (seq 9) 11 ticks after the start, 40 damage; one-claw (seq 8) 15 ticks, 20 damage | 8 ticks after the start, always one 20 damage claw |
-  | attack animation / next attack | 28 to 52 ticks, next attack 40 to 60 ticks after the start | 21 ticks locked, cooldown 35 |
+  | attack starts at | about 62 units from the player | 64 units (`tick_zombie`), observed about 62 |
+  | claw lands | both-claw `attack` (seq 9) 11 ticks after the start, 40 damage; one-claw (seq 8) 15 and 27 ticks, 20 damage each | the same: heavy swing at 11, double at 15 and 27, counted from the first tick the attack state shows on both sides (the PS1 zombie had them at 7 and 13 and 25, 2 to 4 ticks off; measured on the chain's c1a1a arrival walked to the retail measurement's standing point, fixed in `species.rs`) |
+  | attack animation / next attack | 28 to 52 ticks, next attack 40 to 60 ticks after the start | heavy bout 40 ticks, double bout 52, the next attack starts when the bout ends (80% double, 20% heavy) |
   | player dead after first contact (standing, no weapon) | 118 ticks | not measured standing |
   | crowbar reach to an actor's centre | 32 line + 16 swept head hull + 16 actor half-extent = 64 | 48 (fixed on branch fix/hl-crowbar-reach-2026-10-29: 48 + 16 hull = 64) |
   | crowbar damage | 10 first swing, 5 on a quick second (CCrowbar::Swing) | same |
 
-  The zombie stops at 62 and claws from there, so a retail player standing still hits it (reach 64) while the PS1 player could not (48): a port bug, fixed in the reach. The claw timing, the both-claw variant and the attack cadence still differ from retail (open); they make the PS1 zombie slightly easier, not harder. A crowbar-only walk with 35 HP still loses to two zombies on both sides; the retail player arrives with more health.
+  The zombie stops at 62 and claws from there, so a retail player standing still hits it (reach 64) while the PS1 player could not (48): a port bug, fixed in the reach. The claw ticks and bout lengths were 3 to 5 ticks early in `species::tick_zombie` (an earlier note here blamed the headcrab's 21-tick bite schedule, which the zombie does not use: zombies are dispatched to `tick_zombie`); they now follow the reference runtime. What stays open: the 80/20 split between the two swings is the model's, not measured on the oracle. A crowbar-only walk with 35 HP still loses to two zombies on both sides; the retail player arrives with more health.
 
 Static entity contract (`hl-census map c1a1a`, current main):
 

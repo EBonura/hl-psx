@@ -38,6 +38,9 @@ map t0a0 next t0a0a
   @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-640 timeout=100
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-100 timeout=300
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-640 timeout=100
+  # The full-stick leg slides on by a build-dependent 20 to 60 units, and the gap in the wall ahead (y -96 to -56) starts at x -676:
+  # settle inside it. Facing north, strafe right raises x.
+  @align s40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=-668 hi=-640 timeout=100
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=600 timeout=600
   @checkpoint catwalk-end
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-790 value_hi=-700
@@ -62,6 +65,11 @@ map t0a0 next t0a0a
   # The jump course: west to x 492, then north along the corridor. Three ridges (y 1168, 1424, 1680) are jumped from 46 units before
   # each; the shallow pits between them cost nothing.
   @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=492 timeout=200
+  # The yaw cannot be set closer than about 30 units to 1024, and every unit of error drifts the run 2 to 3 units sideways over the
+  # 1200 units of corridor (the door td4 at its end is narrow): square up, then centre in the corridor after the leg that slides on
+  # and again after the last ridge (a stop between ridges costs the run-up the jumps need).
+  @face 960 right
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=480 hi=504 timeout=100
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1100 timeout=400
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1122 timeout=200
   2 s-127 jump
@@ -72,12 +80,15 @@ map t0a0 next t0a0a
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1634 timeout=200
   2 s-127 jump
   12 s-127
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=476 hi=506 timeout=100
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1990 timeout=400
   @checkpoint jump-course-done
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=1985 value_hi=2030
   # Door td4 has opened on the trigger at y 1870. The duck course runs east along y 2200: walk to x 1120, then crouch (Triangle)
   # through the wells and low tunnels to x 1770, stand, and walk through door td5 (trigger at x 1868).
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2150 timeout=400
+  # The run east along the duck course needs a heading at or past 1024 (a yaw under it steers the player into the +y wall).
+  @face 1024 right
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=900 timeout=300
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1120 timeout=200
   @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1770 timeout=600

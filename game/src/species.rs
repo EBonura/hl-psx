@@ -579,8 +579,11 @@ pub(crate) unsafe fn take_knock() -> [i32; 3] {
 }
 
 /// monster_zombie: wakes on what it sees within 60 degrees of its facing,
-/// walks to 64 units, and claws: 80% two 20-damage hits at +12 and +24 ticks of
-/// a 52-tick bout, else one 40 at +6 of a 32-tick bout (Medium).
+/// walks to 64 units, and claws: 80% two 20-damage hits at +15 and +27 ticks of
+/// a 52-tick bout, else one 40 at +11 of a 40-tick bout (Medium). The claw ticks are
+/// the reference runtime's (one-claw swing at +15 and +27 ticks after the attack state
+/// shows, both-arms swing at +11) and the bouts are its attack-to-attack spacing of 40 to 60 ticks.
+/// `done` counts the ticks after the one that set the bout, so a claw at +N is `done == N - 1`.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn tick_zombie(
@@ -606,11 +609,11 @@ unsafe fn tick_zombie(
         PROP_YAW[pi] = yaw_before;
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = t - 1;
-        let done = if t & 64 != 0 { 32 - left } else { 52 - left };
+        let done = if t & 64 != 0 { 40 - left } else { 52 - left };
         let hit = if t & 64 != 0 {
-            done == 6
+            done == 10
         } else {
-            done == 12 || done == 24
+            done == 14 || done == 26
         };
         // CheckTraceHullAttack(70): a 32-wide hull swept 70 units straight ahead; the target's
         // centre is reached within 70 + 16 in front and 16 + 16 to the side.
@@ -631,7 +634,7 @@ unsafe fn tick_zombie(
                 let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
                 let side = if t & 64 != 0 {
                     0
-                } else if done == 12 {
+                } else if done == 14 {
                     -5
                 } else {
                     5
@@ -643,7 +646,7 @@ unsafe fn tick_zombie(
             // the lone heavy one) adds the zombie's roar.
             if setpiece_sfx::has(SP::ZO_CLAW) {
                 cue(SP::ZO_CLAW, pos);
-                if t & 64 != 0 || done == 24 {
+                if t & 64 != 0 || done == 26 {
                     sfx::play_world(sfx::ZO_ATTACK, pos);
                 }
             } else {
@@ -656,7 +659,7 @@ unsafe fn tick_zombie(
     } else if d2 <= 64 * 64 && visible {
         let heavy = impact_rng().below(5) == 0;
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        PROP_AI_TIMER[pi] = if heavy { 64 | 32 } else { 52 };
+        PROP_AI_TIMER[pi] = if heavy { 64 | 40 } else { 52 };
     } else {
         PROP_STATE[pi] = PROP_STATE_MOVE;
         prop_move_towards_point(m, movers, pi, aim, 4);

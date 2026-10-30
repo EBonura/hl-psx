@@ -59,6 +59,9 @@ build's tick alignment: leave such a volume with `@align ... settle=60` and neve
 end position matters. A route is robust when every stop that a later leg depends on is read from RAM (`@align`,
 `@face`, `@hold until`) and none counts ticks; `chain-new-game` is kept green on both the intro and the no-intro
 disc, so check both after a route edit.
+Time spent in the c1a1 pipe channel costs health: the headcrab dropped by the broken pipe walks after the player and
+bites for 10 (a route that settles there for a few seconds dies, one that moves through arrives with 35 of 45). Keep the
+legs between the pipe trigger (x 794) and the labs1 door short and do not idle there.
 
 `hlroute verify ROUTE REPO JOURNEY.toml --map ...` compiles the route into a scratch directory and compares the
 journey and every tape with the committed ones. Run it after any route or compiler edit: a journey that no longer

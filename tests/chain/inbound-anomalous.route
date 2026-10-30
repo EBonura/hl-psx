@@ -157,7 +157,7 @@ map c1a0a next c1a0b
   6
   5 s-127
   5
-  4 l-127
+  7 l-127
   3 use
   4 l127
   100
@@ -531,11 +531,14 @@ map c1a0c next c1a1
   # A full-stick hold leaves the player sliding for about 50 units after the stick is released, so the
   # position read at the end of the hold is not where he stops (and the scientist's use cone is only
   # 45 degrees). Settle, then close the last stretch with a slow approach and settle again.
+  # The strafe leg slid 20 to 30 units past y 80 on this build and the scientist's spot is not free at y 52: settle in the
+  # scanner's lane first (facing +x, strafe right lowers y).
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=68 hi=78 timeout=100
   @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=152 hi=168 timeout=120
   @checkpoint console-room
   @probe
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=150 value_hi=170
-  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=66 value_hi=80
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=66 value_hi=96
   650
   @face 2050 right
   3 use
@@ -583,6 +586,10 @@ map c1a0c next c1a1
   # until it has gone, so no fixed wait depends on the beam timing.
   # Centre on the doorway of the control-room door (opening x 908..936 once its breakables are gone) before leaning on it.
   @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=912 hi=930 timeout=120
+  # The align above leaves the player 50 or more units short of the door in y on some builds and the strafe in from there drifts
+  # 20 units sideways onto the doorframe (the opening is 28 wide): square up in front of the door first.
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=796 hi=812 timeout=100
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=916 hi=930 timeout=100
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=938 timeout=6000
   1 s127
   5
@@ -645,11 +652,13 @@ map c1a1 next c1a1a
   @hold f-127 s-5 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=428 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=916 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=972 timeout=40
-  @hold f-125 s23 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=130 timeout=77
+  @hold f-125 s23 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=190 timeout=77
   # The floor from x 76 to 720 and y 900 to 1096 is a func_friction volume: the full-stick leg above slides 15 to 60 units
-  # depending on the build's tick alignment, and past x 72 the notch wall at y 908 pins the player. Settle, then walk back into
-  # the channel with a slow closed-loop nudge (facing +x).
-  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=96 hi=124 timeout=100 settle=60
+  # depending on the build's tick alignment, and past x 72 the notch wall at y 908 pins the player, so it stops 60 short of the
+  # channel and a slow dead-band pair brings x into it. No settling here: the headcrab dropped by the broken pipe walks after
+  # the player at about 30 units a second and bites for 10, so every second spent in the channel costs health.
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=100 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=130 timeout=40
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=874 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=902 timeout=40
   @hold f-61 s-111 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=907 timeout=44
@@ -666,8 +675,10 @@ map c1a1 next c1a1a
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=124 timeout=40
   @hold f111 s-62 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=150 timeout=49
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1032 timeout=40
-  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=1088 timeout=40
-  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=188 hi=206 timeout=100
+  # Line up on the doorway's x before the labs1 trigger (y 1080 to 1088): the door only opens while the player touches that
+  # volume, so settling inside it for a build-dependent time can leave the door shut when the strafe starts.
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=1062 timeout=40
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=190 hi=206 timeout=100 settle=10
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1250 timeout=100
   @checkpoint c1a1-north-corridor
   @probe
