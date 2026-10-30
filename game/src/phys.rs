@@ -753,6 +753,27 @@ fn mover_local(mv: &Mover, p: [i32; 3]) -> [i32; 3] {
     }
 }
 
+/// Where a point carried by mover `mv` lands when the mover turns from the pose
+/// (`rc0`, `rs0`) to its present one: the origin rotation of GoldSrc's
+/// SV_PushRotate about the pusher's pivot, expressed as the displacement to add.
+/// It uses the collision transform itself, so a point the turned hull now
+/// overlaps is moved along the same arc the hull travelled.
+#[optimize(size)]
+#[inline(never)]
+pub fn mover_turn_delta(mv: &Mover, rc0: i32, rs0: i32, p: [i32; 3]) -> [i32; 3] {
+    let was = Mover {
+        rc: rc0,
+        rs: rs0,
+        ..*mv
+    };
+    let w = mover_world_vector(mv, mover_local(&was, p));
+    [
+        mv.off[0] + w[0] - p[0],
+        mv.off[1] + w[1] - p[1],
+        mv.off[2] + w[2] - p[2],
+    ]
+}
+
 #[optimize(size)]
 /// Convert a world impact point and normal into the same entity-local space
 /// used by the mover's hull-0 trace. This is a cold crowbar/material lookup,

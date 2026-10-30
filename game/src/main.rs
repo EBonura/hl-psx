@@ -4085,6 +4085,13 @@ static mut LOGIC_PLAYER_YAW: u16 = 0;
 static mut LOGIC_ACTIVATOR: u8 = 0;
 // Rotating doors currently swinging opposite to their authored direction.
 static mut ROT_DOOR_REVERSED: [u8; MAX_ENTS.div_ceil(8)] = [0; MAX_ENTS.div_ceil(8)];
+// Phase + 1 each swinging brush (func_door_rotating, func_rot_button) held
+// when the push pass last saw it; 0 = not seen yet. The pass rebuilds last
+// tick's pose from it, which SV_PushRotate needs and the mover table (current
+// pose only) cannot give. The name is chosen to link after every other game
+// static: nothing that is already placed moves, so the committed I-cache
+// layout keeps binding to the code around it.
+static mut TURN_PREV: [i16; MAX_ENTS] = [0; MAX_ENTS];
 static mut LOGIC_TRAM_POS: [i32; 3] = [0; 3];
 // GoldSrc faces a func_tracktrain backwards (yaw = travel + 180), so this is
 // the reverse of its last motion, as (x, z) in runtime axes.
@@ -7425,6 +7432,25 @@ fn fan_rotation(e: map::Ent, angle_q12: u16) -> Mat3I16 {
     }
 }
 
+/// Mover pose (`rc`, `rs`) of a func_door_rotating / func_rot_button at `phase`:
+/// what the per-tick mover table in `play` stores for such a brush, evaluated
+/// at last tick's phase by the push pass. Keep the two in step.
+#[inline(never)]
+#[optimize(size)]
+fn rot_door_pose(e: map::Ent, phase: i32) -> (i32, i32) {
+    let ang = (((phase * e.mv[0]) >> 12) as u16) & 0x0fff;
+    if e.mv[2] as u32 & 0x00ff_ffff != 0 {
+        (phys::MOVER_FULL_ROTATION, axial_brush_angles_q8(e, ang) as i32)
+    } else {
+        let rm = axial_brush_rotation(e, ang);
+        match e.mv[1] {
+            1 => (rm.m[1][1] as i32, rm.m[2][1] as i32),
+            2 => (rm.m[0][0] as i32, rm.m[1][0] as i32),
+            _ => (rm.m[0][0] as i32, rm.m[0][2] as i32),
+        }
+    }
+}
+
 /// `func_door_rotating` uses the same compact physical-axis encoding as fans
 /// and pendulums. The cooker has already conjugated GoldSrc's axial angle
 /// through the HL Z-up -> PS1 Y-up reflection, so this is a direct matrix
@@ -8303,6 +8329,24 @@ unsafe fn carry_player_on_brush_mover(
     // alongside `ei` finds each moved brush's mover without a scan per brush.
     let mut slot = 0usize;
     while ei < nents {
+        let ek = ENT_CACHE[ei].kind;
+        if ek == 7 || ek == ENT_KIND_ROT_BUTTON {
+            // SV_PushRotate: a swinging brush keeps its origin, so the
+            // translation test below never sees it move. Its phase says.
+            let phase = ENT_PHASE[ei];
+            let was = TURN_PREV[ei] as i32 - 1;
+            TURN_PREV[ei] = (phase + 1) as i16;
+            if was >= 0 && was != phase {
+                while slot < movers.len() && movers[slot].id < ei as i32 {
+                    slot += 1;
+                }
+                if slot < movers.len() && movers[slot].id == ei as i32 && movers[slot].h1() > 0 {
+                    push_from_rotation(m, player, movers, slot, ei, was);
+                    // A blocked door moved back: store where it ends up.
+                    TURN_PREV[ei] = (ENT_PHASE[ei] + 1) as i16;
+                }
+            }
+        }
         let now_off = ent_draw_offset(ei);
         let prev = ent_prev_off(ei);
         // An unmoved brush stores back what it already holds: skip it.
@@ -8335,7 +8379,7 @@ unsafe fn carry_player_on_brush_mover(
                 {
                     mover_blocked(m, ei, usize::MAX);
                 }
-                push_actors_from_mover(m, mv, movers, ei, d);
+                push_actors_from_mover(m, mv, movers, ei, d, None);
             }
             // A blocked door reverses, so store where it ends up.
             ent_prev_off_store(ei, ent_draw_offset(ei));
@@ -8344,6 +8388,47 @@ unsafe fn carry_player_on_brush_mover(
         }
         ei += 1;
     }
+}
+
+/// SV_PushRotate for a swinging brush whose phase went from `was` to its
+/// present value: the player and every actor the turned hull now overlaps are
+/// carried along their arc about the pivot, or the brush is blocked (crush
+/// damage, a door backs off or holds). A player standing on it rides it.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn push_from_rotation(
+    m: &Map,
+    player: &mut phys::Player,
+    movers: &[phys::Mover],
+    slot: usize,
+    ei: usize,
+    was: i32,
+) {
+    // A phase that jumped further than the door can travel in one tick was
+    // set, not driven (a map that just loaded keeps the previous map's table):
+    // nothing was swept, so nothing is pushed.
+    let li = ENT_BRUSH_LOGIC[ei] as usize;
+    if li >= m.n_logic.min(MAX_LOGIC)
+        || (ENT_PHASE[ei] - was).abs() > logic_phase_step(m.logic(li), ei) + 1
+    {
+        return;
+    }
+    let mv = &movers[slot];
+    let (rc0, rs0) = rot_door_pose(ENT_CACHE[ei], was);
+    let d = phys::mover_turn_delta(mv, rc0, rs0, player.pos);
+    if ei as i16 == player.ground_mover {
+        let to = [
+            player.pos[0] + d[0],
+            player.pos[1] + d[1],
+            player.pos[2] + d[2],
+        ];
+        player.set_carried_position(m, movers, ei as i32, to);
+    } else if phys::mover_may_hold(mv, player.pos)
+        && !player.push_by_mover(m, movers, ei as i32, d)
+    {
+        mover_blocked(m, ei, usize::MAX);
+    }
+    push_actors_from_mover(m, mv, movers, ei, [0; 3], Some((rc0, rs0)));
 }
 
 /// SV_PushMove skips an entity whose movetype is MOVETYPE_NONE: a pusher
@@ -8365,6 +8450,7 @@ unsafe fn push_actors_from_mover(
     movers: &[phys::Mover],
     ei: usize,
     d: [i32; 3],
+    turned_from: Option<(i32, i32)>,
 ) {
     let mut pi = 0usize;
     while pi < PROP_COUNT.min(CARRY_MAILBOX_FIRST) {
@@ -8376,6 +8462,11 @@ unsafe fn push_actors_from_mover(
             && phys::mover_may_hold(mover, c)
             && !phys::mover_hull_clear(m, mover, c, m.hull1_head)
         {
+            // A turning pusher carries each actor along its own arc.
+            let d = match turned_from {
+                Some((rc0, rs0)) => phys::mover_turn_delta(mover, rc0, rs0, c),
+                None => d,
+            };
             let moved = [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
             if phys::standing_fits(m, moved)
                 && phys::movers_clear_at_hull(m, movers, moved, m.hull1_head)
