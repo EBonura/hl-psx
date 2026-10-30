@@ -1068,10 +1068,256 @@ map c1a1a next c1a1f
   @hold f127 until sym=WORLD_ARENA offset=4 size=4 op=eq value=7362 timeout=1500
 
 
-map c1a1f next c1a1g
+map c1a1f next c1a1b
+  # c1a1f, the way found from the BSP hulls and the retail oracle (static world, no scripted help): the arrival hall's outer ring to the
+  # east room, a crouch crawl through the vent hole in the inner room's east wall (x -304..-272, y 498..530), the wall charger on the
+  # inner room's north wall, a crouch jump onto the 49 high ramp base at (-868,176), a crouched walk over the walkway (x -910..-850,
+  # ceiling 46 above the floor), a drop into the crab room, the long south corridor past the diagonal slab and a second crouch crawl
+  # through the hole at y -1084..-1072 into the exit alcove.
   @checkpoint arrive-c1a1f
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-1385 value_hi=-1340
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=300 value_hi=340
+  10
+  @face 1018 left
+  10
+  @hold f123 s-33 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1347 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=292 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=348 timeout=40
+  @hold f123 s-33 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1302 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=304 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=360 timeout=40
+  @hold f123 s-33 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1257 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=330 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=358 timeout=40
+  @hold f123 s-33 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1212 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=342 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=370 timeout=40
+  @hold f123 s-33 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1168 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=340 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=396 timeout=40
+  @hold f43 s-120 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=677 timeout=82
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1070 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-1014 timeout=40
+  @hold f87 s-92 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=751 timeout=52
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1002 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-946 timeout=40
+  @hold f123 s-32 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-908 timeout=50
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=752 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=808 timeout=40
+  @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-364 timeout=108
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=748 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=804 timeout=40
+  @hold f118 s48 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-309 timeout=47
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=726 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=782 timeout=40
+  @hold f81 s98 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=736 timeout=44
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-303 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-247 timeout=40
+  @hold f81 s98 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=709 timeout=44
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-267 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-239 timeout=40
+  @hold f81 s98 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=681 timeout=44
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-258 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-202 timeout=40
+  @hold f11 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=640 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-240 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-212 timeout=40
+  @hold f11 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=596 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-250 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-194 timeout=40
+  @hold f11 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=552 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-246 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-190 timeout=40
+  @hold f11 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=518 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-226 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-202 timeout=40
+  @checkpoint c1a1f-east-room
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=508 hi=520 timeout=100
+  @hold f-127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-350 timeout=90
+  @checkpoint c1a1f-vent-crawled
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  20
+  @hold f-109 s-65 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-402 timeout=48
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=536 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=560 timeout=40
+  20
+  @hold f38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-444 timeout=60
+  20
+  @hold f-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-432 timeout=60
+  20
+  @hold s38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=584 timeout=60
+  20
+  @hold s-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=572 timeout=60
+  20
+  @checkpoint c1a1f-at-charger
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @face 70 left
+  10
+  90 use
+  @checkpoint c1a1f-charged
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @face 958 right
+  10
+  @hold f-51 s116 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=558 timeout=44
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-478 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-450 timeout=40
+  @hold f-51 s116 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=523 timeout=44
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-508 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-452 timeout=40
+  @hold f-101 s77 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-702 timeout=79
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=308 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=332 timeout=40
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=218 timeout=40
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=190 hi=202 timeout=100
+  @hold f-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-850 timeout=60
+  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=-872 hi=-862 timeout=100
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=184 hi=190 timeout=100
+  @hold f38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-888 timeout=60
+  20
+  @hold f-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-878 timeout=60
+  20
+  @hold f38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-888 timeout=60
+  20
+  @checkpoint c1a1f-pre-jump
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  20
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=178 timeout=30
+  10
+  1 s127 jump
+  4 s127
+  14 s127 duck
+  @hold s127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-40 timeout=60
+  @hold s127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-75 timeout=60
+  @checkpoint c1a1f-walkway
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  30
+  @hold f105 s71 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-847 timeout=44
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-160 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-132 timeout=40
+  @hold f105 s71 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-821 timeout=44
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-178 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-150 timeout=40
+  @hold f105 s71 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-794 timeout=44
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-210 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-154 timeout=40
+  @hold f126 s14 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-753 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-215 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-159 timeout=40
+  @hold f126 s14 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-711 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-205 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-177 timeout=40
+  @hold f126 s14 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-668 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-224 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-168 timeout=40
+  @hold f88 s91 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-295 timeout=58
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-580 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-524 timeout=40
+  @hold f26 s124 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-336 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-571 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-515 timeout=40
+  @hold f26 s124 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-379 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-562 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-506 timeout=40
+  @hold f26 s124 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-423 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-553 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-497 timeout=40
+  @hold f26 s124 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-466 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-543 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-487 timeout=40
+  20
+  @hold f38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-492 timeout=60
+  20
+  @hold f-38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-486 timeout=60
+  20
+  @hold f38 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-492 timeout=60
+  20
+  20
+  @hold s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-690 timeout=50
+  20
+  @hold f-72 s105 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-782 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-519 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-491 timeout=40
+  @hold f-72 s105 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-817 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-556 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-500 timeout=40
+  @hold f-72 s105 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-851 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-580 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-524 timeout=40
+  @hold f-72 s105 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-886 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-604 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-548 timeout=40
+  @hold f-23 s125 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-924 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-598 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-570 timeout=40
+  @hold f-23 s125 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-964 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-605 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-577 timeout=40
+  @hold f-23 s125 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1004 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-612 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-584 timeout=40
+  @hold f-23 s125 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1044 timeout=45
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-634 timeout=40
+  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-578 timeout=40
+  @hold f113 s58 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-578 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1090 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1062 timeout=40
+  @hold f113 s58 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-539 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1124 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1068 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-497 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1122 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1066 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-454 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1119 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1063 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-410 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1117 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1061 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-367 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1100 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1072 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-324 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1112 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1056 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-281 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1110 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1054 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-238 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1107 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1051 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-194 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1105 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1049 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-151 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1102 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1046 timeout=40
+  @hold f127 s-7 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-118 timeout=45
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1084 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1060 timeout=40
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-90 timeout=40
+  10
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1085 timeout=60
+  8
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1073 timeout=60
+  8
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1085 timeout=60
+  8
+  @hold f127 duck until sym=WORLD_ARENA offset=4 size=4 op=eq value=8133 timeout=240
+
+
+map c1a1b next c1a1c
+  @checkpoint arrive-c1a1b
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-440 value_hi=-330
+  @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-180 value_hi=-80
   @stop

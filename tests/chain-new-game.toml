@@ -6295,7 +6295,7 @@ hold_until = { kind="ram", sym="WORLD_ARENA", offset=4, size=4, op="eq", value=7
 timeout = 9000
 # trailing wait of 0 ticks is replaced by the next block's load wait
 
-# ---- c1a1f -> c1a1g ----
+# ---- c1a1f -> c1a1b ----
 [[step]]
 label = "c1a1f loads"
 wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 7362 }
@@ -6372,4 +6372,2031 @@ offset=8
 op="between"
 value=300
 value_hi=340
+
+[[step]]
+label = "c1a1f controller tape 0"
+tape = "tests/chain/tapes/c1a1f-00.pxtape"
+tape_rebase = true
+timeout = 1240
+
+[[step]]
+lstick = [128, 128]
+rstick = [42, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1108 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=959 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1018 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=959 }
+timeout = 3600
+
+[[step]]
+label = "c1a1f controller tape 1"
+tape = "tests/chain/tapes/c1a1f-01.pxtape"
+tape_rebase = true
+timeout = 1240
+
+[[step]]
+lstick = [95, 5]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1347 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=292 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=348 }
+timeout = 240
+
+[[step]]
+lstick = [95, 5]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1302 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=304 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=360 }
+timeout = 240
+
+[[step]]
+lstick = [95, 5]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1257 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=330 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=358 }
+timeout = 240
+
+[[step]]
+lstick = [95, 5]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1212 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=342 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=370 }
+timeout = 240
+
+[[step]]
+lstick = [95, 5]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1168 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=340 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=396 }
+timeout = 240
+
+[[step]]
+lstick = [8, 85]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=677 }
+timeout = 492
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1070 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-1014 }
+timeout = 240
+
+[[step]]
+lstick = [36, 41]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=751 }
+timeout = 312
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1002 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-946 }
+timeout = 240
+
+[[step]]
+lstick = [96, 5]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-908 }
+timeout = 300
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=752 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=808 }
+timeout = 240
+
+[[step]]
+lstick = [129, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-364 }
+timeout = 648
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=748 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=804 }
+timeout = 240
+
+[[step]]
+lstick = [176, 10]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-309 }
+timeout = 282
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=726 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=782 }
+timeout = 240
+
+[[step]]
+lstick = [226, 47]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=736 }
+timeout = 264
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-303 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-247 }
+timeout = 240
+
+[[step]]
+lstick = [226, 47]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=709 }
+timeout = 264
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-267 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-239 }
+timeout = 240
+
+[[step]]
+lstick = [226, 47]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=681 }
+timeout = 264
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-258 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-202 }
+timeout = 240
+
+[[step]]
+lstick = [254, 117]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=640 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-240 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-212 }
+timeout = 240
+
+[[step]]
+lstick = [254, 117]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=596 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-250 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-194 }
+timeout = 240
+
+[[step]]
+lstick = [254, 117]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=552 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-246 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-190 }
+timeout = 240
+
+[[step]]
+lstick = [254, 117]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=518 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-226 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-202 }
+timeout = 240
+
+[[step]]
+checkpoint = "c1a1f-east-room"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
+
+[[step]]
+label = "c1a1f controller tape 2"
+tape = "tests/chain/tapes/c1a1f-02.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=508 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 3"
+tape = "tests/chain/tapes/c1a1f-03.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=520 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 4"
+tape = "tests/chain/tapes/c1a1f-04.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=508 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 5"
+tape = "tests/chain/tapes/c1a1f-05.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [128, 255]
+rstick = [128, 128]
+press = ["triangle"]
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-350 }
+timeout = 540
+
+[[step]]
+checkpoint = "c1a1f-vent-crawled"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
+
+[[step]]
+label = "c1a1f controller tape 6"
+tape = "tests/chain/tapes/c1a1f-06.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [63, 237]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-402 }
+timeout = 288
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=536 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=560 }
+timeout = 240
+
+[[step]]
+label = "c1a1f controller tape 7"
+tape = "tests/chain/tapes/c1a1f-07.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [128, 90]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-444 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 8"
+tape = "tests/chain/tapes/c1a1f-08.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [128, 166]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-432 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 9"
+tape = "tests/chain/tapes/c1a1f-09.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [166, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=584 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 10"
+tape = "tests/chain/tapes/c1a1f-10.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [90, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=572 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 11"
+tape = "tests/chain/tapes/c1a1f-11.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+checkpoint = "c1a1f-at-charger"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
+
+[[step]]
+lstick = [128, 128]
+rstick = [42, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=160 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=11 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=70 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=11 }
+timeout = 3600
+
+[[step]]
+label = "c1a1f controller tape 12"
+tape = "tests/chain/tapes/c1a1f-12.pxtape"
+tape_rebase = true
+timeout = 1600
+
+[[step]]
+checkpoint = "c1a1f-charged"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
+
+[[step]]
+lstick = [128, 128]
+rstick = [214, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=868 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=958 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [74, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1017 }
+timeout = 3600
+
+[[step]]
+lstick = [128, 128]
+rstick = [182, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=958 }
+timeout = 3600
+
+[[step]]
+label = "c1a1f controller tape 13"
+tape = "tests/chain/tapes/c1a1f-13.pxtape"
+tape_rebase = true
+timeout = 1240
+
+[[step]]
+lstick = [244, 179]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=558 }
+timeout = 264
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-478 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-450 }
+timeout = 240
+
+[[step]]
+lstick = [244, 179]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=523 }
+timeout = 264
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-508 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-452 }
+timeout = 240
+
+[[step]]
+lstick = [205, 229]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-702 }
+timeout = 474
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=308 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=332 }
+timeout = 240
+
+[[step]]
+lstick = [255, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=218 }
+timeout = 240
+
+[[step]]
+label = "c1a1f controller tape 14"
+tape = "tests/chain/tapes/c1a1f-14.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=190 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 15"
+tape = "tests/chain/tapes/c1a1f-15.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=202 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 16"
+tape = "tests/chain/tapes/c1a1f-16.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=190 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 17"
+tape = "tests/chain/tapes/c1a1f-17.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [128, 255]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-850 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 18"
+tape = "tests/chain/tapes/c1a1f-18.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [128, 88]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-872 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 19"
+tape = "tests/chain/tapes/c1a1f-19.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [128, 168]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-862 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 20"
+tape = "tests/chain/tapes/c1a1f-20.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [128, 88]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-872 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 21"
+tape = "tests/chain/tapes/c1a1f-21.pxtape"
+tape_rebase = true
+timeout = 1400
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=184 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 22"
+tape = "tests/chain/tapes/c1a1f-22.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=190 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 23"
+tape = "tests/chain/tapes/c1a1f-23.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=184 }
+timeout = 600
+
+[[step]]
+label = "c1a1f controller tape 24"
+tape = "tests/chain/tapes/c1a1f-24.pxtape"
+tape_rebase = true
+timeout = 1300
+
+[[step]]
+lstick = [128, 90]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-888 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 25"
+tape = "tests/chain/tapes/c1a1f-25.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [128, 166]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-878 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 26"
+tape = "tests/chain/tapes/c1a1f-26.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [128, 90]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-888 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 27"
+tape = "tests/chain/tapes/c1a1f-27.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+checkpoint = "c1a1f-pre-jump"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
+
+[[step]]
+label = "c1a1f controller tape 28"
+tape = "tests/chain/tapes/c1a1f-28.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [255, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=178 }
+timeout = 180
+
+[[step]]
+label = "c1a1f controller tape 29"
+tape = "tests/chain/tapes/c1a1f-29.pxtape"
+tape_rebase = true
+timeout = 1316
+
+[[step]]
+lstick = [255, 128]
+rstick = [128, 128]
+press = ["triangle"]
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-40 }
+timeout = 360
+
+[[step]]
+lstick = [255, 128]
+rstick = [128, 128]
+press = ["triangle"]
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-75 }
+timeout = 360
+
+[[step]]
+checkpoint = "c1a1f-walkway"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
+
+[[step]]
+label = "c1a1f controller tape 30"
+tape = "tests/chain/tapes/c1a1f-30.pxtape"
+tape_rebase = true
+timeout = 1320
+
+[[step]]
+lstick = [199, 23]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-847 }
+timeout = 264
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-160 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-132 }
+timeout = 240
+
+[[step]]
+lstick = [199, 23]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-821 }
+timeout = 264
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-178 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-150 }
+timeout = 240
+
+[[step]]
+lstick = [199, 23]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-794 }
+timeout = 264
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-210 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-154 }
+timeout = 240
+
+[[step]]
+lstick = [142, 2]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-753 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-215 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-159 }
+timeout = 240
+
+[[step]]
+lstick = [142, 2]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-711 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-205 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-177 }
+timeout = 240
+
+[[step]]
+lstick = [142, 2]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-668 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-224 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-168 }
+timeout = 240
+
+[[step]]
+lstick = [219, 40]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-295 }
+timeout = 348
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-580 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-524 }
+timeout = 240
+
+[[step]]
+lstick = [252, 102]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-336 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-571 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-515 }
+timeout = 240
+
+[[step]]
+lstick = [252, 102]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-379 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-562 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-506 }
+timeout = 240
+
+[[step]]
+lstick = [252, 102]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-423 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-553 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-497 }
+timeout = 240
+
+[[step]]
+lstick = [252, 102]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-466 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-543 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-487 }
+timeout = 240
+
+[[step]]
+label = "c1a1f controller tape 31"
+tape = "tests/chain/tapes/c1a1f-31.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [128, 90]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-492 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 32"
+tape = "tests/chain/tapes/c1a1f-32.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [128, 166]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-486 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 33"
+tape = "tests/chain/tapes/c1a1f-33.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [128, 90]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-492 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 34"
+tape = "tests/chain/tapes/c1a1f-34.pxtape"
+tape_rebase = true
+timeout = 1360
+
+[[step]]
+lstick = [255, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-690 }
+timeout = 300
+
+[[step]]
+label = "c1a1f controller tape 35"
+tape = "tests/chain/tapes/c1a1f-35.pxtape"
+tape_rebase = true
+timeout = 1280
+
+[[step]]
+lstick = [233, 200]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-782 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-519 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-491 }
+timeout = 240
+
+[[step]]
+lstick = [233, 200]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-817 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-556 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-500 }
+timeout = 240
+
+[[step]]
+lstick = [233, 200]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-851 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-580 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-524 }
+timeout = 240
+
+[[step]]
+lstick = [233, 200]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-886 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-604 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-548 }
+timeout = 240
+
+[[step]]
+lstick = [253, 151]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-924 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-598 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-570 }
+timeout = 240
+
+[[step]]
+lstick = [253, 151]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-964 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-605 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-577 }
+timeout = 240
+
+[[step]]
+lstick = [253, 151]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1004 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-612 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-584 }
+timeout = 240
+
+[[step]]
+lstick = [253, 151]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1044 }
+timeout = 270
+
+[[step]]
+lstick = [128, 58]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-634 }
+timeout = 240
+
+[[step]]
+lstick = [128, 198]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-578 }
+timeout = 240
+
+[[step]]
+lstick = [186, 15]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-578 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1090 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1062 }
+timeout = 240
+
+[[step]]
+lstick = [186, 15]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-539 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1124 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1068 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-497 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1122 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1066 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-454 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1119 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1063 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-410 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1117 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1061 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-367 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1100 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1072 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-324 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1112 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1056 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-281 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1110 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1054 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-238 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1107 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1051 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-194 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1105 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1049 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-151 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1102 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1046 }
+timeout = 240
+
+[[step]]
+lstick = [121, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-118 }
+timeout = 270
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1084 }
+timeout = 240
+
+[[step]]
+lstick = [198, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1060 }
+timeout = 240
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-90 }
+timeout = 240
+
+[[step]]
+label = "c1a1f controller tape 36"
+tape = "tests/chain/tapes/c1a1f-36.pxtape"
+tape_rebase = true
+timeout = 1240
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1085 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 37"
+tape = "tests/chain/tapes/c1a1f-37.pxtape"
+tape_rebase = true
+timeout = 1232
+
+[[step]]
+lstick = [168, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1073 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 38"
+tape = "tests/chain/tapes/c1a1f-38.pxtape"
+tape_rebase = true
+timeout = 1232
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1085 }
+timeout = 360
+
+[[step]]
+label = "c1a1f controller tape 39"
+tape = "tests/chain/tapes/c1a1f-39.pxtape"
+tape_rebase = true
+timeout = 1232
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = ["triangle"]
+hold_until = { kind="ram", sym="WORLD_ARENA", offset=4, size=4, op="eq", value=8133 }
+timeout = 1440
+# trailing wait of 0 ticks is replaced by the next block's load wait
+
+# ---- c1a1b -> c1a1c ----
+[[step]]
+label = "c1a1b loads"
+wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 8133 }
+timeout = 9000
+
+[[step]]
+label = "c1a1b first simulation tick"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
+timeout = 9000
+
+[[step]]
+checkpoint = "arrive-c1a1b"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=4
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-100000
+value_hi=100000
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_YAW"
+size=2
+op="between"
+value=0
+value_hi=65535
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_HEALTH"
+size=2
+op="between"
+value=1
+value_hi=100
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=0
+op="between"
+value=-440
+value_hi=-330
+[[step.assert]]
+kind="ram"
+sym="LOGIC_PLAYER_POS"
+size=4
+signed=true
+offset=8
+op="between"
+value=-180
+value_hi=-80
 # trailing wait of 0 ticks is replaced by the next block's load wait

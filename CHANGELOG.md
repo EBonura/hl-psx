@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The new-game chain walks c1a1f and arrives in c1a1b (15 segments traversed, from the title, controller input only). c1a1f's way on is not a standing walk: two crouch crawls through wall holes, a crouch jump onto a 49 high ledge and a crouched walkway, all found from the BSP hulls and confirmed against the reference runtime; the chain refills health at the wall charger on the way. `map-ids.txt` had a stale word for c1a1b
+
 - The crowbar strikes over the swept head hull of the original's swing (a 32 wide, 36 tall hull along a 32 unit line, 64 units to an actor's centre) instead of a screen cone of the actor's own size: a crouched swing at a headcrab on the floor now hits, a standing one still misses, as in the original (`logic_state::crowbar_hull_reaches`, host test).
 
 - The new-game chain walks c1a1a, the zombie corridor, and arrives in c1a1f (14 segments traversed, from the title, controller input only). The corridor is a run, not a fight: the two zombies are passed along the south wall more than 64 units from both so no claw bout starts, and the chain keeps 35 to 43 health. The control-room wait now stays out of the door's 70 point explosion.
