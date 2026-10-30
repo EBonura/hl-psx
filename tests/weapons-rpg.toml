@@ -12,11 +12,11 @@ max_ticks = 30000
 # Bound to the build these journeys were written against (hud::PREV_* are the HUD's
 # last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
 [addr]
-PREV_WEAPON = 0x800cdb4c
-PREV_CLIP = 0x800cdb54
-PREV_RESERVE = 0x800cdb50
-PREV_HEALTH = 0x800cdb48
-LAST_CORE = 0x800ce618
+PREV_WEAPON = 0x800cdad4
+PREV_CLIP = 0x800cdadc
+PREV_RESERVE = 0x800cdad8
+PREV_HEALTH = 0x800cdad0
+LAST_CORE = 0x800ce5a0
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
