@@ -10,10 +10,10 @@ max_ticks = 30000
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_POS = 0x801d3618
-LOGIC_PLAYER_YAW = 0x801d3624
-SIM_NOW = 0x801ea700
-WORLD_ARENA = 0x800e6488
+LOGIC_PLAYER_POS = 0x801d3698
+LOGIC_PLAYER_YAW = 0x801d36a4
+SIM_NOW = 0x801ea780
+WORLD_ARENA = 0x800e6508
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
@@ -694,28 +694,28 @@ timeout = 2400
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=900 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=934 }
 timeout = 3600
 
 [[step]]
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=990 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1024 }
 timeout = 3600
 
 [[step]]
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1049 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1083 }
 timeout = 3600
 
 [[step]]
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=990 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1024 }
 timeout = 3600
 
 [[step]]
