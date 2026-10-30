@@ -61,6 +61,7 @@ mod turret_aim;
 #[allow(dead_code)]
 mod weaponbox;
 use psx_goldsrc::hitbox_logic;
+use psx_goldsrc::affine_edges::EdgePolicy;
 use psx_goldsrc::hmd_gte;
 // Replay builds (semantic-input) have no save menu, so the card and snapshot
 // code below is dead there.
@@ -408,9 +409,6 @@ const EMPTY_AFFINE_PATCH_CANDIDATE: AffinePatchCandidate = AffinePatchCandidate 
 const AFFINE_PATCH_KIND_NATIVE: u8 = 0;
 const AFFINE_PATCH_KIND_SEAMED_PAIR: u8 = 1;
 const AFFINE_CANDIDATE_CAP: usize = 32;
-const AFFINE_EDGE_CAP: usize = AFFINE_CANDIDATE_CAP * 4;
-const AFFINE_EDGE_BLOOM_WORDS: usize = 8;
-const AFFINE_EDGE_BLOOM_MASK: usize = AFFINE_EDGE_BLOOM_WORDS * 32 - 1;
 // One selected patch emits three extra packets. Each of its four edge-sharing
 // neighbours may also need a regular 2x2 grid to keep the mesh conforming, for
 // a strict worst case of fifteen extra packets per request. Keep a wider proof
@@ -3888,17 +3886,6 @@ static mut WORLD_AFFINE_SPLIT_PATCHES: u32 = 0;
 static mut WORLD_AFFINE_SEAMED_SPLITS: u8 = 0;
 static mut WORLD_AFFINE_NATIVE_TRI_SPLITS: u8 = 0;
 static mut WORLD_AFFINE_ADDED_GTE_TRANSFORMS: u32 = 0;
-static mut WORLD_AFFINE_EDGE_CURRENT: [u32; AFFINE_EDGE_CAP] = [0; AFFINE_EDGE_CAP];
-static mut WORLD_AFFINE_EDGE_NEXT: [u32; AFFINE_EDGE_CAP] = [0; AFFINE_EDGE_CAP];
-// Conservative prefilter for the sorted current-edge table. A set bit may be
-// a collision and still takes the exact binary search; a clear bit proves the
-// edge absent, preserving identical topology decisions.
-static mut WORLD_AFFINE_EDGE_BLOOM: [u32; AFFINE_EDGE_BLOOM_WORDS] = [0; AFFINE_EDGE_BLOOM_WORDS];
-static mut WORLD_AFFINE_EDGE_CURRENT_COUNT: u8 = 0;
-static mut WORLD_AFFINE_EDGE_NEXT_COUNT: u8 = 0;
-static mut WORLD_AFFINE_NEXT_SPLIT_PATCHES: u8 = 0;
-static mut WORLD_AFFINE_NEXT_EDGE_BUDGET: u16 = WORLD_AFFINE_MAX_EXTRA_PACKETS;
-static mut WORLD_AFFINE_EDGE_GENERATION: u16 = 0;
 static mut WORLD_AFFINE_POLICY_READY: bool = false;
 // Subdivision ownership is persistent. Refresh its expensive screen-error
 // ranking at 10 Hz while the current edge set continues to render at the full
@@ -3906,7 +3893,6 @@ static mut WORLD_AFFINE_POLICY_READY: bool = false;
 // late PS1 renderers instead of rediscovering the same patches every frame.
 static mut WORLD_AFFINE_RANK_FRAME: bool = true;
 
-static mut WORLD_AFFINE_EDGES_PENDING: bool = false;
 static mut WORLD_AFFINE_FORCE_RANK: bool = true;
 static mut WORLD_AFFINE_ACTUAL_EXTRA_EMITTED: u16 = 0;
 static mut WORLD_AFFINE_LAST_ACTUAL_EXTRA_EMITTED: u16 = 0;
@@ -29537,13 +29523,11 @@ unsafe fn prepare_world_affine_candidates(visibility: &CameraVisibility<'_>, fra
     WORLD_AFFINE_NEXT_COUNT = 0;
     WORLD_AFFINE_VIEW_FORWARD = visibility.rot.m[2];
     WORLD_AFFINE_VIEW_Z_OFFSET = visibility.base_t[2];
-    WORLD_AFFINE_EDGE_NEXT_COUNT = 0;
-    WORLD_AFFINE_NEXT_SPLIT_PATCHES = 0;
+    (*core::ptr::addr_of_mut!(WORLD_AFFINE_EDGES)).begin_frame(WORLD_AFFINE_MAX_EXTRA_PACKETS);
     WORLD_AFFINE_PATCH_CANDIDATE_COUNT = 0;
     WORLD_AFFINE_HIGHEST_REJECTED_PRIORITY = 0;
     WORLD_AFFINE_HIGHEST_DROPPED_PRIORITY = 0;
     WORLD_AFFINE_LOWEST_SELECTED_PRIORITY = 0;
-    WORLD_AFFINE_NEXT_EDGE_BUDGET = WORLD_AFFINE_MAX_EXTRA_PACKETS;
     // Both candidate arrays are count-bounded transient workspaces. Every
     // active slot is overwritten by the sorted insertion paths below, so
     // clearing their inactive tails here only burns cached RAM bandwidth on
@@ -29566,126 +29550,32 @@ unsafe fn prepare_world_affine_candidates(visibility: &CameraVisibility<'_>, fra
     };
 }
 
-/// Rank a face only after the ordinary world traversal has already accepted
-/// its plane and bounds. The resulting shortlist drives the following visual
-/// frame, avoiding a second PVS/face walk while hysteresis hides the one-frame
-/// handoff during motion.
+/// The edge-conformity set of the affine patch policy (`psx_goldsrc::affine_edges`).
+static mut WORLD_AFFINE_EDGES: EdgePolicy = EdgePolicy::new(WORLD_AFFINE_MAX_EXTRA_PACKETS);
+const _: () = assert!(AFFINE_CANDIDATE_CAP == psx_goldsrc::affine_edges::CANDIDATE_CAP);
+
 #[inline(always)]
-fn affine_edge_key(a: u16, b: u16) -> u32 {
-    let lo = a.min(b) as u32;
-    let hi = a.max(b) as u32;
-    (lo << 14) | hi
+unsafe fn affine_request_edges(keys: [u32; 4], cost: u16) -> bool {
+    let admitted = (*core::ptr::addr_of_mut!(WORLD_AFFINE_EDGES)).request(keys, cost);
+    if admitted {
+        WORLD_AFFINE_EXTRA_REQUESTED = WORLD_AFFINE_EXTRA_REQUESTED.saturating_add(cost as u32);
+    }
+    admitted
 }
 
 #[inline(always)]
-fn affine_quad_edge_keys(indices: [u16; 4]) -> [u32; 4] {
-    [
-        affine_edge_key(indices[0], indices[1]),
-        affine_edge_key(indices[1], indices[3]),
-        affine_edge_key(indices[3], indices[2]),
-        affine_edge_key(indices[2], indices[0]),
-    ]
+unsafe fn sort_world_affine_next_edges() {
+    (*core::ptr::addr_of_mut!(WORLD_AFFINE_EDGES)).sort_next();
 }
 
 #[inline(always)]
-unsafe fn affine_current_edge_contains(key: u32) -> bool {
-    let hash = (key ^ (key >> 7) ^ (key >> 15)) as usize & AFFINE_EDGE_BLOOM_MASK;
-    if WORLD_AFFINE_EDGE_BLOOM[hash >> 5] & (1u32 << (hash & 31)) == 0 {
-        return false;
-    }
-    let edges = core::ptr::addr_of!(WORLD_AFFINE_EDGE_CURRENT).cast::<u32>();
-    let mut lo = 0usize;
-    let mut hi = WORLD_AFFINE_EDGE_CURRENT_COUNT as usize;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        let value = edges.add(mid).read();
-        if value < key {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    lo < WORLD_AFFINE_EDGE_CURRENT_COUNT as usize && edges.add(lo).read() == key
+unsafe fn install_world_affine_next_edges() {
+    (*core::ptr::addr_of_mut!(WORLD_AFFINE_EDGES)).install_next();
 }
 
 #[inline(always)]
 unsafe fn affine_current_edge_mask(keys: [u32; 4], blocked: u8) -> u8 {
-    if WORLD_AFFINE_EDGE_CURRENT_COUNT == 0 {
-        return 0;
-    }
-    let mut mask = 0u8;
-    let mut edge = 0usize;
-    while edge < 4 {
-        if blocked & (1 << edge) == 0 && affine_current_edge_contains(keys[edge]) {
-            mask |= 1 << edge;
-        }
-        edge += 1;
-    }
-    mask
-}
-
-/// Atomically record all four edges of a patch selected for the following
-/// frame. A matching edge makes its neighbour use the same regular 2x2
-/// topology, so conformity never requires an irregular triangle fan.
-#[inline(never)]
-unsafe fn affine_request_edges(keys: [u32; 4], cost: u16) -> bool {
-    if WORLD_AFFINE_NEXT_SPLIT_PATCHES as usize >= AFFINE_CANDIDATE_CAP
-        || WORLD_AFFINE_NEXT_EDGE_BUDGET < cost
-    {
-        return false;
-    }
-    let edges = core::ptr::addr_of_mut!(WORLD_AFFINE_EDGE_NEXT).cast::<u32>();
-    let mut needed = 0usize;
-    let mut missing = 0u8;
-    let mut edge = 0usize;
-    while edge < 4 {
-        let key = keys[edge];
-        let mut found = false;
-        let mut i = 0usize;
-        while i < WORLD_AFFINE_EDGE_NEXT_COUNT as usize {
-            if edges.add(i).read() == key {
-                found = true;
-                break;
-            }
-            i += 1;
-        }
-        if !found {
-            needed += 1;
-            missing |= 1 << edge;
-        }
-        edge += 1;
-    }
-    if WORLD_AFFINE_EDGE_NEXT_COUNT as usize + needed > AFFINE_EDGE_CAP {
-        return false;
-    }
-    edge = 0;
-    while edge < 4 {
-        if missing & (1 << edge) != 0 {
-            let key = keys[edge];
-            // Preserve the old second scan's duplicate behavior without
-            // walking the complete accumulated list again. An earlier missing
-            // copy is exactly the only way this key could have been appended
-            // since the first pass.
-            let mut duplicate = false;
-            let mut earlier = 0usize;
-            while earlier < edge {
-                if missing & (1 << earlier) != 0 && keys[earlier] == key {
-                    duplicate = true;
-                    break;
-                }
-                earlier += 1;
-            }
-            if !duplicate {
-                edges.add(WORLD_AFFINE_EDGE_NEXT_COUNT as usize).write(key);
-                WORLD_AFFINE_EDGE_NEXT_COUNT += 1;
-            }
-        }
-        edge += 1;
-    }
-    WORLD_AFFINE_NEXT_SPLIT_PATCHES += 1;
-    WORLD_AFFINE_NEXT_EDGE_BUDGET -= cost;
-    WORLD_AFFINE_EXTRA_REQUESTED = WORLD_AFFINE_EXTRA_REQUESTED.saturating_add(cost as u32);
-    true
+    (*core::ptr::addr_of!(WORLD_AFFINE_EDGES)).current_mask(keys, blocked)
 }
 
 #[inline(always)]
@@ -29770,7 +29660,7 @@ unsafe fn finish_world_affine_patch_candidates() {
             scratch_get(candidate.indices[2] as usize),
             scratch_get(candidate.indices[3] as usize),
         ];
-        let keys = affine_quad_edge_keys(candidate.indices);
+        let keys = psx_goldsrc::affine_edges::quad_edge_keys(candidate.indices);
         let needs_split = if candidate.kind == AFFINE_PATCH_KIND_SEAMED_PAIR {
             true
         } else if (candidate.near_depth as i32) < RANKED_NEAR_PRESENCE_Z
@@ -29835,48 +29725,6 @@ unsafe fn finish_world_affine_patch_candidates() {
 }
 
 #[inline(never)]
-unsafe fn sort_world_affine_next_edges() {
-    let next = core::ptr::addr_of_mut!(WORLD_AFFINE_EDGE_NEXT).cast::<u32>();
-    let count = WORLD_AFFINE_EDGE_NEXT_COUNT as usize;
-    // Tiny deterministic insertion sort; lookup on every visible patch is then
-    // a seven-comparison binary search instead of a 128-entry scan.
-    let mut i = 1usize;
-    while i < count {
-        let value = next.add(i).read();
-        let mut j = i;
-        while j > 0 && next.add(j - 1).read() > value {
-            next.add(j).write(next.add(j - 1).read());
-            j -= 1;
-        }
-        next.add(j).write(value);
-        i += 1;
-    }
-}
-
-#[inline(never)]
-unsafe fn install_world_affine_next_edges() {
-    let next = core::ptr::addr_of_mut!(WORLD_AFFINE_EDGE_NEXT).cast::<u32>();
-    let count = WORLD_AFFINE_EDGE_NEXT_COUNT as usize;
-    let current = core::ptr::addr_of_mut!(WORLD_AFFINE_EDGE_CURRENT).cast::<u32>();
-    WORLD_AFFINE_EDGE_BLOOM = [0; AFFINE_EDGE_BLOOM_WORDS];
-    let mut changed = count != WORLD_AFFINE_EDGE_CURRENT_COUNT as usize;
-    let mut i = 0usize;
-    while i < count {
-        let value = next.add(i).read();
-        changed |= current.add(i).read() != value;
-        current.add(i).write(value);
-        let hash = (value ^ (value >> 7) ^ (value >> 15)) as usize & AFFINE_EDGE_BLOOM_MASK;
-        WORLD_AFFINE_EDGE_BLOOM[hash >> 5] |= 1u32 << (hash & 31);
-        i += 1;
-    }
-    WORLD_AFFINE_EDGE_CURRENT_COUNT = count as u8;
-    if changed {
-        WORLD_AFFINE_EDGE_GENERATION = WORLD_AFFINE_EDGE_GENERATION.wrapping_add(1);
-    }
-    WORLD_AFFINE_EDGES_PENDING = false;
-}
-
-#[inline(never)]
 unsafe fn reset_world_affine_frame() {
     WORLD_AFFINE_SELECTED_COUNT = 0;
     WORLD_AFFINE_EXTRA_BUDGET_LEFT = if WORLD_CLASSIC_AFFINE_SELECTION {
@@ -29914,7 +29762,7 @@ unsafe fn reset_world_affine_frame() {
 #[inline(always)]
 unsafe fn finish_world_affine_candidates() {
     if !WORLD_AFFINE_RANK_FRAME {
-        if WORLD_AFFINE_EDGES_PENDING {
+        if (*core::ptr::addr_of!(WORLD_AFFINE_EDGES)).pending() {
             install_world_affine_next_edges();
         }
         return;
@@ -29933,7 +29781,7 @@ unsafe fn finish_world_affine_candidates() {
         // seamed-pair edge set freezes at its bootstrap contents.
         install_world_affine_next_edges();
     } else {
-        WORLD_AFFINE_EDGES_PENDING = true;
+        (*core::ptr::addr_of_mut!(WORLD_AFFINE_EDGES)).set_pending(true);
     }
     WORLD_AFFINE_POLICY_READY = true;
 }
@@ -30346,7 +30194,7 @@ unsafe fn rank_affine_patch(
     if WORLD_CLASSIC_AFFINE_SELECTION && kind == AFFINE_PATCH_KIND_NATIVE {
         return classic_native_patch_mask(projected, uv, texture_backdrop, blocked_edges);
     }
-    let boundary_keys = affine_quad_edge_keys(indices);
+    let boundary_keys = psx_goldsrc::affine_edges::quad_edge_keys(indices);
     let current_mask = affine_current_edge_mask(boundary_keys, blocked_edges);
     let was_split = current_mask == 0x0f;
     // Blocked patches may conform to a selected neighbour through their
@@ -36019,7 +35867,7 @@ fn play(
         WORLD_AFFINE_NEXT_COUNT = 0;
         WORLD_AFFINE_POLICY_READY = false;
         WORLD_AFFINE_RANK_FRAME = true;
-        WORLD_AFFINE_EDGES_PENDING = false;
+        (*core::ptr::addr_of_mut!(WORLD_AFFINE_EDGES)).set_pending(false);
         WORLD_AFFINE_FORCE_RANK = true;
         pvs_cam_leaf_store(-1);
         VIS_ROW_LEAF = -1;
