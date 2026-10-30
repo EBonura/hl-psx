@@ -60,8 +60,8 @@ mod sentry_wake;
 mod turret_aim;
 #[allow(dead_code)]
 mod weaponbox;
-use psx_goldsrc::hitbox_logic;
 use psx_goldsrc::affine_edges::EdgePolicy;
+use psx_goldsrc::hitbox_logic;
 use psx_goldsrc::hmd_gte;
 // Replay builds (semantic-input) have no save menu, so the card and snapshot
 // code below is dead there.
