@@ -87,13 +87,30 @@ map t0a0 next t0a0a
   # Door td4 has opened on the trigger at y 1870. The duck course runs east along y 2200: walk to x 1120, then crouch (Triangle)
   # through the wells and low tunnels to x 1770, stand, and walk through door td5 (trigger at x 1868).
   @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2150 timeout=400
-  # The run east along the duck course needs a heading at or past 1024 (a yaw under it steers the player into the +y wall).
-  # Where in the 60 unit face band the player stops depends on the build's frame timing: 1024 is green on the no-intro disc of this
-  # layout, 990 (tuned on the previous layout) stalls at x 865; the intro disc needs its own check.
+  # The run east along the duck course is closed loop on y (a dead-band pair after every leg), so the heading the 60 unit face band
+  # leaves does not matter: a yaw under 1024 used to steer the player into the +y wall (990 stalled at x 865 on one layout).
   @face 1024 right
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=500 timeout=300
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2190 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2212 timeout=40
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=700 timeout=300
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2190 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2212 timeout=40
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=900 timeout=300
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1120 timeout=200
-  @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1770 timeout=600
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2190 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2212 timeout=40
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1120 timeout=300
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2190 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2212 timeout=40
+  @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1300 timeout=300
+  @hold s-70 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2190 timeout=40
+  @hold s70 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2212 timeout=40
+  @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1500 timeout=300
+  @hold s-70 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2190 timeout=40
+  @hold s70 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2212 timeout=40
+  @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1770 timeout=300
+  @hold s-70 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=2190 timeout=40
+  @hold s70 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=2212 timeout=40
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1900 timeout=300
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2100 timeout=600
   @checkpoint duck-course-done
