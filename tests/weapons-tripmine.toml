@@ -10,11 +10,11 @@ max_ticks = 30000
 # Bound to the build these journeys were written against (hud::PREV_* are the HUD's
 # last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
 [addr]
-PREV_WEAPON = 0x800cdad4
-PREV_CLIP = 0x800cdadc
-PREV_RESERVE = 0x800cdad8
-PREV_HEALTH = 0x800cdad0
-LAST_CORE = 0x800ce5a0
+PREV_WEAPON = 0x800cdb14
+PREV_CLIP = 0x800cdb1c
+PREV_RESERVE = 0x800cdb18
+PREV_HEALTH = 0x800cdb10
+LAST_CORE = 0x800ce5e0
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
@@ -151,7 +151,7 @@ value = 4
 kind = "not_flat"
 [[step]]
 label = "wait until the effect shows"
-wait_until = { kind = "pixels", color = [0, 170, 156], color_tol = 90, region = { x = 0, y = 90, w = 320, h = 60 }, min_count = 100 }
+wait_until = { kind = "pixels", color = [0, 255, 255], color_tol = 50, region = { x = 0, y = 90, w = 320, h = 60 }, min_count = 100 }  # the beam is one flat cyan; the old teal also matched unrelated dark pixels and missed the beam when the player stood differently
 timeout = 700
 
 [[step]]
@@ -173,8 +173,8 @@ value = 100
 kind = "not_flat"
 [[step.assert]]
 kind = "pixels"
-color = [0, 170, 156]
-color_tol = 90
+color = [0, 255, 255]
+color_tol = 50
 region = { x = 0, y = 90, w = 320, h = 60 }
 min_count = 100
 [[step]]

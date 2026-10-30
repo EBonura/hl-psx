@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The crowbar strikes over the swept head hull of the original's swing (a 32 wide, 36 tall hull along a 32 unit line, 64 units to an actor's centre) instead of a screen cone of the actor's own size: a crouched swing at a headcrab on the floor now hits, a standing one still misses, as in the original (`logic_state::crowbar_hull_reaches`, host test).
+
 - The new-game chain walks c1a1a, the zombie corridor, and arrives in c1a1f (14 segments traversed, from the title, controller input only). The corridor is a run, not a fight: the two zombies are passed along the south wall more than 64 units from both so no claw bout starts, and the chain keeps 35 to 43 health. The control-room wait now stays out of the door's 70 point explosion.
 
 - Zombie claws land on the reference runtime's ticks: the double swing hits at 15 and 27 ticks after the attack starts (it was 11 and 23) in a 52-tick bout, the both-arms swing (40 at Medium) at 11 (it was 5) in a 40-tick bout. Measured on the retail engine with the same corridor, skill and stance (`docs/parity/unforeseen-consequences.md`, c1a1a). The new-game, Hazard Course and skill chains no longer depend on the build's tick alignment: the pipe room, the door, the shaft window and the jump course close their legs on position and yaw (`tests/chain/README.md`), and the new-game chain is green on both the intro and the no-intro disc.

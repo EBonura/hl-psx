@@ -201,6 +201,7 @@ Findings from a first walk (evidence kind: emulator replay from the arrival, Xas
   | player dead after first contact (standing, no weapon) | 118 ticks | not measured standing |
   | crowbar reach to an actor's centre | 32 line + 16 swept head hull + 16 actor half-extent = 64 | 48 (fixed on branch fix/hl-crowbar-reach-2026-10-29: 48 + 16 hull = 64) |
   | crowbar damage | 10 first swing, 5 on a quick second (CCrowbar::Swing) | same |
+  | crowbar hull | 32 unit line, then the same 32 units swept by the 32 wide, 36 tall head hull: a crab on the floor is hit from a crouch (18 under the line against 12 + 18), not from a stand (52) | the same since `crowbar_hull_reaches` (it was a cone of the actor's own half-extent, 12 for a crab, so the crouched swing missed). Host test only: the pipe channel's crab leaps in and out of reach inside one poll and no scripted swing lined up, so the swing is not yet shown on a disc |
 
   The zombie stops at 62 and claws from there, so a retail player standing still hits it (reach 64) while the PS1 player could not (48): a port bug, fixed in the reach. The claw ticks and bout lengths were 3 to 5 ticks early in `species::tick_zombie` (an earlier note here blamed the headcrab's 21-tick bite schedule, which the zombie does not use: zombies are dispatched to `tick_zombie`); they now follow the reference runtime. What stays open: the 80/20 split between the two swings is the model's, not measured on the oracle. A crowbar-only walk with 35 HP still loses to two zombies on both sides; the retail player arrives with more health.
 
