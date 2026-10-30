@@ -9,7 +9,7 @@ rustc --edition=2021 -O tests/chain/segments.rs -o /tmp/segments
 
 The journey column was filled in by hand from the committed journeys under `tests/`. "Traversed" means a controller-only journey starts from the previous segment's end state and plays the segment to its exit; every other value is weaker than the completion standard. Segments with no parity chapter file are covered by the static entity census only: `hl-census map <name>` prints the same table for any map.
 
-Counts: 13 traversed (all in `tests/chain-new-game.toml`; the chain also arrives in c1a1a and checks the arrival), 1 partly traversed (t0a0, start lift to the catwalk, in `tests/chain-hazard.toml`), 1 entry and a short walk (c4a1a), 2 narrow replays or probe discs (t0a0b, c1a1b), 86 with no journey.
+Counts: 14 traversed (all in `tests/chain-new-game.toml`; the chain also arrives in c1a1f and checks the arrival), 1 partly traversed (t0a0, start lift to the catwalk, in `tests/chain-hazard.toml`), 1 entry and a short walk (c4a1a), 2 narrow replays or probe discs (t0a0b, c1a1b), 85 with no journey.
 
 Columns: actors = `monster_*` placements (not the `_dead` props); scripts = `scripted_*`; exits list `destination@landmark[trigger targetname]`, `END` is a `trigger_endsection`.
 
@@ -28,7 +28,7 @@ Columns: actors = `monster_*` placements (not the `_dead` props); scripts = `scr
 | 11 | c1a0e | Anomalous Materials | c1a0c@c1a0etoc[change_level]<br>c1a0b@c1a0btoe[] | 9 | 16 | 45 | 57 | traversed (chain-new-game) | [anomalous-materials](anomalous-materials.md#c1a0e) |
 | 12 | c1a0c | Unforeseen Consequences | c1a1@c1a0catoc1a1[]<br>c1a0e@c1a0etoc[change_level] | 5 | 14 | 16 | 41 | traversed (chain-new-game) | [unforeseen-consequences](unforeseen-consequences.md#c1a0c) |
 | 13 | c1a1 | Unforeseen Consequences | c1a1a@c1a1[]<br>c1a0c@c1a0catoc1a1[] | 7 | 4 | 5 | 17 | traversed (chain-new-game) | [unforeseen-consequences](unforeseen-consequences.md#c1a1) |
-| 14 | c1a1a | Unforeseen Consequences | c1a1f@c1a1atof[]<br>c1a1@c1a1[] | 3 | 1 | 2 | 10 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1a) |
+| 14 | c1a1a | Unforeseen Consequences | c1a1f@c1a1atof[]<br>c1a1@c1a1[] | 3 | 1 | 2 | 10 | traversed (chain-new-game) | [unforeseen-consequences](unforeseen-consequences.md#c1a1a) |
 | 15 | c1a1f | Unforeseen Consequences | c1a1a@c1a1atof[]<br>c1a1b@c1a1b[] | 11 | 8 | 18 | 25 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1f) |
 | 16 | c1a1b | Unforeseen Consequences | c1a1c@c1a1bc[]<br>c1a1f@c1a1b[] | 17 | 9 | 17 | 29 | narrow tape replay (unstick-vent, present-cap) | [unforeseen-consequences](unforeseen-consequences.md#c1a1b) |
 | 17 | c1a1c | Unforeseen Consequences | c1a1b@c1a1bc[]<br>c1a1d@c1a1c/d[]<br>c1a1d@c1a1dtoc1a1c[]<br>c1a2@a1a2[changetoc1a2] | 11 | 0 | 9 | 34 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1c) |

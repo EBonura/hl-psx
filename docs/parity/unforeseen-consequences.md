@@ -2,7 +2,7 @@
 
 Retail order: c1a0c, c1a1, c1a1a, c1a1f, c1a1b, c1a1c, c1a1d (c1a1c also leads on to c1a2, Office Complex). The chapter title is shown on arrival in c1a0c. Method and evidence kinds: [README.md](README.md).
 
-Chapter result: c1a0c and c1a1 are traversed by the chain, which arrives in c1a1a. None of c1a1a, c1a1f, c1a1b, c1a1c or c1a1d has a journey that plays the map yet. `tests/unstick-vent.toml` and `tests/present-cap.toml` replay a recorded playtest tape into c1a1b for two narrow checks (a hull embedded in the vent clip slab; display flip spacing) and are not segment journeys. The open-loop draft for c1a1 in `inbound-anomalous.route` after its `@stop` does not reach the exit (it ends at (263, 802) after 1,584 ticks).
+Chapter result: c1a0c, c1a1 and c1a1a are traversed by the chain, which arrives in c1a1f. None of c1a1f, c1a1b, c1a1c or c1a1d has a journey that plays the map yet. `tests/unstick-vent.toml` and `tests/present-cap.toml` replay a recorded playtest tape into c1a1b for two narrow checks (a hull embedded in the vent clip slab; display flip spacing) and are not segment journeys. The open-loop draft for c1a1 in `inbound-anomalous.route` after its `@stop` does not reach the exit (it ends at (263, 802) after 1,584 ticks).
 
 State column: `fixed` = a commit or CHANGELOG entry on main fixes it; `limit-recorded` = a LIMITS-*.md file records it; `limit-claimed` = the inventory calls it a PS1 limit but no LIMITS file lists it (a bug under the completion standard until it is written down with evidence); `limit-unrecorded` = same, and no code comment records it either; `open` = the 10-15 inventory read the SDK and the port and found a difference that nobody has re-checked on this build.
 
@@ -184,7 +184,7 @@ Play order 14 of 103, room id 13. Exits: c1a1f@c1a1atof[], c1a1@c1a1[].
 
 Original contents: 3 actors, 1 scripted sequences or sentences, 2 multi_managers, 10 triggers, 12 buttons, 8 doors. Classes: infodecal 154, func_wall 25, func_breakable 12, func_button 12, ambient_generic 10, env_spark 6, func_door 6, multisource 5, env_beverage 3, monster_scientist_dead 3, trigger_multiple 3, ammo_glockclip 2 ....
 
-Journey: arrival only (the chain checks the arrival point within 30 units; see the findings below). Transition arrivals checked against the retail landmark formula: c1a0c to c1a1 retail (1030.3, 622) against PS1 (1027, 621) with the same offset (retail leaves c1a0c at x 579, the PS1 at about 576; the 3-unit difference is the carried velocity over the first ticks); c1a1 to c1a1a as above.
+Journey: traversed by `tests/chain-new-game.toml` (block `map c1a1a`), from the arrival to the arrival in c1a1f, with 35 health left of the 55 it arrives with. The corridor's two zombies wake at once and walk down it: the route waits on the north wall, then runs past along the south wall more than 64 units from both so no claw bout starts (a bout keeps its heading), and one claw still lands where the run clips a wall notch. The route is not a fight: with the crowbar and 55 health two zombies in a 128 wide corridor lose. The arrival point is still checked within 30 units; see the findings below. Transition arrivals checked against the retail landmark formula: c1a0c to c1a1 retail (1030.3, 622) against PS1 (1027, 621) with the same offset (retail leaves c1a0c at x 579, the PS1 at about 576; the 3-unit difference is the carried velocity over the first ticks); c1a1 to c1a1a as above.
 
 Findings from a first walk (evidence kind: emulator replay from the arrival, Xash3D run of the same transition):
 
