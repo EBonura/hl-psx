@@ -22786,6 +22786,7 @@ unsafe fn queue_impact_marks(
 }
 
 const MELEE_HULL_RADIUS: i32 = 16; // the swept head hull of CCrowbar::Swing
+const MELEE_HULL_HALF_HEIGHT: i32 = 18; // head_hull (-16,-16,-18)..(16,16,18)
 const MELEE_AIM_PIX: i32 = 53; // crowbar swing: a 16 unit hull radius at its 48 unit reach
 
 #[inline(always)]
@@ -23067,13 +23068,27 @@ unsafe fn fire_hitscan(
             } else {
                 let vx = dot12(rot.m[0], target) + base_t[0];
                 let vy = dot12(rot.m[1], target) + base_t[1];
-                let dx = vx * H_PROJ as i32 - cx_px * vz;
-                let dy = vy * H_PROJ as i32 - cy_px * vz;
                 let (hit_r, hit_hh) = prop_hit_extent(ty);
-                let lim_x = (hit_r * H_PROJ as i32).max(vz * aim_x);
-                let lim_y = (hit_hh * H_PROJ as i32).max(vz * aim_y);
-                (dx.abs() <= lim_x && dy.abs() <= lim_y)
-                    .then(|| mul_div_i32(vz, 4096, range.max(1)).min(4096))
+                // The swept head hull is 32 wide and 36 tall around the swing line: see
+                // `logic_state::crowbar_hull_reaches`. Other weapons keep the screen-space cone.
+                let hit = if club_damage {
+                    logic_state::crowbar_hull_reaches(
+                        vx,
+                        vy,
+                        vz,
+                        hit_r,
+                        hit_hh,
+                        reach,
+                        MELEE_HULL_RADIUS,
+                        MELEE_HULL_HALF_HEIGHT,
+                    )
+                } else {
+                    let dx = vx * H_PROJ as i32 - cx_px * vz;
+                    let dy = vy * H_PROJ as i32 - cy_px * vz;
+                    dx.abs() <= (hit_r * H_PROJ as i32).max(vz * aim_x)
+                        && dy.abs() <= (hit_hh * H_PROJ as i32).max(vz * aim_y)
+                };
+                hit.then(|| mul_div_i32(vz, 4096, range.max(1)).min(4096))
             }
         };
         let Some(hit_frac) = hit_frac else {

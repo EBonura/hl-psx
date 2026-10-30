@@ -69,6 +69,28 @@ pub const fn breakable_hp_after_damage(
     hp.saturating_sub((damage as u16) * scale)
 }
 
+/// CCrowbar::Swing: a 32 unit line from the eye, then, when it finds nothing, the same 32 units swept by
+/// the 32 wide, 36 tall head hull. An actor with half-extents (`half_r`, `half_h`) around its centre
+/// is struck when that centre lies within its own half-extent plus the hull's of the swing line to the
+/// side (`vx`) and above or below it (`vy`), and within `reach` straight ahead (`vz`, view space, the
+/// swing line's direction): a crouched swing hits a headcrab on the floor, a standing one does not.
+#[inline(always)]
+pub const fn crowbar_hull_reaches(
+    vx: i32,
+    vy: i32,
+    vz: i32,
+    half_r: i32,
+    half_h: i32,
+    reach: i32,
+    hull_r: i32,
+    hull_h: i32,
+) -> bool {
+    vz >= 0
+        && vz <= reach
+        && vx.abs() <= half_r + hull_r
+        && vy.abs() <= half_h + hull_h
+}
+
 /// GoldSrc material 7 is `matUnbreakableGlass`. CBreakable::TakeDamage rejects
 /// every damage type before changing health, and CBreakable::Use only calls
 /// Die() when IsBreakable(), so this guards both paths.
@@ -1067,6 +1089,25 @@ mod tests {
         assert_eq!(momentary_advance_phase(4090, 35, travel), 4096);
         assert_eq!(momentary_return_phase(turned, 5, travel), 54);
         assert_eq!(momentary_return_phase(4, 5, travel), 0);
+    }
+
+    #[optimize(size)]
+    #[test]
+    fn crowbar_hull_hits_a_headcrab_from_a_crouch_and_not_from_a_stand() {
+        // headcrab (-12,-12,0)..(12,12,24): centre 12 up, half-extents 12 and 12; the swing reaches
+        // 48 + 16 ahead; the head hull is 16 wide and 18 half-tall.
+        // Standing eye 64 above the floor: the crab's centre is 52 below the swing line.
+        assert!(!crowbar_hull_reaches(0, -52, 40, 12, 12, 64, 16, 18));
+        // Crouched eye 30 above the floor: 18 below the line, inside 12 + 18.
+        assert!(crowbar_hull_reaches(0, -18, 40, 12, 12, 64, 16, 18));
+        // The same crab 25 to the side is inside 12 + 16, 30 is not.
+        assert!(crowbar_hull_reaches(25, -18, 40, 12, 12, 64, 16, 18));
+        assert!(!crowbar_hull_reaches(30, -18, 40, 12, 12, 64, 16, 18));
+        // Out of reach ahead or behind the swing.
+        assert!(!crowbar_hull_reaches(0, -18, 65, 12, 12, 64, 16, 18));
+        assert!(!crowbar_hull_reaches(0, -18, -1, 12, 12, 64, 16, 18));
+        // A standing human (half 16 by 36) is struck over its whole height from a stand.
+        assert!(crowbar_hull_reaches(0, 50, 40, 16, 36, 64, 16, 18));
     }
 
     #[optimize(size)]
