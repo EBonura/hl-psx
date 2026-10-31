@@ -93,17 +93,23 @@ pub(crate) unsafe fn reset(m: &Map, nprops: usize) {
     if TABLES.is_none() {
         return;
     }
-    let mut order = [0u8; ROWS];
-    let mut n = 0usize;
     let mut pi = 0usize;
-    while pi < nprops && n < ROWS {
+    while pi < nprops {
         if PROP_KIND[pi] == KIND && PROP_HEALTH[pi] > 0 && PROP_DORMANT[pi] & PROP_RUNTIME_PRISONER == 0 {
-            if let Some(i) = ai().claim(pi as u8, KIND, grenade_flags(pi)) {
-                order[n] = i as u8;
-                n += 1;
-            }
+            ai().claim(pi as u8, KIND, grenade_flags(pi));
         }
         pi += 1;
+    }
+    form_groups();
+    // The rest recruit by radius, in the random order the retail start-up thinks run in.
+    let mut order = [0u8; ROWS];
+    let mut n = 0usize;
+    for i in 0..ROWS {
+        let named = (0..TABLES.map_or(0, |t| t.n_group())).any(|g| TABLES.is_some_and(|t| t.group(g).0 == ai().rows[i].prop));
+        if ai().rows[i].prop != NONE && ai().rows[i].squad == 0 && !named {
+            order[n] = i as u8;
+            n += 1;
+        }
     }
     let mut k = n;
     while k > 1 {
@@ -113,6 +119,49 @@ pub(crate) unsafe fn reset(m: &Map, nprops: usize) {
     }
     for k in 0..n {
         form_squad(m, order[k] as usize);
+    }
+}
+
+/// Squads named in the map (`netname`): the flagged leader and every member of the group, at most four.
+/// `StartMonster` lets only the leader recruit, and it takes the whole group.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn form_groups() {
+    let Some(t) = TABLES else {
+        return;
+    };
+    for g in 0..t.n_group() {
+        let (prop, group, flags) = t.group(g);
+        if flags & hl_format::ai::layout::GROUP_LEADER == 0 {
+            continue;
+        }
+        let Some(lead) = ai().row_of(prop) else {
+            continue;
+        };
+        let mut id = 1;
+        while id < 8 && ai().squads.leader[id] != NONE {
+            id += 1;
+        }
+        if id == 8 {
+            return;
+        }
+        ai().squads.leader[id] = lead as u8;
+        ai().rows[lead].squad = id as u8;
+        let mut size = 1;
+        for h in 0..t.n_group() {
+            let (member, mg, _) = t.group(h);
+            if mg == group && size < 4 {
+                if let Some(r) = ai().row_of(member) {
+                    if ai().rows[r].squad == 0 {
+                        ai().rows[r].squad = id as u8;
+                        size += 1;
+                    }
+                }
+            }
+        }
+        if size == 1 {
+            ai().leave_squad(lead);
+        }
     }
 }
 

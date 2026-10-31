@@ -475,15 +475,20 @@ impl Source {
 
     /// Schedule names in encoding order for `species` (index = schedule id in the blob), for trace tools.
     pub fn names(&self, species: &[&str]) -> Result<Vec<String>, Error> {
-        Ok(self.encode_inner(species)?.1)
+        Ok(self.encode_inner(species, &[])?.1)
     }
 
     /// Encode the tables of `species` and every parent they name. Schedule 0 is an empty placeholder.
     pub fn encode(&self, species: &[&str]) -> Result<Vec<u8>, Error> {
-        Ok(self.encode_inner(species)?.0)
+        Ok(self.encode_inner(species, &[])?.0)
     }
 
-    fn encode_inner(&self, wanted: &[&str]) -> Result<(Vec<u8>, Vec<String>), Error> {
+    /// Like [`Source::encode`], with the squad group rows `(prop, group, flags)` of the placed monsters.
+    pub fn encode_with_groups(&self, species: &[&str], groups: &[(u8, u8, u8)]) -> Result<Vec<u8>, Error> {
+        Ok(self.encode_inner(species, groups)?.0)
+    }
+
+    fn encode_inner(&self, wanted: &[&str], groups: &[(u8, u8, u8)]) -> Result<(Vec<u8>, Vec<String>), Error> {
         let mut set: Vec<String> = Vec::new();
         for w in wanted {
             let mut cur = Some(w.to_string());
@@ -584,6 +589,8 @@ impl Source {
         put(&mut out, 8, &pick_bytes, npick);
         put(&mut out, 12, &type_bytes, ntype);
         put(&mut out, 16, &species_bytes, nspecies);
+        let group_bytes: Vec<u8> = groups.iter().flat_map(|g| [g.0, g.1, g.2]).collect();
+        put(&mut out, 20, &group_bytes, groups.len() as u16);
         Ok((out, names))
     }
 }
@@ -606,14 +613,17 @@ pub fn shipped() -> Result<Source, Error> {
 
 /// The room trailer for a map that places monsters of these model type ids, or `None` when none of them
 /// run on the schedule runtime. Also returns the species names it carries.
-pub fn section_for_kinds(kinds: &[u16]) -> Result<Option<(Vec<u8>, Vec<&'static str>)>, Error> {
+pub fn section_for_kinds(
+    kinds: &[u16],
+    groups: &[(u8, u8, u8)],
+) -> Result<Option<(Vec<u8>, Vec<&'static str>)>, Error> {
     let mut names: Vec<&'static str> = kinds.iter().filter_map(|k| species_for_kind(*k)).collect();
     names.sort();
     names.dedup();
     if names.is_empty() {
         return Ok(None);
     }
-    let blob = shipped()?.encode(&names)?;
+    let blob = shipped()?.encode_with_groups(&names, groups)?;
     Ok(Some((trailer(&blob), names)))
 }
 
@@ -707,5 +717,18 @@ pick grunt states=COMBAT any=NEW_ENEMY none=ENEMY_DEAD when IN_SQUAD,NOT_LEADER 
         let mut s = Source::default();
         s.add("species a id=1\ntype a IDLE_STAND -> \"Missing\"\n").expect("parse");
         assert!(s.encode(&["a"]).is_err());
+    }
+
+    #[test]
+    fn squad_groups_round_trip() {
+        let blob = shipped()
+            .unwrap()
+            .encode_with_groups(&["grunt"], &[(3, 1, ai::layout::GROUP_LEADER), (4, 1, 0), (9, 2, 0)])
+            .unwrap();
+        let blob: &'static [u8] = Box::leak(blob.into_boxed_slice());
+        let t = ai::Tables::new(blob).unwrap();
+        assert_eq!(t.n_group(), 3);
+        assert_eq!(t.group(0), (3, 1, ai::layout::GROUP_LEADER));
+        assert_eq!(t.group(2), (9, 2, 0));
     }
 }

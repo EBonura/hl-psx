@@ -12408,7 +12408,13 @@ fn door_seals(
 
 /// Append the AI schedule-table trailer (`hl_format::ai`) when the map can hold a monster that runs on the
 /// schedule runtime; returns the bytes added.
-fn append_ai_tables(o: &mut Vec<u8>, ents: &[u8], hints: &[TransitionTypeHint]) -> Result<usize, String> {
+fn append_ai_tables(
+    o: &mut Vec<u8>,
+    ents: &[u8],
+    hints: &[TransitionTypeHint],
+    props: &[(u16, [i32; 3], i32, i16, u16, u16)],
+    scale: f32,
+) -> Result<usize, String> {
     let mut kinds: Vec<u16> = Vec::new();
     for block in entity_text(ents).split('{') {
         let class = ent_value(block, "classname").unwrap_or("");
@@ -12418,7 +12424,36 @@ fn append_ai_tables(o: &mut Vec<u8>, ents: &[u8], hints: &[TransitionTypeHint]) 
         }
     }
     kinds.extend(hints.iter().map(|h| h.ty & 0x0fff));
-    let Some((trailer, _)) = hl_sched::section_for_kinds(&kinds).map_err(|e| format!("ai tables: line {}: {}", e.line, e.msg))?
+    // Squad groups: a placed grunt with a `netname` belongs to the squad of that name, and the one flagged
+    // leader (spawnflag 32) recruits the rest (`CSquadMonster::StartMonster`). Bound to its prop by origin.
+    let mut group_names: Vec<String> = Vec::new();
+    let mut groups: Vec<(u8, u8, u8)> = Vec::new();
+    for block in entity_text(ents).split('{') {
+        if ent_value(block, "classname") != Some("monster_human_grunt") {
+            continue;
+        }
+        let Some(name) = ent_value(block, "netname").filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        let origin = to_world(ent_value(block, "origin").and_then(parse_vec3).unwrap_or([0.; 3]), scale);
+        let mut matches = props
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| p.0 & 0x0fff == 8 && p.0 & 0x8000 == 0 && p.1 == origin && *i < 255);
+        let (Some((index, _)), None) = (matches.next(), matches.next()) else {
+            return Err(format!("ai tables: grunt squad member at {origin:?} does not bind to one prop"));
+        };
+        let group = match group_names.iter().position(|n| n == name) {
+            Some(g) => g,
+            None => {
+                group_names.push(name.to_string());
+                group_names.len() - 1
+            }
+        } + 1;
+        let leader = parse_spawnflags(block) & 32 != 0;
+        groups.push((index as u8, group as u8, if leader { hl_format::ai::layout::GROUP_LEADER } else { 0 }));
+    }
+    let Some((trailer, _)) = hl_sched::section_for_kinds(&kinds, &groups).map_err(|e| format!("ai tables: line {}: {}", e.line, e.msg))?
     else {
         return Ok(0);
     };
@@ -16212,7 +16247,7 @@ fn cook_pass(
 
     // Schedule tables for the monsters that run on the AI runtime: the placed ones, the monstermaker
     // types, and every type that can arrive by a changelevel carry (the transition hints).
-    let ai_bytes = append_ai_tables(&mut o, bsp.lump(LUMP_ENTITIES), &transition_hints)?;
+    let ai_bytes = append_ai_tables(&mut o, bsp.lump(LUMP_ENTITIES), &transition_hints, &props, scale)?;
     if ai_bytes != 0 {
         eprintln!("  ai tables: {ai_bytes} bytes");
     }

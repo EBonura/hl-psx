@@ -242,8 +242,8 @@ pub mod ty {
 
 /// Layout of the tables blob (offsets from the blob start).
 pub mod layout {
-    /// Header: five `(u16 offset, u16 count)` pairs for schedules, tasks, picks, type rows,
-    /// species, then 4 reserved bytes.
+    /// Header: six `(u16 offset, u16 count)` pairs for schedules, tasks, picks, type rows,
+    /// species and squad groups, then 4 reserved bytes.
     pub const HEADER_BYTES: usize = 24;
     /// `u32 interrupt | u16 sound | u16 first_task | u8 task_count | u8 reserved`.
     pub const SCHED_BYTES: usize = 10;
@@ -257,6 +257,11 @@ pub mod layout {
     /// `u8 id | u8 parent | u8 flags | u8 reserved | u16 r1_min | u16 r1_max | i16 cone_q12 |
     /// u16 r2_min | u16 r2_max | u16 melee_range`.
     pub const SPECIES_BYTES: usize = 16;
+    /// `u8 prop | u8 group | u8 flags`: a placed monster's squad group (its `netname`, numbered from 1 per
+    /// map) and `GROUP_LEADER` for the one flagged leader.
+    pub const GROUP_BYTES: usize = 3;
+    /// Group row flag: the flagged squad leader (`SF_SQUADMONSTER_LEADER`).
+    pub const GROUP_LEADER: u8 = 1;
 }
 
 /// Why a table blob was refused.
@@ -310,14 +315,32 @@ pub struct Species {
     pub melee_range: u16,
 }
 
+/// Byte `o` of a table blob.
+///
+/// SAFETY of the unchecked read: `Tables::new` checks every offset, count and index of a blob once on the
+/// host (the cooker runs it), and the guest only wraps blobs the cooker wrote (`Tables::trusted`), so no
+/// accessor reads past the end. Skipping the bounds check removes a panic call site from every read.
+#[inline(always)]
+fn byte(d: &[u8], o: usize) -> u8 {
+    #[cfg(target_arch = "mips")]
+    {
+        // SAFETY: see above.
+        unsafe { *d.get_unchecked(o) }
+    }
+    #[cfg(not(target_arch = "mips"))]
+    {
+        d[o]
+    }
+}
+
 #[inline(always)]
 fn u16le(d: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([d[o], d[o + 1]])
+    u16::from_le_bytes([byte(d, o), byte(d, o + 1)])
 }
 
 #[inline(always)]
 fn u32le(d: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
+    u32::from_le_bytes([byte(d, o), byte(d, o + 1), byte(d, o + 2), byte(d, o + 3)])
 }
 
 impl Tables {
@@ -336,6 +359,7 @@ impl Tables {
             ("picks", t.pick_off(), t.n_pick(), PICK_BYTES),
             ("types", t.type_off(), t.n_type(), TYPE_BYTES),
             ("species", t.species_off(), t.n_species(), SPECIES_BYTES),
+            ("groups", t.group_off(), t.n_group(), GROUP_BYTES),
         ];
         for (name, off, n, size) in parts {
             if off + n * size > d.len() {
@@ -407,6 +431,19 @@ impl Tables {
     pub fn n_species(&self) -> usize {
         u16le(self.d, 18) as usize
     }
+    pub fn group_off(&self) -> usize {
+        u16le(self.d, 20) as usize
+    }
+    pub fn n_group(&self) -> usize {
+        u16le(self.d, 22) as usize
+    }
+
+    /// `(prop, group, flags)` of group row `i`.
+    #[inline]
+    pub fn group(&self, i: usize) -> (u8, u8, u8) {
+        let o = self.group_off() + i * layout::GROUP_BYTES;
+        (byte(self.d, o), byte(self.d, o + 1), byte(self.d, o + 2))
+    }
 
     /// Schedule header `id` (an index; schedule 0 is the idle "no schedule" placeholder).
     #[inline]
@@ -416,14 +453,14 @@ impl Tables {
             interrupt: u32le(self.d, o),
             sound: u16le(self.d, o + 4),
             first: u16le(self.d, o + 6),
-            count: self.d[o + 8],
+            count: byte(self.d, o + 8),
         }
     }
 
     #[inline]
     fn task_at(&self, i: usize) -> (u8, i16) {
         let o = self.task_off() + i * layout::TASK_BYTES;
-        (self.d[o], u16le(self.d, o + 1) as i16)
+        (byte(self.d, o), u16le(self.d, o + 1) as i16)
     }
 
     /// Task `i` of schedule `s`.
@@ -436,11 +473,11 @@ impl Tables {
     pub fn pick(&self, i: usize) -> Pick {
         let o = self.pick_off() + i * layout::PICK_BYTES;
         Pick {
-            species: self.d[o],
-            pred_a: self.d[o + 2],
-            pred_b: self.d[o + 3],
-            ty: self.d[o + 4],
-            effect: self.d[o + 5],
+            species: byte(self.d, o),
+            pred_a: byte(self.d, o + 2),
+            pred_b: byte(self.d, o + 3),
+            ty: byte(self.d, o + 4),
+            effect: byte(self.d, o + 5),
             states: u16le(self.d, o + 6),
             any_of: u32le(self.d, o + 8),
             none_of: u32le(self.d, o + 12),
@@ -452,18 +489,18 @@ impl Tables {
     #[inline]
     pub fn type_row(&self, i: usize) -> (u8, u8, u8, u8) {
         let o = self.type_off() + i * layout::TYPE_BYTES;
-        (self.d[o], self.d[o + 1], self.d[o + 2], self.d[o + 3])
+        (byte(self.d, o), byte(self.d, o + 1), byte(self.d, o + 2), byte(self.d, o + 3))
     }
 
     /// Parameters of species `id`, if the map carries it.
     pub fn species(&self, id: u8) -> Option<Species> {
         for i in 0..self.n_species() {
             let o = self.species_off() + i * layout::SPECIES_BYTES;
-            if self.d[o] == id {
+            if byte(self.d, o) == id {
                 return Some(Species {
                     id,
-                    parent: self.d[o + 1],
-                    flags: self.d[o + 2],
+                    parent: byte(self.d, o + 1),
+                    flags: byte(self.d, o + 2),
                     r1_min: u16le(self.d, o + 4),
                     r1_max: u16le(self.d, o + 6),
                     cone_q12: u16le(self.d, o + 8) as i16,
