@@ -81,6 +81,10 @@ fn i32le(b: &[u8], o: usize) -> Option<i32> {
     u32le(b, o).map(|v| v as i32)
 }
 
+/// A brush no taller than the standing hull (72) plus its crouch difference counts as low:
+/// the ducked player can reach its top and bottom, so it keeps its own crouch hull.
+const LOW_BRUSH_HEIGHT: f32 = 90.0;
+
 fn model_headnode(models: &[u8], model: usize, hull: usize) -> Option<i32> {
     if hull >= 4 {
         return None;
@@ -14746,23 +14750,36 @@ fn cook_pass(
     }
     // GoldSrc ducks against each submodel's own hull 3 (32x32x36), so a
     // crouched player fits holes in doors that the standing hull cannot
-    // (c1a0c's broken elevator-door glass). Cook the hull-3 root of every
-    // door; it rides in bits 16..30 of the record's `head`.
+    // (c1a0c's broken elevator-door glass), and stands on a low slab the
+    // standing hull would count as a wall (c1a1c's vent floor bars, 1 unit
+    // thick, whose standing hull reaches 36 above their top). Cook the hull-3
+    // root of every door with a crouch-only hole and of every low brush; it
+    // rides in bits 16..30 of the record's `head`.
     let ent_head3_raw: Vec<i32> = ents
         .iter()
         .map(|e| {
-            // Doors only: they are the brushes with authored holes a ducked
-            // player passes through, and every other brush's hull 3 would
-            // cost clipnode RAM in the largest maps for nothing.
-            // Only a door whose crouch hull has more structure than its
-            // standing hull (a hole or a step) can let a ducked player through
-            // where a standing one cannot, and only small trees (a large one is a whole
-            // machine, and the RAM left in the biggest maps is about a kilobyte).
+            // A door whose crouch hull has more structure than its standing
+            // hull (a hole or a step) can let a ducked player through where a
+            // standing one cannot. Any other brush matters to a ducked player
+            // only where its top or bottom lies within the 18 units by which
+            // the two hulls differ, which a brush taller than the standing
+            // hull never does at the heights a player walks (its ends are out
+            // of reach), so the other brushes get a hull 3 when they are low.
+            // Only small trees (a large one is a whole machine, and the RAM
+            // left in the biggest maps is about a kilobyte).
             let hull_nodes = |root: i32| clip_tree_nodes(clipnodes, root);
             let h3 = model_headnode(models, e.submodel as usize, 3).unwrap_or(0);
             let h1 = model_headnode(models, e.submodel as usize, 1).unwrap_or(0);
-            if e.head != 0 && e.kind == 1 && hull_nodes(h3) > hull_nodes(h1) && hull_nodes(h3) <= 40
-            {
+            let height = match (
+                f32le(models, e.submodel as usize * SZ_MODEL + 8),
+                f32le(models, e.submodel as usize * SZ_MODEL + 20),
+            ) {
+                (Some(low), Some(high)) => high - low,
+                _ => f32::MAX,
+            };
+            let crouch_hole = e.kind == 1 && hull_nodes(h3) > hull_nodes(h1);
+            let low_brush = e.kind != 1 && height <= LOW_BRUSH_HEIGHT;
+            if e.head != 0 && h3 != 0 && (crouch_hole || low_brush) && hull_nodes(h3) <= 40 {
                 h3
             } else {
                 0
