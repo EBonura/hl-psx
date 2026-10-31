@@ -475,6 +475,7 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     let rounds = if head == "@kill" { num("rounds", 8)? } else { 1 };
     let turn = |v: i32| Sample { turn: v, ..Sample::default() };
     let look = |v: i32| Sample { look: v, ..Sample::default() };
+    let with_pitch = get("pitch") != Some("0");
     for round in 0..rounds {
         // The first round brings the view on target (a coarse turn each way, then the dead-band triple of
         // the smallest turn, yaw then pitch); later rounds only trim, because the target moves while the
@@ -493,12 +494,16 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
             out.push(hold(turn(60), target.or_dead(target.yaw(lat, Aim::Coarse(true)))));
             out.push(hold(turn(-60), target.or_dead(target.yaw(lat, Aim::Coarse(false)))));
             yaw_fine(&mut out);
-            out.push(hold(look(127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(true)))));
-            out.push(hold(look(-127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(false)))));
-            pitch_fine(&mut out);
+            if with_pitch {
+                out.push(hold(look(127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(true)))));
+                out.push(hold(look(-127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(false)))));
+                pitch_fine(&mut out);
+            }
         }
         yaw_fine(&mut out);
-        pitch_fine(&mut out);
+        if with_pitch {
+            pitch_fine(&mut out);
+        }
         if head == "@kill" {
             let on = format!("({}) && ({})", target.yaw(lat, Aim::Within), target.pitch(vlat, aimup, Aim::Within));
             let mut s = Sample::default();
