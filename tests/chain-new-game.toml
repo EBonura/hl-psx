@@ -8410,41 +8410,28 @@ tape_rebase = true
 timeout = 1240
 
 [[step]]
-lstick = [83, 128]
+lstick = [58, 128]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1082 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1060 }
 timeout = 360
 
 [[step]]
 label = "c1a1f controller tape 32"
 tape = "tests/chain/tapes/c1a1f-32.pxtape"
 tape_rebase = true
-timeout = 1232
+timeout = 1224
 
 [[step]]
 lstick = [173, 128]
 rstick = [128, 128]
-press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1074 }
-timeout = 360
+press = ["triangle"]
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1073 }
+timeout = 480
 
 [[step]]
 label = "c1a1f controller tape 33"
 tape = "tests/chain/tapes/c1a1f-33.pxtape"
-tape_rebase = true
-timeout = 1232
-
-[[step]]
-lstick = [83, 128]
-rstick = [128, 128]
-press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1082 }
-timeout = 360
-
-[[step]]
-label = "c1a1f controller tape 34"
-tape = "tests/chain/tapes/c1a1f-34.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -8496,6 +8483,12 @@ size=2
 op="between"
 value=1
 value_hi=100
+
+[[step]]
+label = "c1a1f controller tape 34"
+tape = "tests/chain/tapes/c1a1f-34.pxtape"
+tape_rebase = true
+timeout = 1248
 
 [[step]]
 lstick = [128, 1]
