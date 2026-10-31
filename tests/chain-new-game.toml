@@ -10,19 +10,19 @@ max_ticks = 260000
 
 # Bound to the build this journey was written against.
 [addr]
-BEAM_RAND_END = 0x801c74a8
-ENT_CACHE = 0x801ebf84
-ENT_PHASE = 0x801eec84
-LOGIC_PLAYER_CLIP_AMMO = 0x800cacd0
-LOGIC_PLAYER_HEALTH = 0x800ca884
-LOGIC_PLAYER_PITCH = 0x801e86e8
-LOGIC_PLAYER_POS = 0x801d3c78
-LOGIC_PLAYER_SUIT = 0x801d4b94
-LOGIC_PLAYER_YAW = 0x801d3c84
-PLAYER_ON_GROUND = 0x801d3c90
-PROP_POS = 0x801eae7c
-SIM_NOW = 0x801ead60
-WORLD_ARENA = 0x800e6ae8
+BEAM_RAND_END = 0x801c7568
+ENT_CACHE = 0x801ec044
+ENT_PHASE = 0x801eed44
+LOGIC_PLAYER_CLIP_AMMO = 0x800cad90
+LOGIC_PLAYER_HEALTH = 0x800ca944
+LOGIC_PLAYER_PITCH = 0x801e87a8
+LOGIC_PLAYER_POS = 0x801d3d38
+LOGIC_PLAYER_SUIT = 0x801d4c54
+LOGIC_PLAYER_YAW = 0x801d3d44
+PLAYER_ON_GROUND = 0x801d3d50
+PROP_POS = 0x801eaf3c
+SIM_NOW = 0x801eae20
+WORLD_ARENA = 0x800e6ba8
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
@@ -8579,7 +8579,46 @@ value_hi=100
 label = "c1a1f controller tape 34"
 tape = "tests/chain/tapes/c1a1f-34.pxtape"
 tape_rebase = true
-timeout = 1248
+timeout = 1288
+
+[[step]]
+lstick = [98, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1081 }
+timeout = 480
+
+[[step]]
+label = "c1a1f controller tape 35"
+tape = "tests/chain/tapes/c1a1f-35.pxtape"
+tape_rebase = true
+timeout = 1240
+
+[[step]]
+lstick = [158, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-1075 }
+timeout = 480
+
+[[step]]
+label = "c1a1f controller tape 36"
+tape = "tests/chain/tapes/c1a1f-36.pxtape"
+tape_rebase = true
+timeout = 1240
+
+[[step]]
+lstick = [98, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-1081 }
+timeout = 480
+
+[[step]]
+label = "c1a1f controller tape 37"
+tape = "tests/chain/tapes/c1a1f-37.pxtape"
+tape_rebase = true
+timeout = 1240
 
 [[step]]
 lstick = [128, 1]

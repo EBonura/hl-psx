@@ -1362,6 +1362,8 @@ map c1a1f next c1a1b
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
   # crouch first and settle, then crawl: a hull still standing when it reaches the hole stops at the wall (m1i)
   12 duck
+  # the hole is y -1084..-1072. The slide zombie used to claw the player here and its knock settled the alignment; now that it dies in its sequence (as in the reference) nothing moves him, and the crouched s45 hold above can end on y -1086: settle on the middle of the hole before crawling.
+  @align s-30 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=-1081 hi=-1075 timeout=80 settle=10
   @hold f127 duck until sym=WORLD_ARENA offset=4 size=4 op=eq value=8133 timeout=240
 
 
