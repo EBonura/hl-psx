@@ -230,6 +230,14 @@ enum Item {
         timeout: u32,
     },
     Raw(String),
+    /// A gate loop step: `body` (holds and neutral waits only) repeats as a named block until the
+    /// `until` condition holds, at most `max_iter` passes and `timeout` polls.
+    Loop {
+        body: Vec<Item>,
+        until: String,
+        max_iter: u32,
+        timeout: u32,
+    },
     /// Pause, Save Game to Card 1 Manual, then persist the card (`card-step-NNN.mcd` in the
     /// report folder). Later checkpoints no longer assert `card_unchanged`.
     Save,
@@ -599,7 +607,8 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
 /// shoots whatever living prop (of `kind`) comes within `near` units, nearest first, for `for` polls. Each
 /// round is `@kill near=` (no cost when nothing is in range), `sleep` neutral polls, and, when a `stance` is
 /// given, `@aim rel=` back to the direction the enemies come from (skipped at once while one is in range).
-/// The loop is unrolled at compile time, so the polls spent idle are the only cost of a quiet stretch.
+/// Without `until=EXPR` the loop is unrolled at compile time (a long guard makes a huge journey); with it the
+/// round is one gate block repeated until EXPR holds and nothing is in range, at most `for` polls.
 fn fight_items(kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
     let num = |k: &str, d: i64| -> Result<i64, String> {
@@ -623,22 +632,41 @@ fn fight_items(kv: &[(String, String)]) -> Result<Vec<Item>, String> {
             ("timeout".into(), "60".into()),
         ]
     });
+    let topup = num("reload", 0)?;
+    let mut round = Vec::new();
+    if topup > 0 {
+        // Reload when the magazine is under `reload` rounds (ends at once when it is not).
+        let mut sample = Sample::default();
+        sample.buttons = button_for("reload").unwrap();
+        let until = expr_cond(format!("i16(LOGIC_PLAYER_CLIP_AMMO) >= {topup} || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0"));
+        round.push(Item::Hold { sample, until, timeout: 80 });
+    }
+    round.extend(aim_items("@kill", &kill)?);
+    round.push(Item::Run(sleep as u32, Sample::default()));
+    if let Some(st) = &stance {
+        round.extend(aim_items("@aim", st)?);
+    }
+    if let Some(end) = get("until") {
+        // A gate loop: the round is written once and repeats until `until` holds AND nothing living of
+        // that kind is within `near` (the quiet check), at most `for` polls.
+        let near_n: i64 = near.parse().map_err(|_| "@fight: bad near".to_string())?;
+        let kind: Option<i64> = get("kind").and_then(|v| v.parse().ok());
+        let below: Option<i64> = get("below").and_then(|v| v.parse().ok());
+        let quiet = format!("({}) >= 2000000000", nearest_prop_expr(near_n, kind, below));
+        let end = end.trim_matches('"');
+        let until = expr_cond(format!("({end}) && {quiet}"));
+        let max_iter = (total / (sleep + 1) + 1) as u32;
+        return Ok(vec![Item::Loop { body: round, until, max_iter, timeout: total as u32 }]);
+    }
+    // No `until`: unrolled at compile time, `for` polls of rounds.
     let mut out = Vec::new();
     let mut spent = 0;
-    let topup = num("reload", 0)?;
     while spent < total {
-        if topup > 0 {
-            // Reload when the magazine is under `reload` rounds (ends at once when it is not).
-            let mut sample = Sample::default();
-            sample.buttons = button_for("reload").unwrap();
-            let until = expr_cond(format!("i16(LOGIC_PLAYER_CLIP_AMMO) >= {topup} || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0"));
-            out.push(Item::Hold { sample, until, timeout: 80 });
-        }
-        out.extend(aim_items("@kill", &kill)?);
-        out.push(Item::Run(sleep as u32, Sample::default()));
-        if let Some(st) = &stance {
-            out.extend(aim_items("@aim", st)?);
-        }
+        out.extend(round.iter().map(|i| match i {
+            Item::Hold { sample, until, timeout } => Item::Hold { sample: *sample, until: until.clone(), timeout: *timeout },
+            Item::Run(n, s) => Item::Run(*n, *s),
+            _ => unreachable!("a fight round holds only holds and rests"),
+        }));
         spent += sleep + 1;
     }
     Ok(out)
@@ -1062,6 +1090,36 @@ const WEAPON_VIEWMODELS: [(&str, u8); 14] = [
 /// DefaultDeploy blocks attacks for 0.5 s after a weapon is drawn.
 const WEAPON_DEPLOY_POLLS: u32 = 14;
 
+/// One gate step that holds a stick and buttons until a condition holds (`prefix` is `[[step]]` or `[[block.step]]`).
+fn hold_toml(prefix: &str, sample: &Sample, until: &str, timeout: u32) -> Result<String, String> {
+    let e = encode(*sample, &mut Vec::new())?;
+    let mut press: Vec<&str> = Vec::new();
+    for bit in [BTN_SQUARE, BTN_CROSS, BTN_TRIANGLE, BTN_R2, BTN_L2, BTN_CIRCLE, BTN_R1, BTN_L1, BTN_L3] {
+        if sample.buttons & bit != 0 {
+            press.push(match bit {
+                BTN_SQUARE => "square",
+                BTN_CROSS => "cross",
+                BTN_TRIANGLE => "triangle",
+                BTN_R2 => "r2",
+                BTN_L2 => "l2",
+                BTN_CIRCLE => "circle",
+                BTN_R1 => "r1",
+                BTN_L1 => "l1",
+                _ => "l3",
+            });
+        }
+    }
+    let _ = button_name(0);
+    Ok(format!(
+        "\n{prefix}\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\nhold_until = {until}\ntimeout = {}\n",
+        e[4],
+        e[5],
+        e[2],
+        e[3],
+        timeout * GATE_TICKS_PER_POLL
+    ))
+}
+
 /// The pause menu's Save Game to Card 1 Manual (the steps `save-repin.toml` proves), then the card
 /// image is persisted into the report folder.
 const SAVE_STEPS: &str = "
@@ -1191,6 +1249,7 @@ fn compile(o: &Opts) -> Result<(), String> {
     }
     let mut total_samples = 0usize;
     let mut card_dirty = false;
+    let mut loop_n = 0;
     let mut ids = std::collections::HashMap::new();
     let ids_text = fs::read_to_string(o.repo.join("tests/chain/map-ids.txt")).unwrap_or_default();
     for line in ids_text.lines().filter(|l| !l.starts_with('#')) {
@@ -1254,15 +1313,26 @@ fn compile(o: &Opts) -> Result<(), String> {
                 }
                 Item::Hold { sample, until, timeout } => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
-                    let e = encode(*sample, &mut Vec::new())?;
-                    let mut press: Vec<&str> = Vec::new();
-                    for bit in [BTN_SQUARE, BTN_CROSS, BTN_TRIANGLE, BTN_R2, BTN_L2, BTN_CIRCLE, BTN_R1, BTN_L1, BTN_L3] {
-                        if sample.buttons & bit != 0 {
-                            press.push(match bit { BTN_SQUARE => "square", BTN_CROSS => "cross", BTN_TRIANGLE => "triangle", BTN_R2 => "r2", BTN_L2 => "l2", BTN_CIRCLE => "circle", BTN_R1 => "r1", BTN_L1 => "l1", _ => "l3" });
+                    t.push_str(&hold_toml("[[step]]", sample, until, *timeout)?);
+                }
+                Item::Loop { body, until, max_iter, timeout } => {
+                    flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
+                    loop_n += 1;
+                    let _ = writeln!(t, "\n[[block]]\nname = \"round{loop_n}\"");
+                    for it in body {
+                        match it {
+                            Item::Hold { sample, until, timeout } => t.push_str(&hold_toml("[[block.step]]", sample, until, *timeout)?),
+                            Item::Run(n, s) if s.neutral() => {
+                                let _ = writeln!(t, "\n[[block.step]]\nwait = {}", n * 3);
+                            }
+                            _ => return Err("a loop body holds only holds and neutral rests".into()),
                         }
                     }
-                    let _ = writeln!(t, "\n[[step]]\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\nhold_until = {until}\ntimeout = {}", e[4], e[5], e[2], e[3], timeout * GATE_TICKS_PER_POLL);
-                    let _ = button_name(0);
+                    let _ = writeln!(
+                        t,
+                        "\n[[step]]\nlabel = \"loop round{loop_n}\"\nblock = \"round{loop_n}\"\nuntil = {until}\nmax_iter = {max_iter}\ntimeout = {}",
+                        timeout * GATE_TICKS_PER_POLL
+                    );
                 }
                 Item::Stop => {}
                 Item::Save => {

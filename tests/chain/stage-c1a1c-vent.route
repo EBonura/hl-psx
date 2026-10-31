@@ -1,4 +1,4 @@
-@journey name=hl-stage-c1a1c-vent title="Half-Life c1a1c stage: resume from the bridge approach save, cross the pipes to the vent box, draw the crowbar and break the vent cover" prologue=load card_fixture=tests/cards/c1a1c-bridge.mcd card_sha256=2862e710927fd200c0205d14949032f005a788cf6c3ae2b6f8b3a967b0dc5fc4 max_ticks=60000
+@journey name=hl-stage-c1a1c-vent title="Half-Life c1a1c stage: resume from the bridge approach save, cross the pipes to the vent box, draw the crowbar and break the vent cover" prologue=load card_fixture=tests/cards/c1a1c-bridge.mcd card_sha256=8ba6c28d5d3ddee94ad6e8b7841c358ff67172df1a3e6c2a503c59cd7bb39b8c max_ticks=60000
 # Resumes from the memory-card save the chain writes at the bridge approach (explore: savep, `@save` after yv5).
 # The map restarts fresh from the save, so the lift and the gauntlet are not played here.
 map c1a1c next x

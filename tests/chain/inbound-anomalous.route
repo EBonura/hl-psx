@@ -2283,6 +2283,41 @@ map c1a1c next c1a1d
   @hold reload until expr="i16(LOGIC_PLAYER_CLIP_AMMO) >= 17 || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0" timeout=80
   @checkpoint qy1
   @probe
+  @aim rel=0,-20,-300 lat=20 vlat=40 timeout=60
+  @fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=6 until="i16(TRAIN_OFF[2]) >= 1890"
+  @checkpoint qz1
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @level
+  @hold s-127 until expr="i32(LOGIC_PLAYER_POS[0]) >= 742" timeout=40
+  @face 60 left
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[2]) >= -850" timeout=100
+  @hold s-38 until expr="i32(LOGIC_PLAYER_POS[0]) <= 756" timeout=60
+  @hold s38 until expr="i32(LOGIC_PLAYER_POS[0]) >= 742" timeout=40
+  @hold s-38 until expr="i32(LOGIC_PLAYER_POS[0]) <= 756" timeout=40
+  @hold f60 until expr="i32(LOGIC_PLAYER_POS[2]) >= -798" timeout=100
+  @hold use until expr="i16(LOGIC_PLAYER_HEALTH) >= 100 || i16(LOGIC_COUNTER[73]) == 0" timeout=200
+  4
+  @checkpoint r4
+  @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=30 value_hi=100
-  # the headcrab gauntlet (@fight, 20 crabs) is not in the committed chain yet: its unrolled guard loop makes the journey 42 MB (limit 5 MB). explore/c1c.clean.block has it.
+  @face 1985 right
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[2]) <= -1200" timeout=120
+  @hold s-127 until expr="i32(LOGIC_PLAYER_POS[0]) >= 788" timeout=40
+  @hold t60 until expr="i16(LOGIC_PLAYER_YAW) >= 3040 && i16(LOGIC_PLAYER_YAW) < 3400" timeout=60
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) <= 752" timeout=40
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) <= 660" timeout=40
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) <= 390" timeout=80
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) <= 100" timeout=80
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) <= -470" timeout=80
+  @face 3940 right
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[2]) >= -830" timeout=100
+  @checkpoint yv5
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=30 value_hi=100
+  @assert sym=LOGIC_PLAYER_POS size=4 signed offset=0 op=between value=-620 value_hi=-540
+  @assert sym=LOGIC_PLAYER_POS size=4 signed offset=8 op=between value=-850 value_hi=-790
+  # The save here is the card tests/cards/c1a1c-bridge.mcd (stage-c1a1c-vent resumes from it).
+  @save
   @stop

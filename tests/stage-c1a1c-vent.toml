@@ -9,7 +9,7 @@ card_observe = true
 max_ticks = 60000
 [card_fixture]
 path = "tests/cards/c1a1c-bridge.mcd"
-sha256 = "2862e710927fd200c0205d14949032f005a788cf6c3ae2b6f8b3a967b0dc5fc4"
+sha256 = "8ba6c28d5d3ddee94ad6e8b7841c358ff67172df1a3e6c2a503c59cd7bb39b8c"
 
 # Bound to the build this journey was written against.
 [addr]

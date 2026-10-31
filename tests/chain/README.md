@@ -101,8 +101,9 @@ north), the canal ring (planner legs), the valve, the flooded swim to the exit g
 for it on `TRAIN_OFF[8]`, then climb) and the changelevel. After the climb the player stands on the north lip of the hole: step
 east round it before walking south. c1a1c: the planner legs to the catwalk, the clip pickup, the lever, the jump over the south
 lip onto the lift, and the walk back to the deck's north edge with the magazine reloaded. The headcrab gauntlet (`@fight`, 20
-crabs) is not in the committed chain: `@fight` unrolls its guard loop into one gate step per poll group and the journey comes to
-42 MB (land.sh refuses files over 5 MB). The gate needs a loop step, or `@fight` a much cheaper encoding, before it can join.
+crabs) is in the chain as a gate loop: the guard round is written once as a `[[block]]` and one loop step repeats it until the
+lift has arrived (`TRAIN_OFF[2] >= 1890`) and no crab is in range (psoxide-gate TESTING.md, "Loops and blocks"; the same fight
+unrolled was a 42 MB journey). The chain ends at the bridge approach with a game save, which is the card the stage journeys resume from.
 A `@face` that has to turn through its last 59 units can stall in a chain (the single-step nudge turns nothing): use a
 `@hold t60 until expr=...` with a wide window when the exact yaw does not matter.
 
@@ -118,7 +119,7 @@ can stop against a wall one unit short of the value the retail engine reached).
 ## Gate expressions and closed-loop aim
 
 Gate requirement: a journey with `expr=` conditions (`chain-new-game.toml` and the `@aim`/`@kill` legs) needs a
-`psoxide-gate` built from PSoXide-emulator 1d4f6d4e or later, taken from `PATH` or `$PSOXIDE_GATE` (the build in
+`psoxide-gate` built from PSoXide-emulator 1d4f6d4e or later (358eae9a or later for the gauntlet's loop step), taken from `PATH` or `$PSOXIDE_GATE` (the build in
 `PSoXide-emulator/target/pgo/release` after `make build-pgo`). The gate is not chosen by `components.lock.json`: the lock's
 emulator revision only decides which emulator crates `.psoxide` hydrates, and it stays at 0e87b3a because 1d4f6d4e's frontend
 needs the `psx-webdisc` workspace dependency, which the pinned editor component's root `Cargo.toml` does not declare
@@ -146,7 +147,9 @@ any slot numbering and costs no ticks while nothing is in range. `@aim rel=DX,DU
 relative to the player (a stance: where the enemies come from; `unless=R` ends it at once when a prop is within R).
 `@fight near=R [kind=K] [below=B] [aimup=N] [lat=8] [stance=DX,DUP,DY] [reload=N] [for=300] [sleep=10]` is a guard for `for` polls:
 each round shoots whatever is in range (`@kill near=`), sleeps, and goes back to the stance; `reload=N` reloads when the magazine
-is under N. The loop is unrolled at compile time. c1a1c uses it for the headcrab gauntlet on the lift
+is under N. Without `until` the loop is unrolled at compile time; with `until="EXPR"` the round is written once as a gate block and
+repeated until EXPR holds and nothing of that kind is in range, at most `for` polls (a gate that has loops is needed: PSoXide-emulator
+358eae9a or later). c1a1c uses it for the headcrab gauntlet on the lift
 (`@fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=6`).
 
 ## Stages: save, load and resume
