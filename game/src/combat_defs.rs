@@ -191,7 +191,7 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
     mdef_atk(60, 48, 100, AI_RANGED, 16, 1024, 8, 4), // 10 alien_grunt (hornet volleys inside 1024 units)
     mdef_atk(60, 40, 100, AI_RANGED, 16, 2048, 3, 14), // 11 alien_controller (energy balls out to 2048)
-    mdef(25, 32, 170, AI_IDLE),                        // 12 barnacle (retail spawns it with 25)
+    mdef(25, -16, 170, AI_IDLE),                       // 12 barnacle (retail spawns it with 25; hangs below its origin)
     mdef(16, 8, 40, AI_IDLE),                          // 13 leech (swimmer; species::tick_leech)
     mdef(1, 4, 30, AI_IDLE),                           // 14 cockroach (passive; any hit kills it)
     mdef(100, 48, 90, AI_IDLE),                        // 15 gman (passive)

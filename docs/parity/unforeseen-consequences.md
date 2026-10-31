@@ -307,7 +307,7 @@ Inventory rows first met here (10-15 inventory, 9 DIFF or MISSING): 0 fixed on m
 | BN02 Hauling speed 80 u/s | Port hauls slower; the source says 80. The comment cites the retail trace, so the SDK build may differ from the reference | open |
 | BN03 Prey: any enemy by relationship (player, scientists, Barney, mari | Marines are never eaten by barnacles (c1a3 and Surface Tension rooms). Column is a radius instead of the box | open |
 | BN05 NPC prey: dangles 10 s while being chewed (bite sound ~1 per 5 s) | NPCs die as soon as they reach the mouth; no gib shower | open |
-| BN06 Health 25; any DMG_CLUB hit kills it outright | One crowbar swing kills a barnacle in retail; port needs several (crowbar 10 per hit). Makes the crowbar a weaker barnacle answer | open |
+| BN06 Health 25; any DMG_CLUB hit kills it outright | Club kill fixed 10-31: the port's aim point for a barnacle was its origin + 32, inside the ceiling it hangs from, so the crowbar cone and bullets were stopped by the world and never reached it (c1a2 soda room: health stayed 25 over 50+ ticks of fire and while hooked). The aim point is now origin - 16, the middle of the retail hull (-32..0): one crowbar swing at the top of the haul kills it before the bite (journey parity-barnacle). OPEN: bullets still do not damage a barnacle that has never been drawn (excluding kind 12 from the render occlusion probe, which tests points above the origin inside the ceiling, made the glock hit on a test build; the change moves 2 functions, so it needs a layout and journey rebind), and the body is not drawn from below (only the tongue) | club fixed, bullets and body open |
 
 ### c1a1d
 
