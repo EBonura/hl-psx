@@ -38,6 +38,8 @@ pub mod env_sound_audio;
 pub mod gonarch;
 #[path = "../../../game/src/hecu_grenades.rs"]
 pub mod hecu_grenades;
+#[path = "../../../game/src/prop_pool.rs"]
+pub mod prop_pool;
 #[path = "../../../game/src/leech.rs"]
 pub mod leech;
 #[path = "../../../game/src/player_rules.rs"]

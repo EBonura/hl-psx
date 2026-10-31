@@ -114,7 +114,7 @@ pub(crate) unsafe fn osprey_update_goal(m: &Map) {
 #[optimize(size)]
 pub(crate) unsafe fn osprey_has_dead() -> bool {
     let mut pi = 0;
-    while pi < MAX_PROPS {
+    while pi < LIVE_PROPS {
         if OSPREY.grunts[pi >> 5] & (1 << (pi & 31)) != 0
             && (PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0)
         {
@@ -146,7 +146,7 @@ pub(crate) unsafe fn osprey_deploy(m: &Map) {
             op[2] + ((c * f - s * side) >> 12),
         ];
         o.repel[r] = 0xff;
-        while pi < MAX_PROPS {
+        while pi < LIVE_PROPS {
             if o.grunts[pi >> 5] & (1 << (pi & 31)) != 0
                 && (PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0)
             {
@@ -254,7 +254,7 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
             if think
                 && (0..4).all(|r| {
                     let g = o.repel[r] as usize;
-                    g >= MAX_PROPS
+                    g >= LIVE_PROPS
                         || PROP_HEALTH[g] == 0
                         || (PROP_DORMANT[g] & PROP_RUNTIME_PRISONER) == 0
                 })
@@ -318,7 +318,7 @@ pub(crate) unsafe fn tick_osprey(m: &Map, movers: &[phys::Mover]) {
     let mut r = 0;
     while r < 4 {
         let g = o.repel[r] as usize;
-        if g < MAX_PROPS && PROP_DORMANT[g] & PROP_RUNTIME_PRISONER != 0 {
+        if g < LIVE_PROPS && PROP_DORMANT[g] & PROP_RUNTIME_PRISONER != 0 {
             let p = PROP_POS[g];
             let y = (p[1] - 8).max(o.repel_y[r] as i32);
             prop_set_pos_exact(m, g, [p[0], y, p[2]]);

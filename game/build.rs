@@ -803,6 +803,58 @@ fn scan_room_budget(
 /// total, which they can never reach: a room's biggest row lists a third of its
 /// faces at most. A merge lists at most the faces of its two largest rows, so
 /// the bound is that sum capped at the room's total.
+/// Prop type of the flying controller, the only monster that keeps flight state
+/// (`PROP_TYPE_CONTROLLER` in main.rs, asserted equal there).
+const FLYER_PROP_TYPE: u16 = 11;
+const FALLBACK_MAX_FLYERS: usize = 24;
+/// Rows the flight pool keeps beyond the most flyers any one room places: actors
+/// carried over a changelevel join the destination room's own. A pool that is
+/// still too small only costs the extra controllers their velocity smoothing.
+const FLYER_POOL_SPARE: usize = 8;
+
+/// The most flying controllers one cooked room places, over every room, plus the
+/// spare rows. `PropPool` sizes the flight state from it (see prop_pool.rs).
+fn scan_flyers(repo_root: &std::path::Path) -> usize {
+    let rooms = repo_root.join("data/rooms");
+    let Ok(entries) = fs::read_dir(&rooms) else {
+        return FALLBACK_MAX_FLYERS;
+    };
+    let mut most = 0usize;
+    let mut scanned = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("room_") || !name.ends_with(".psxc") {
+            continue;
+        }
+        let Ok(data) = fs::read(&path) else {
+            continue;
+        };
+        if data.len() < 52 || &data[0..3] != b"HLM" {
+            continue;
+        }
+        scanned = true;
+        let prop_off = rd_u32(&data, 36).unwrap_or(0) as usize;
+        let counts = rd_u32(&data, prop_off).unwrap_or(0);
+        let n_props = if counts & 0x8000_0000 != 0 {
+            (counts & 0xFFFF) as usize
+        } else {
+            counts as usize
+        };
+        let flyers = (0..n_props)
+            .filter(|i| rd_u16(&data, prop_off + 4 + i * 24).map(|t| t & 0x0FFF) == Some(FLYER_PROP_TYPE))
+            .count();
+        most = most.max(flyers);
+    }
+    if scanned {
+        most + FLYER_POOL_SPARE
+    } else {
+        FALLBACK_MAX_FLYERS
+    }
+}
+
 fn scan_pvs_capacity(repo_root: &std::path::Path) -> (usize, usize) {
     let rooms = repo_root.join("data/rooms");
     let Ok(entries) = fs::read_dir(&rooms) else {
@@ -1783,6 +1835,7 @@ fn main() {
     let (map_words, max_verts, max_faces, max_face_groups, max_leaves, max_ents, max_tex_slots) =
         scan_room_budget(repo_root);
     let (pvs_faces, pvs_groups) = scan_pvs_capacity(repo_root);
+    let max_flyers = scan_flyers(repo_root);
     let max_pvs_faces = round_up(pvs_faces + 64, 32);
     let max_pvs_groups = round_up(pvs_groups + 32, 32);
     let ModelBudget {
@@ -1827,6 +1880,8 @@ fn main() {
          pub const MAX_PVS_GROUPS: usize = {max_pvs_groups};\n\
          pub const MAX_LEAVES: usize = {max_leaves};\n\
          pub const MAX_ENTS: usize = {max_ents};\n\
+         pub const MAX_FLYERS: usize = {max_flyers};\n\
+         pub const FLYER_PROP_TYPE: u8 = {FLYER_PROP_TYPE};\n\
          pub const MAX_TEX_SLOTS: usize = {max_tex_slots};\n\
          pub const PACK_CACHE_ENTRIES: usize = {pack_cache_entries};\n",
         talk_voices.len(),

@@ -98,6 +98,7 @@ mod leech;
 mod mapsnap;
 mod monster_voice;
 mod monsterjump;
+mod prop_pool;
 mod mortar;
 mod nihilanth;
 mod osprey;
@@ -436,6 +437,11 @@ const _: () = assert!(RENDER_SCRATCH_BYTES <= scratchpad::SIZE);
 // neither read nor overwrite the mailbox after the changelevel snapshot.
 const CARRY_CAPACITY: usize = 15;
 const CARRY_MAILBOX_FIRST: usize = MAX_PROPS - CARRY_CAPACITY;
+/// Rows of every per-prop array except the three hot-list arrays (`PROP_ACTIVE`,
+/// `PROP_KIND`, `PROP_AI_TARGET`, whose tails hold the per-map candidate lists)
+/// and the neighbour shortlist (whose tail is the transition mailbox): a prop can
+/// never live past the mailbox, and the cook census tops out at 109.
+const LIVE_PROPS: usize = CARRY_MAILBOX_FIRST;
 const CARRY_GLOBAL_BIT: u16 = 0x8000;
 const CARRY_ID_NONE: u16 = u16::MAX;
 const CARRY_TRAIN_TAG: u8 = 0xfe;
@@ -2916,9 +2922,9 @@ const BLEND_POOL: usize = 6;
 /// The cross-fade needs two decoded poses in the 80-bone scratch, so it
 /// covers models of up to this many bones (every monster but the largest).
 const BLEND_BONES: usize = POSE_SCRATCH_BONES / 2;
-static mut PROP_SEEN_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS];
-static mut PROP_SEEN_POS: [u16; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_SEEN_AT: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_SEEN_CLIP: [u8; LIVE_PROPS] = [0xFF; LIVE_PROPS];
+static mut PROP_SEEN_POS: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
+static mut PROP_SEEN_AT: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 /// Active blends: actor (0xFF free), old clip, tick it began (low byte), old position.
 static mut BLENDS: [(u8, u8, u8, u16); BLEND_POOL] = [(0xFF, 0, 0, 0); BLEND_POOL];
 /// The blend the next `draw_model` applies: old clip, old position, weight of
@@ -3974,9 +3980,12 @@ const MAX_PUSH_LI: usize = 32;
 static mut PUSH_LI: [u16; MAX_PUSH_LI] = [0; MAX_PUSH_LI];
 static mut PUSH_N: u8 = 0;
 static mut MONSTERJUMP_N: u16 = 0;
-static mut PROP_JUMP: [monsterjump::State; MAX_PROPS] = [monsterjump::State::EMPTY; MAX_PROPS];
-static mut PROP_FLIGHT: [air_navigation::Flight; MAX_PROPS] =
-    [air_navigation::Flight::EMPTY; MAX_PROPS];
+static mut PROP_JUMP: [monsterjump::State; LIVE_PROPS] = [monsterjump::State::EMPTY; LIVE_PROPS];
+/// Flight smoothing state of the flying controllers, the only monster that keeps any.
+/// A pool, not a per-prop array: `MAX_FLYERS` rows is the most any room places.
+static mut PROP_FLIGHT: prop_pool::PropPool<air_navigation::Flight, { room_budget::MAX_FLYERS }> =
+    prop_pool::PropPool::new(air_navigation::Flight::EMPTY);
+const _: () = assert!(PROP_TYPE_CONTROLLER == room_budget::FLYER_PROP_TYPE);
 const _: () = assert!(core::mem::size_of::<monsterjump::State>() == 10);
 /// Union of the pushers' boxes: most actors are nowhere near one, and a miss here
 /// skips every per-pusher test.
@@ -4109,16 +4118,16 @@ static mut LOGIC_PLAYER_RESERVE_AMMO: u16 = GLOCK_START_RESERVE;
 static mut PROP_COUNT: usize = 0;
 static mut PROP_ACTIVE: [u8; MAX_PROPS] = [0; MAX_PROPS];
 static mut PROP_KIND: [u8; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_POS: [[i32; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS];
-static mut PROP_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_POS: [[i32; 3]; LIVE_PROPS] = [[0; 3]; LIVE_PROPS];
+static mut PROP_YAW: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
 // Walkers intentionally think at 10 Hz to keep BSP path probes affordable,
 // while the game presents at 20 Hz. Retain the preceding simulation transform
 // in compact cooker-domain coordinates so render can show the half-step rather
 // than holding for one frame and jumping by a doubled movement step. Together
 // with the actor-local animation clocks below, these 1,408 bytes
 // replace an equal part of MODEL_BUF's audited slack.
-static mut PROP_PREV_POS: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS];
-static mut PROP_PREV_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_PREV_POS: [[i16; 3]; LIVE_PROPS] = [[0; 3]; LIVE_PROPS];
+static mut PROP_PREV_YAW: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
 const PROP_ANIM_CLIP_NONE: u8 = 0xff;
 const PROP_ANIM_CLIP_FRESH: u8 = 0xfe;
 // Ordinary locomotion previously derived phase from the global clock. A state
@@ -4126,14 +4135,14 @@ const PROP_ANIM_CLIP_FRESH: u8 = 0xfe;
 // start per actor (384 bytes) so every transition begins at the authored first
 // pose while uninterrupted loops retain phase. The simulation owns both
 // (record_prop_anim_clips); drawing and hit traces only read them.
-static mut PROP_ANIM_CLIP: [u8; MAX_PROPS] = [PROP_ANIM_CLIP_FRESH; MAX_PROPS];
-static mut PROP_ANIM_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_LEAF: [i16; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_STATE: [u8; MAX_PROPS] = [PROP_STATE_IDLE; MAX_PROPS];
-static mut PROP_ATTACK_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_ANIM_CLIP: [u8; LIVE_PROPS] = [PROP_ANIM_CLIP_FRESH; LIVE_PROPS];
+static mut PROP_ANIM_START: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
+static mut PROP_LEAF: [i16; LIVE_PROPS] = [0; LIVE_PROPS];
+static mut PROP_STATE: [u8; LIVE_PROPS] = [PROP_STATE_IDLE; LIVE_PROPS];
+static mut PROP_ATTACK_COOLDOWN: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 // Tick at which each grunt may next throw a hand grenade.
-static mut GRUNT_GREN: [u16; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_AI_TIMER: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut GRUNT_GREN: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
+static mut PROP_AI_TIMER: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 static mut PROP_AI_TARGET: [u8; MAX_PROPS] = [PROP_TARGET_NONE; MAX_PROPS];
 const TALKING_PROP_NONE: u8 = 0xff;
 /// `sentence_speaker`: the named speaker is dead and nobody else qualifies.
@@ -4184,12 +4193,12 @@ const AI_REACQUIRE_INTERVAL: u32 = 4;
 unsafe fn ai_reacquire(pi: usize) -> bool {
     (pi as u32).wrapping_add(AI_TICK) % AI_REACQUIRE_INTERVAL == 0
 }
-static mut PROP_HEALTH: [u8; MAX_PROPS] = [0; MAX_PROPS];
-static mut PROP_HIT_FLASH: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_HEALTH: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
+static mut PROP_HIT_FLASH: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 // Sim tick each prop died on -> the death clip plays forward from there, then
 // holds. Authored corpses are seeded far in the past so they spawn on the final
 // death frame instead of re-playing the fall.
-static mut PROP_DEATH_START: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_DEATH_START: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
 const PROP_OCC_VISIBLE: u8 = 1;
 // Reuse an otherwise-free bit in the render-occlusion byte for the AI target's
 // most recent LOS verdict. Render cache writes preserve it, so this costs no RAM.
@@ -4208,7 +4217,7 @@ const PROP_OCC_GAMEPLAY_MASK: u8 = PROP_AI_TARGET_VISIBLE
     | PROP_SCRIPT_NOINTERRUPT
     | PROP_SCI_HELLO_SAID;
 const PROP_OCC_DIRTY: u8 = 0x80;
-static mut PROP_OCC_VIS: [u8; MAX_PROPS] = [PROP_OCC_VISIBLE | PROP_OCC_DIRTY; MAX_PROPS];
+static mut PROP_OCC_VIS: [u8; LIVE_PROPS] = [PROP_OCC_VISIBLE | PROP_OCC_DIRTY; LIVE_PROPS];
 
 #[inline]
 unsafe fn prop_ai_target_visible(pi: usize) -> bool {
@@ -4280,9 +4289,9 @@ static mut OCC_EYE_LEAF: i32 = -1;
 const OCC_EYE_MOVE_THRESHOLD: u32 = 32;
 // Packed runtime flags: dormant stock, the short-lived maker-fall states, and
 // authored prisoner/passive behavior all share this byte.
-static mut PROP_DORMANT: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_DORMANT: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 // The monstermaker that made this actor (maker_tag), zero for any other.
-static mut PROP_MAKER: [u8; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_MAKER: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 const PROP_RUNTIME_DORMANT_STOCK: u8 = 1;
 // A question marks its nearest scientist friend for IdleRespond. The due tick
 // reuses PROP_DEATH_START while that actor is alive; death overwrites it with
@@ -4307,7 +4316,7 @@ const PROP_RUNTIME_PRISONER: u8 = 0x80;
 // The actor still has an unfired sight TriggerCondition, so tick_props runs
 // its staggered look check (monster_sight_ai_triggers).
 const PROP_RUNTIME_SEE_TRIGGER: u8 = 0x40;
-static mut PROP_LOGIC_LINK: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS];
+static mut PROP_LOGIC_LINK: [u16; LIVE_PROPS] = [u16::MAX; LIVE_PROPS];
 static mut SPRITE_COUNT: usize = 0;
 static mut SPRITE_VISIBLE: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
 static mut SPRITE_REMOVED: [u32; SPRITE_STATE_WORDS] = [0; SPRITE_STATE_WORDS];
@@ -8499,7 +8508,7 @@ unsafe fn mover_blocked(m: &Map, ei: usize, victim: usize) {
     let rec = m.logic(li);
     #[cfg(feature = "interaction-probe")]
     if SIM_NOW % 10 == 0 {
-        let (k, p) = if victim < MAX_PROPS {
+        let (k, p) = if victim < LIVE_PROPS {
             (PROP_KIND[victim] as i32, PROP_POS[victim])
         } else {
             (-1, [0; 3])
@@ -8521,7 +8530,7 @@ unsafe fn mover_blocked(m: &Map, ei: usize, victim: usize) {
     } else {
         rec.arg0
     };
-    if victim < MAX_PROPS {
+    if victim < LIVE_PROPS {
         if dmg != 0 {
             damage_prop(victim, dmg.min(255) as u8, false);
         }
@@ -8792,7 +8801,7 @@ unsafe fn logic_remove_entity(li: usize, rec: map::LogicEnt, nents: usize) {
     let pi = LOGIC_PROP_LINK[li];
     if pi != LOGIC_PROP_NONE {
         let p = pi as usize;
-        if p < MAX_PROPS {
+        if p < LIVE_PROPS {
             PROP_ACTIVE[p] = 0;
             PROP_LOGIC_LINK[p] = u16::MAX;
         }
@@ -9874,7 +9883,7 @@ unsafe fn restore_transition_actors(
         };
         PROP_SCRIPT_GOAL[pi] = [0; 3];
         PROP_JUMP[pi] = monsterjump::State::EMPTY;
-        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
+        PROP_FLIGHT.release(pi);
         PROP_SCRIPT_YAW[pi] = 0;
         PROP_SCRIPT_MODE[pi] = 0;
         PROP_SCRIPT_LI[pi] = u16::MAX;
@@ -12454,7 +12463,7 @@ unsafe fn maker_make(
                 PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
                 PROP_POS[pi] = rec.origin;
                 PROP_JUMP[pi] = monsterjump::State::EMPTY;
-                PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
+                PROP_FLIGHT.release(pi);
                 PROP_ACTIVE[pi] = 0;
                 PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
                 found = pi;
@@ -12486,7 +12495,7 @@ unsafe fn maker_make(
     prop_nav_cache_invalidate(pi);
     PROP_DORMANT[pi] = 0;
     PROP_JUMP[pi] = monsterjump::State::EMPTY;
-    PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
+    PROP_FLIGHT.release(pi);
     PROP_ACTIVE[pi] = 1;
     PROP_MAKER[pi] = tag;
     // The maker targetname is only an allocation-free link to its dormant
@@ -14766,7 +14775,8 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     MONSTER_TOUCH = false;
     PUSH_N = 0;
     MONSTERJUMP_N = 0;
-    PROP_JUMP = [monsterjump::State::EMPTY; MAX_PROPS];
+    PROP_JUMP = [monsterjump::State::EMPTY; LIVE_PROPS];
+    PROP_FLIGHT.clear();
     BOSS_WALKER = u16::MAX;
     OSPREY.li = u16::MAX;
     garg::reset();
@@ -15632,7 +15642,7 @@ unsafe fn invalidate_actor_occlusion(have_pvs: bool, cam_leaf: i32, eye: [i32; 3
     OCC_EYE_ANCHOR = eye;
     OCC_EYE_LEAF = occ_leaf;
     let mut i = 0usize;
-    while i < MAX_PROPS {
+    while i < LIVE_PROPS {
         PROP_OCC_VIS[i] |= PROP_OCC_DIRTY;
         i += 1;
     }
@@ -17495,7 +17505,10 @@ unsafe fn prop_controller_move_towards(
         };
         node
     };
-    let mut flight = PROP_FLIGHT[pi];
+    let mut flight = PROP_FLIGHT
+        .get(pi)
+        .copied()
+        .unwrap_or(air_navigation::Flight::EMPTY);
     let candidate = flight.candidate(pos, target, speed);
     let from = prop_target(PROP_TYPE_CONTROLLER, pos);
     let to = prop_target(PROP_TYPE_CONTROLLER, candidate);
@@ -17505,7 +17518,7 @@ unsafe fn prop_controller_move_towards(
         || !phys::actor_line_clear_movers(m, movers, from, to)
         || in_monsterclip(to, 0)
     {
-        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
+        PROP_FLIGHT.release(pi);
         return false;
     }
     let (mins, maxs) = actor_collision_bounds(PROP_TYPE_CONTROLLER, candidate);
@@ -17515,7 +17528,9 @@ unsafe fn prop_controller_move_towards(
     {
         return false;
     }
-    PROP_FLIGHT[pi] = flight;
+    if let Some(slot) = PROP_FLIGHT.claim(pi, air_navigation::Flight::EMPTY) {
+        *slot = flight;
+    }
     prop_face_point(pi, target);
     prop_set_pos_exact(m, pi, candidate);
     true
@@ -18056,7 +18071,7 @@ unsafe fn boss_walker_damage(dmg: u8) {
 unsafe fn tick_boss_walker(m: &Map, movers: &[phys::Mover]) {
     let w = BOSS_WALKER as usize;
     let pi = LOGIC_PROP_LINK[w] as usize;
-    if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+    if pi >= LIVE_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         LOGIC_STATE[w] = LOGIC_STATE_TOP;
         BOSS_WALKER = u16::MAX;
         return;
@@ -18272,7 +18287,7 @@ unsafe fn alert_friends(m: &Map, movers: &[phys::Mover], nprops: usize, vi: usiz
 
 #[optimize(size)]
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
-    if pi >= MAX_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
+    if pi >= LIVE_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
         return;
     }
     // CSentry schedules deployment before subtracting damage; death below cancels it.
@@ -18371,7 +18386,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     if PROP_HEALTH[pi] == 0 {
         PROP_JUMP[pi] = monsterjump::State::EMPTY;
-        PROP_FLIGHT[pi] = air_navigation::Flight::EMPTY;
+        PROP_FLIGHT.release(pi);
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         if PROP_KIND[pi] == 59 {
@@ -18471,7 +18486,7 @@ unsafe fn make_noise(pos: [i32; 3], volume: u16) {
 /// that memory is of. A hunter that loses sight walks to this spot, not to
 /// where the enemy really is.
 /// `i16::MIN` in the first slot means the hunter remembers nothing.
-static mut PROP_LKP: [[i16; 2]; MAX_PROPS] = [[i16::MIN; 2]; MAX_PROPS];
+static mut PROP_LKP: [[i16; 2]; LIVE_PROPS] = [[i16::MIN; 2]; LIVE_PROPS];
 
 /// The point a hunter heads for: the enemy while it is in sight (remembering
 /// it), else the last place it was seen. `None` once the hunter has come to
@@ -18597,17 +18612,17 @@ unsafe fn pvs_entry_kind(e: usize) -> usize {
     }
 }
 static mut VM_MODEL_CACHE: Model = Model::EMPTY;
-static mut PROP_MOVE_COOLDOWN: [u8; MAX_PROPS] = [0; MAX_PROPS]; // blocked-walker backoff
-static mut PROP_NAME: [u16; MAX_PROPS] = [0; MAX_PROPS]; // logic-name id of the targetname
-static mut PROP_SCRIPT_GOAL: [[i16; 3]; MAX_PROPS] = [[0; 3]; MAX_PROPS]; // world coords fit i16
-static mut PROP_SCRIPT_YAW: [u16; MAX_PROPS] = [0; MAX_PROPS];
+static mut PROP_MOVE_COOLDOWN: [u8; LIVE_PROPS] = [0; LIVE_PROPS]; // blocked-walker backoff
+static mut PROP_NAME: [u16; LIVE_PROPS] = [0; LIVE_PROPS]; // logic-name id of the targetname
+static mut PROP_SCRIPT_GOAL: [[i16; 3]; LIVE_PROPS] = [[0; 3]; LIVE_PROPS]; // world coords fit i16
+static mut PROP_SCRIPT_YAW: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
 // Low five bits hold the authored mode; 0x20/0x40/0x80 are RAM-free detour,
 // node-route, and startup-primed state flags respectively.
-static mut PROP_SCRIPT_MODE: [u8; MAX_PROPS] = [0; MAX_PROPS]; // 0 none, 1 walk, 2 run, 3 wait, 4 instant
-static mut PROP_SCRIPT_LI: [u16; MAX_PROPS] = [u16::MAX; MAX_PROPS]; // firing script's logic index
-static mut PROP_SCRIPT_PLAY_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS]; // one-shot gesture clip
-static mut PROP_SCRIPT_IDLE_CLIP: [u8; MAX_PROPS] = [0xFF; MAX_PROPS]; // scripted idle pose clip
-static mut PROP_SCRIPT_PLAY_UNTIL: [u16; MAX_PROPS] = [0; MAX_PROPS]; // gesture end (sim ticks)
+static mut PROP_SCRIPT_MODE: [u8; LIVE_PROPS] = [0; LIVE_PROPS]; // 0 none, 1 walk, 2 run, 3 wait, 4 instant
+static mut PROP_SCRIPT_LI: [u16; LIVE_PROPS] = [u16::MAX; LIVE_PROPS]; // firing script's logic index
+static mut PROP_SCRIPT_PLAY_CLIP: [u8; LIVE_PROPS] = [0xFF; LIVE_PROPS]; // one-shot gesture clip
+static mut PROP_SCRIPT_IDLE_CLIP: [u8; LIVE_PROPS] = [0xFF; LIVE_PROPS]; // scripted idle pose clip
+static mut PROP_SCRIPT_PLAY_UNTIL: [u16; LIVE_PROPS] = [0; LIVE_PROPS]; // gesture end (sim ticks)
 
 // func_train: brush platforms riding path_corner chains. Per-train state +
 // a per-ent slot map; ride-carry works through the generic ent-offset delta.
@@ -20884,8 +20899,19 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
     let voices = room_budget::TALK_VOICES[map_index];
     (*core::ptr::addr_of_mut!(MAP_TALK_IDS)).copy_from_slice(&voices[..6]);
     MAP_VOICE_PREFIX = voices[6];
-    let mut i = 0usize;
+    // The hot-list arrays and the neighbour shortlist keep the 128-row tail (see
+    // `MAX_PROPS`); every other per-prop array has `LIVE_PROPS` rows.
+    let mut i = LIVE_PROPS;
     while i < MAX_PROPS {
+        PROP_ACTIVE[i] = 0;
+        PROP_KIND[i] = 0;
+        PROP_NEAR_COUNT[i] = 0xFF;
+        PROP_AI_TARGET[i] = PROP_TARGET_NONE;
+        prop_nav_cache_invalidate(i);
+        i += 1;
+    }
+    let mut i = 0usize;
+    while i < LIVE_PROPS {
         PROP_ACTIVE[i] = 0;
         PROP_KIND[i] = 0;
         PROP_POS[i] = [0, 0, 0];
@@ -20914,7 +20940,6 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_LOGIC_LINK[i] = u16::MAX;
         PROP_SCRIPT_GOAL[i] = [0; 3];
         PROP_JUMP[i] = monsterjump::State::EMPTY;
-        PROP_FLIGHT[i] = air_navigation::Flight::EMPTY;
         PROP_SCRIPT_YAW[i] = 0;
         PROP_SCRIPT_MODE[i] = 0;
         PROP_SCRIPT_LI[i] = u16::MAX;
@@ -40831,7 +40856,7 @@ fn play(
                     model_bounds_culled = model_bounds_culled.saturating_add(1);
                     continue;
                 }
-                let occ_slot = pi.min(MAX_PROPS - 1);
+                let occ_slot = pi.min(LIVE_PROPS - 1);
                 let occ = PROP_OCC_VIS[occ_slot];
                 if (occ & PROP_OCC_DIRTY != 0 || occ & PROP_OCC_VISIBLE == 0)
                     && (pi as u32).wrapping_add(sim_frame_no) % 4 == 0
@@ -40901,7 +40926,7 @@ fn play(
                     128
                 } else if ty == PROP_TYPE_HOLO {
                     96
-                } else if pi < MAX_PROPS && PROP_HIT_FLASH[pi] > 0 {
+                } else if pi < LIVE_PROPS && PROP_HIT_FLASH[pi] > 0 {
                     MODEL_HIT_SHADE
                 } else {
                     MODEL_SHADE
