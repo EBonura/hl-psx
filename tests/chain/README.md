@@ -192,3 +192,9 @@ pipes to the vent box, draws the crowbar (`@weapon crowbar`) and breaks the vent
 and ends crawling into the vent. It runs in about 12 s. The card was written by the full chain with an `@save` after the
 bridge approach (the gauntlet makes that route too large to commit until the gate has a loop step); when the save format
 or an earlier map changes, regenerate the card from the chain and rebuild the journey. Check it with `hlroute verify tests/chain/stage-c1a1c-vent.route . tests/stage-c1a1c-vent.toml --tape-dir tests/chain/tapes-stage --map MAP`.
+
+`stage-c1a1d.route` (`tests/stage-c1a1d.toml`, tapes in `tests/chain/tapes-stage-d`): c1a1d from the Debug page's segment start (the arrival
+of the lower canal) to the changelevel back to c1a1c: the sunken platforms, ladder to the lower catwalk, ladder to the upper catwalk (centre the
+hull on x 1498: the hole in the catwalk is the ladder's width), the crate hops (crate to crate, each a run-up and a jump from a dead band, the landing read from the player's
+position), the drop to the far floor, door, a ladder (step forward off its top, not back) and the last door. About 100 s emulated. It is a segment run (diagnostic start),
+so it does not prove a chain arrival; the chain version needs the lower-canal part of c1a1c in front of it.
