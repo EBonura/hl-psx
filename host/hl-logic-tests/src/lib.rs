@@ -28,6 +28,8 @@ pub mod combat_defs;
 #[path = "../../../game/src/decal_light.rs"]
 pub mod decal_light;
 pub use combat_defs::{N_AMMO, N_WEAPONS};
+#[path = "../../../game/src/ai/mod.rs"]
+pub mod ai;
 #[path = "../../../game/src/air_navigation.rs"]
 pub mod air_navigation;
 #[path = "../../../game/src/autoaim.rs"]

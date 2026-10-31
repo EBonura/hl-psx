@@ -1,0 +1,243 @@
+# Default monster AI: the schedules every monster falls back to, and how a state and its conditions pick one.
+# Written from the retail behaviour (oracle traces print these schedule names). Times are seconds.
+
+species base id=250
+species squad id=251 parent=base
+
+sched "Fail" species=base interrupt=CAN_RANGE_ATTACK1|CAN_MELEE_ATTACK1|CAN_RANGE_ATTACK2|CAN_MELEE_ATTACK2
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  WAIT 2
+  WAIT_PVS
+end
+
+sched "IdleStand" species=base interrupt=NEW_ENEMY|SEE_FEAR|LIGHT_DAMAGE|HEAVY_DAMAGE|HEAR_SOUND|SMELL_FOOD|SMELL|PROVOKED sound=COMBAT|WORLD|PLAYER|DANGER|MEAT|CARCASS|GARBAGE
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  WAIT 5
+end
+
+sched "Idle Walk" species=base interrupt=NEW_ENEMY|LIGHT_DAMAGE|HEAVY_DAMAGE|HEAR_SOUND|SMELL_FOOD|SMELL|PROVOKED sound=COMBAT|MEAT|CARCASS|GARBAGE
+  WALK_PATH
+  WAIT_FOR_MOVEMENT
+end
+
+sched "Wake Angry" species=base
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  SOUND 0
+  FACE_IDEAL
+end
+
+sched "Alert Face" species=base interrupt=NEW_ENEMY|SEE_FEAR|LIGHT_DAMAGE|HEAVY_DAMAGE|PROVOKED
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  FACE_IDEAL
+end
+
+sched "Alert Small Flinch" species=base
+  STOP_MOVING
+  REMEMBER FLINCHED
+  SMALL_FLINCH
+  SET_SCHEDULE ALERT_FACE
+end
+
+sched "Alert Stand" species=base interrupt=NEW_ENEMY|SEE_ENEMY|SEE_FEAR|LIGHT_DAMAGE|HEAVY_DAMAGE|PROVOKED|SMELL|SMELL_FOOD|HEAR_SOUND sound=COMBAT|WORLD|PLAYER|DANGER|MEAT|CARCASS|GARBAGE
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  WAIT 20
+  SUGGEST_STATE IDLE
+end
+
+sched "InvestigateSound" species=base interrupt=NEW_ENEMY|SEE_FEAR|LIGHT_DAMAGE|HEAVY_DAMAGE|HEAR_SOUND sound=DANGER
+  STOP_MOVING
+  STORE_LASTPOSITION
+  GET_PATH_TO_BESTSOUND
+  FACE_IDEAL
+  WALK_PATH
+  WAIT_FOR_MOVEMENT
+  PLAY_SEQUENCE IDLE
+  WAIT 10
+  GET_PATH_TO_LASTPOSITION
+  WALK_PATH
+  WAIT_FOR_MOVEMENT
+  CLEAR_LASTPOSITION
+end
+
+sched "Combat Stand" species=base interrupt=NEW_ENEMY|ENEMY_DEAD|LIGHT_DAMAGE|HEAVY_DAMAGE|CAN_RANGE_ATTACK1|CAN_MELEE_ATTACK1|CAN_RANGE_ATTACK2|CAN_MELEE_ATTACK2
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  WAIT_INDEFINITE
+end
+
+sched "Combat Face" species=base interrupt=CAN_RANGE_ATTACK1|CAN_MELEE_ATTACK1|CAN_RANGE_ATTACK2|CAN_MELEE_ATTACK2|NEW_ENEMY|ENEMY_DEAD
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  FACE_ENEMY
+end
+
+sched "Standoff" species=base interrupt=CAN_RANGE_ATTACK1|CAN_RANGE_ATTACK2|ENEMY_DEAD|NEW_ENEMY|HEAR_SOUND sound=DANGER
+  STOP_MOVING
+  SET_ACTIVITY IDLE
+  WAIT_FACE_ENEMY 2
+end
+
+sched "Arm Weapon" species=base
+  STOP_MOVING
+  PLAY_SEQUENCE ARM
+end
+
+sched "Reload" species=base interrupt=HEAVY_DAMAGE
+  STOP_MOVING
+  PLAY_SEQUENCE RELOAD
+end
+
+sched "Range Attack1" species=base interrupt=NEW_ENEMY|ENEMY_DEAD|LIGHT_DAMAGE|HEAVY_DAMAGE|ENEMY_OCCLUDED|NO_AMMO_LOADED|HEAR_SOUND sound=DANGER
+  STOP_MOVING
+  FACE_ENEMY
+  RANGE_ATTACK1
+end
+
+sched "Range Attack2" species=base interrupt=NEW_ENEMY|ENEMY_DEAD|LIGHT_DAMAGE|HEAVY_DAMAGE|ENEMY_OCCLUDED|HEAR_SOUND sound=DANGER
+  STOP_MOVING
+  FACE_ENEMY
+  RANGE_ATTACK2
+end
+
+sched "Primary Melee Attack" species=base interrupt=NEW_ENEMY|ENEMY_DEAD|LIGHT_DAMAGE|HEAVY_DAMAGE|ENEMY_OCCLUDED
+  STOP_MOVING
+  FACE_ENEMY
+  MELEE_ATTACK1
+end
+
+sched "Secondary Melee Attack" species=base interrupt=NEW_ENEMY|ENEMY_DEAD|LIGHT_DAMAGE|HEAVY_DAMAGE|ENEMY_OCCLUDED
+  STOP_MOVING
+  FACE_ENEMY
+  MELEE_ATTACK2
+end
+
+sched "Special Attack1" species=base interrupt=NEW_ENEMY|ENEMY_DEAD|LIGHT_DAMAGE|HEAVY_DAMAGE|ENEMY_OCCLUDED|NO_AMMO_LOADED|HEAR_SOUND sound=DANGER
+  STOP_MOVING
+  FACE_ENEMY
+  SPECIAL_ATTACK1
+end
+
+sched "Special Attack2" species=base interrupt=NEW_ENEMY|ENEMY_DEAD|LIGHT_DAMAGE|HEAVY_DAMAGE|ENEMY_OCCLUDED|NO_AMMO_LOADED|HEAR_SOUND sound=DANGER
+  STOP_MOVING
+  FACE_ENEMY
+  SPECIAL_ATTACK2
+end
+
+sched "Chase Enemy" species=base interrupt=NEW_ENEMY|CAN_RANGE_ATTACK1|CAN_MELEE_ATTACK1|CAN_RANGE_ATTACK2|CAN_MELEE_ATTACK2|TASK_FAILED|HEAR_SOUND sound=DANGER
+  SET_FAIL_SCHEDULE CHASE_ENEMY_FAILED
+  GET_PATH_TO_ENEMY
+  RUN_PATH
+  WAIT_FOR_MOVEMENT
+end
+
+sched "Small Flinch" species=base
+  REMEMBER FLINCHED
+  STOP_MOVING
+  SMALL_FLINCH
+end
+
+sched "Die" species=base
+  STOP_MOVING
+  SOUND 0
+  DIE
+end
+
+sched "Victory Dance" species=base
+  STOP_MOVING
+  PLAY_SEQUENCE VICTORY_DANCE
+  WAIT 0
+end
+
+sched "Cower" species=base
+  STOP_MOVING
+  PLAY_SEQUENCE COWER
+end
+
+sched "TakeCoverFromOrigin" species=base interrupt=NEW_ENEMY
+  STOP_MOVING
+  FIND_COVER_FROM_ORIGIN
+  RUN_PATH
+  WAIT_FOR_MOVEMENT
+  REMEMBER IN_COVER
+  TURN_LEFT 179
+end
+
+sched "TakeCoverFromBestSound" species=base interrupt=NEW_ENEMY
+  STOP_MOVING
+  FIND_COVER_FROM_BEST_SOUND
+  RUN_PATH
+  WAIT_FOR_MOVEMENT
+  REMEMBER IN_COVER
+  TURN_LEFT 179
+end
+
+sched "tlTakeCoverFromEnemy" species=base interrupt=NEW_ENEMY
+  STOP_MOVING
+  WAIT 0.2
+  FIND_COVER_FROM_ENEMY
+  RUN_PATH
+  WAIT_FOR_MOVEMENT
+  REMEMBER IN_COVER
+  FACE_ENEMY
+  WAIT 1
+end
+
+sched "Error" species=base
+  STOP_MOVING
+  WAIT_INDEFINITE
+end
+
+type base IDLE_STAND -> "IdleStand"
+type base IDLE_WALK -> "Idle Walk"
+type base WAKE_ANGRY -> "Wake Angry"
+type base ALERT_FACE -> "Alert Face"
+type base ALERT_SMALL_FLINCH -> "Alert Small Flinch"
+type base ALERT_STAND -> "Alert Stand"
+type base INVESTIGATE_SOUND -> "InvestigateSound"
+type base COMBAT_STAND -> "Combat Stand"
+type base COMBAT_FACE -> "Combat Face"
+type base CHASE_ENEMY -> "Chase Enemy"
+type base CHASE_ENEMY_FAILED -> "Fail"
+type base SMALL_FLINCH -> "Small Flinch"
+type base RELOAD -> "Reload"
+type base ARM_WEAPON -> "Arm Weapon"
+type base STANDOFF -> "Standoff"
+type base RANGE_ATTACK1 -> "Range Attack1"
+type base RANGE_ATTACK2 -> "Range Attack2"
+type base MELEE_ATTACK1 -> "Primary Melee Attack"
+type base MELEE_ATTACK2 -> "Secondary Melee Attack"
+type base SPECIAL_ATTACK1 -> "Special Attack1"
+type base SPECIAL_ATTACK2 -> "Special Attack2"
+type base TAKE_COVER_FROM_BEST_SOUND -> "TakeCoverFromBestSound"
+type base TAKE_COVER_FROM_ENEMY -> "tlTakeCoverFromEnemy"
+type base TAKE_COVER_FROM_ORIGIN -> "TakeCoverFromOrigin"
+type base COWER -> "Cower"
+type base DIE -> "Die"
+type base VICTORY_DANCE -> "Victory Dance"
+type base FAIL -> "Fail"
+
+# CBaseMonster::GetSchedule, in order. A row holds when its state, condition masks and predicates hold.
+pick base states=IDLE any=HEAR_SOUND -> ALERT_FACE
+pick base states=IDLE -> IDLE_STAND
+pick base states=ALERT any=ENEMY_DEAD -> VICTORY_DANCE
+pick base states=ALERT any=LIGHT_DAMAGE|HEAVY_DAMAGE when DAMAGE_AHEAD -> TAKE_COVER_FROM_ORIGIN
+pick base states=ALERT any=LIGHT_DAMAGE|HEAVY_DAMAGE -> ALERT_SMALL_FLINCH
+pick base states=ALERT any=HEAR_SOUND -> ALERT_FACE
+pick base states=ALERT -> ALERT_STAND
+pick base states=COMBAT any=NEW_ENEMY -> WAKE_ANGRY
+pick base states=COMBAT any=LIGHT_DAMAGE when NOT_FLINCHED -> SMALL_FLINCH
+pick base states=COMBAT none=SEE_ENEMY|ENEMY_OCCLUDED -> COMBAT_FACE
+pick base states=COMBAT none=SEE_ENEMY -> CHASE_ENEMY
+pick base states=COMBAT any=CAN_RANGE_ATTACK1 -> RANGE_ATTACK1
+pick base states=COMBAT any=CAN_RANGE_ATTACK2 -> RANGE_ATTACK2
+pick base states=COMBAT any=CAN_MELEE_ATTACK1 -> MELEE_ATTACK1
+pick base states=COMBAT any=CAN_MELEE_ATTACK2 -> MELEE_ATTACK2
+pick base states=COMBAT none=CAN_RANGE_ATTACK1|CAN_MELEE_ATTACK1 -> CHASE_ENEMY
+pick base states=COMBAT -> COMBAT_FACE
+pick base states=DEAD -> DIE
+pick base states=HUNT|NONE|PRONE|PLAYDEAD -> IDLE_STAND

@@ -17,6 +17,7 @@ name = "hl-logic-tests"
 version = "0.1.0"
 dependencies = [
  "hl-format",
+ "hl-sched",
  "psx-asset",
  "psx-display",
  "psx-engine",
@@ -29,6 +30,13 @@ dependencies = [
  "psx-settings",
  "psx-sfx",
  "psx-spu",
+]
+
+[[package]]
+name = "hl-sched"
+version = "0.1.0"
+dependencies = [
+ "hl-format",
 ]
 
 [[package]]

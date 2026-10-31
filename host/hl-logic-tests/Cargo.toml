@@ -22,6 +22,9 @@ psx-segments = { path = "../../.psoxide/sdk/crates/psx-segments" }
 psx-engine = { path = "../../.psoxide/engine/crates/psx-engine" }
 hl-format = { path = "../../shared/hl-format" }
 
+[dev-dependencies]
+hl-sched = { path = "../hl-sched" }
+
 [lib]
 path = "src/lib.rs"
 

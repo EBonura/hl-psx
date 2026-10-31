@@ -1,0 +1,12 @@
+[package]
+name = "hl-aicmp"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Squad-fight parity metrics: retail oracle traces, seed envelopes, and the port's tick log"
+
+[workspace]
+
+[[bin]]
+name = "hl-aicmp"
+path = "src/main.rs"

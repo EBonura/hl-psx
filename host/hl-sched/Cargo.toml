@@ -1,0 +1,14 @@
+[package]
+name = "hl-sched"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Parser and encoder for the hl-psx monster schedule tables (.sched sources)"
+
+[workspace]
+
+[dependencies]
+hl-format = { path = "../../shared/hl-format" }
+
+[lib]
+path = "src/lib.rs"
