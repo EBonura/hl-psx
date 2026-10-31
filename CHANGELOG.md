@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A bullet can hurt a barnacle that has not been drawn yet. The render-only occlusion probe tests a ray to the actor's origin, which for a barnacle sits inside the ceiling brush it hangs from, so the actor was rejected from almost every camera position and an undrawn actor takes no damage. Barnacles (kind 12) no longer use the probe.
+
 - A barnacle can be clubbed. Its aim point was 32 units above its origin, inside the ceiling it hangs from, so every crowbar swing was stopped by the world before it; the aim point is now 16 below the origin (the middle of the retail hull). In the c1a2 soda room one crowbar swing at the top of the haul kills the barnacle over the corridor, which the new parity-barnacle journey checks. Bullets still miss it (docs/parity BN06). Data only: no code changes, same layout.
 - A stale data cook cannot pass for a current one. The cook manifest records a digest of the cooker's own inputs (host/hl-bsp, host/hl-content, shared/hl-format, the model-variant planner, the game files the cooker includes, the toolchain pins) and the build checks it instead of the whole source tree and revision: a cooker change forces a recook, a game or test change no longer does, and a manifest written before the field existed is refused. docs/engine/COOK.md.
 

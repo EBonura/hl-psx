@@ -125,8 +125,12 @@ pub const fn prop_spawn_floor_mode(kind: u8, is_item: bool) -> u8 {
 /// Dispenser cans are only a few units tall. The actor probe samples above
 /// their visible mesh and hits the dispensing recess even when the can itself
 /// is visible. Retain PVS/sphere rejection and normal GPU ordering for them.
+/// A barnacle's origin sits in the ceiling brush it hangs from, so the probe
+/// to it tests a point inside solid world and rejects the actor whenever the
+/// camera is anywhere but straight below; a rejected actor is also one a
+/// bullet cannot hurt (damage waits for the first draw).
 pub const fn prop_uses_occlusion_probe(kind: u8) -> bool {
-    kind != 56 && kind != 75
+    kind != 56 && kind != 75 && kind != 12
 }
 
 #[cfg(test)]
@@ -245,6 +249,7 @@ mod tests {
     fn holograms_and_dispenser_cans_bypass_the_solid_world_occlusion_optimization() {
         assert!(!prop_uses_occlusion_probe(56));
         assert!(!prop_uses_occlusion_probe(75));
+        assert!(!prop_uses_occlusion_probe(12));
         assert!(prop_uses_occlusion_probe(0));
         assert!(prop_uses_occlusion_probe(1));
     }
