@@ -654,8 +654,9 @@ map c1a1 next c1a1a
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=925 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=953 timeout=40
   @hold f-127 s-5 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=518 timeout=45
-  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=927 timeout=40
-  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=955 timeout=40
+  # the last pipe channel leg: a band ending on y 955 stopped the hull at x 481 on a build that arrived 28 units high (the channel narrows there); end it mid-band
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=930 timeout=40
+  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=944 timeout=40
   @hold f-127 s-5 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=473 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=928 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=956 timeout=40
@@ -982,11 +983,16 @@ map c1a1a next c1a1f
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   # The two zombies of the corridor wake at once and walk down it to the player, body-blocking a 128 wide corridor if he waits
-  # in the middle (they claw from 64 units and a bout does not turn). Wait on the north wall until the leading one (PROP_POS slot 4)
-  # is 100 units off, then run past along the south wall, more than 64 units from both: no bout starts.
+  # in the middle (they claw from 64 units and a bout does not turn). Get onto the north wall, wait until the nearest zombie
+  # (PROP_POS slots 3 and 4, positions x,up,y) is within 150 units, then run past along the south wall: the dash starts on the
+  # gap to the zombies, not on a position of the lead one or a tick count, so a build whose zombies arrive earlier or later
+  # (the headcrab speed fix shifted c1a1 timing) still starts it with the same margin.
   @face 1070 right
-  @hold s-127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=52 timeout=30
-  @wait sym=PROP_POS offset=48 size=4 signed=true op=le value=-2200 timeout=900
+  # north wall band y 52..72, in three slowing holds (a full strafe slides on to y 95 on some builds, which lengthens the dash by a third)
+  @hold s-127 until expr="i32(LOGIC_PLAYER_POS[2]) >= 36 || min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" timeout=30
+  @hold s-50 until expr="i32(LOGIC_PLAYER_POS[2]) >= 54 || min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" timeout=40
+  @hold s50 until expr="i32(LOGIC_PLAYER_POS[2]) <= 72 || min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" timeout=40
+  @wait expr="min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" timeout=900
   @checkpoint dd-wait
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
@@ -995,8 +1001,21 @@ map c1a1a next c1a1f
   @assert sym=PROP_POS offset=48 size=4 signed=true op=between value=-100000 value_hi=100000
   @assert sym=PROP_POS offset=56 size=4 signed=true op=between value=-100000 value_hi=100000
   @hold f127 s127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-12 timeout=20
+  # the south wall juts out at x -1977 for a hull below y about -60 and the strafe of the dash carries the player on south while he runs east
+  # (y -45 on one build, -64 and stopped on others): run east in legs that end on x or on y <= -54, and bring y back to -48 after each
   @face 990 right
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-1860 timeout=60
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-48 timeout=20
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-48 timeout=20
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-48 timeout=20
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-48 timeout=20
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-48 timeout=20
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-48 timeout=20
   @checkpoint zombies-passed
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100

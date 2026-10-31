@@ -101,3 +101,19 @@ which opens from the water side; the course continues elsewhere and the rest of 
 A closed-loop `@hold` that times out aborts the journey, so a leg that stops moving shows as a timeout with the value
 the word held. Keep every leg's timeout generous and its target a few units short of the retail position (the player
 can stop against a wall one unit short of the value the retail engine reached).
+
+## Gate expressions and closed-loop aim
+
+Any `@hold`, `@wait` or `@assert` condition may be a psoxide-gate expression (`expr="..."`, integer reads of guest RAM,
+`let`, `abs`, `min`/`max`, `any`/`all`/`min` over index ranges; psoxide-gate TESTING.md, "Expression conditions"). Symbols named
+inside the expression are bound by `--map` like the `sym=` ones, and the text must not contain `#`. The c1a1a zombie corridor
+waits for the nearest zombie (`PROP_POS` slots 3 and 4, 12 bytes each: x, up, y) to be within 150 units instead of waiting on a
+position of the lead one, so the dash starts on the same gap on every build.
+
+`@aim`, `@kill` and `@level` close the loop on a target instead of a remembered yaw: `@kill prop=N` turns (yaw from the cross and dot
+product of the player's forward vector against the offset to `PROP_POS[N]`, pitch from the height difference over the horizontal
+distance, eye = `LOGIC_PLAYER_POS` up + `LOGIC_PLAYER_VIEW_HEIGHT`), holds attack until `PROP_HEALTH[N]` reads 0 or the target leaves
+the aim, aims again and repeats up to `rounds=` times (a round that already holds costs no ticks). `lat=`/`vlat=` are the miss in
+units that still counts as on target (the angular floor is 2.9 degrees, above the 2.5 degree smallest turn). `aimup=` raises the
+aim point above the prop's `PROP_POS` up. Look level again with `@level`. Use it for any fight: find the prop slot by probing
+`PROP_HEALTH`/`PROP_POS` at a checkpoint, then `@kill prop=SLOT`.

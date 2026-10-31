@@ -2563,14 +2563,14 @@ timeout = 270
 lstick = [58, 128]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=927 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=930 }
 timeout = 240
 
 [[step]]
 lstick = [198, 128]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=955 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=944 }
 timeout = 240
 
 [[step]]
@@ -5499,11 +5499,25 @@ timeout = 3600
 lstick = [1, 128]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=52 }
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= 36 || min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" }
 timeout = 180
 
 [[step]]
-wait_until = { kind="ram", sym="PROP_POS", offset=48, size=4, signed=true, op="le", value=-2200 }
+lstick = [78, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= 54 || min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" }
+timeout = 240
+
+[[step]]
+lstick = [178, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 72 || min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" }
+timeout = 240
+
+[[step]]
+wait_until = { kind="expr", expr="min(i in 3..5: (let dx = i32(PROP_POS[3 * i]) - i32(LOGIC_PLAYER_POS[0]), dy = i32(PROP_POS[3 * i + 2]) - i32(LOGIC_PLAYER_POS[2]) in dx * dx + dy * dy)) <= 22500" }
 timeout = 5400
 
 [[step]]
@@ -5630,8 +5644,85 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-1860 }
-timeout = 360
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" }
+timeout = 240
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-48 }
+timeout = 120
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" }
+timeout = 240
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-48 }
+timeout = 120
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" }
+timeout = 240
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-48 }
+timeout = 120
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" }
+timeout = 240
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-48 }
+timeout = 120
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" }
+timeout = 240
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-48 }
+timeout = 120
+
+[[step]]
+lstick = [128, 1]
+rstick = [128, 128]
+press = []
+hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -1860 || i32(LOGIC_PLAYER_POS[2]) <= -54" }
+timeout = 240
+
+[[step]]
+lstick = [58, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-48 }
+timeout = 120
 
 [[step]]
 checkpoint = "zombies-passed"
