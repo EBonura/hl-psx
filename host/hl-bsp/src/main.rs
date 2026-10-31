@@ -14748,9 +14748,23 @@ fn cook_pass(
     // crouched player fits holes in doors that the standing hull cannot
     // (c1a0c's broken elevator-door glass). Cook the hull-3 root of every
     // door; it rides in bits 16..30 of the record's `head`.
+    // Pressure breakables (func_breakable SF_BREAK_PRESSURE, 4) are stood on by
+    // design: a crouched player rests on hull 3 (feet on the top face), and the
+    // touch that arms them needs that contact (c1a2's collapsing ceiling panel;
+    // on hull 1 the player floats 18 units above it and nothing breaks).
+    let mut pressure_ents = vec![false; ents.len()];
+    for rec in &logic.ents {
+        if rec.kind == LOGIC_FUNC_BREAKABLE
+            && rec.spawnflags & 4 != 0
+            && (rec.brush as usize) < pressure_ents.len()
+        {
+            pressure_ents[rec.brush as usize] = true;
+        }
+    }
     let ent_head3_raw: Vec<i32> = ents
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(ei, e)| {
             // Doors only: they are the brushes with authored holes a ducked
             // player passes through, and every other brush's hull 3 would
             // cost clipnode RAM in the largest maps for nothing.
@@ -14761,8 +14775,8 @@ fn cook_pass(
             let hull_nodes = |root: i32| clip_tree_nodes(clipnodes, root);
             let h3 = model_headnode(models, e.submodel as usize, 3).unwrap_or(0);
             let h1 = model_headnode(models, e.submodel as usize, 1).unwrap_or(0);
-            if e.head != 0 && e.kind == 1 && hull_nodes(h3) > hull_nodes(h1) && hull_nodes(h3) <= 40
-            {
+            let door_shape = e.kind == 1 && hull_nodes(h3) > hull_nodes(h1) && hull_nodes(h3) <= 40;
+            if e.head != 0 && (door_shape || (pressure_ents[ei] && hull_nodes(h3) <= 40)) {
                 h3
             } else {
                 0
