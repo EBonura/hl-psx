@@ -10,8 +10,8 @@ max_ticks = 60000
 
 # Bound to the build this journey was written against.
 [addr]
-SIM_NOW = 0x801e62a4
-WORLD_ARENA = 0x800e2028
+SIM_NOW = 0x801e63b4
+WORLD_ARENA = 0x800e2138
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
