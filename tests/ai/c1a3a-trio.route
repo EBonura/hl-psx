@@ -1,0 +1,6 @@
+@journey name=hl-ai-c1a3a-trio title="Half-Life c1a3a: the HECU squad of three at (-944..-1120, -848..-720) meets the player at (-700,-848) standing still (AI parity fight against the retail oracle, Medium)" prologue=segment segment_row=24 max_ticks=60000
+
+map c1a3a
+  20
+  @wait sym=SIM_NOW size=2 op=ge value=700 timeout=900
+  @stop

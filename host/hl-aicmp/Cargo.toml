@@ -10,3 +10,6 @@ description = "Squad-fight parity metrics: retail oracle traces, seed envelopes,
 [[bin]]
 name = "hl-aicmp"
 path = "src/main.rs"
+
+[dependencies]
+hl-sched = { path = "../hl-sched" }

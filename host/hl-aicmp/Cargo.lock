@@ -5,3 +5,17 @@ version = 4
 [[package]]
 name = "hl-aicmp"
 version = "0.1.0"
+dependencies = [
+ "hl-sched",
+]
+
+[[package]]
+name = "hl-format"
+version = "0.1.0"
+
+[[package]]
+name = "hl-sched"
+version = "0.1.0"
+dependencies = [
+ "hl-format",
+]

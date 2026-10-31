@@ -53,8 +53,12 @@ const SEQ_BURST: u8 = 0x40;
 const SEQ_KICK: u8 = 0x80;
 /// A walker is at its goal within this many units.
 const REACHED: i32 = 32;
+/// `prop_move_towards_point` speed that nets the retail run (9.5 units a tick).
+const RUN_SPEED: i32 = 12;
 /// Failed steps (move ticks) before a route is given up.
 const STUCK: u8 = 12;
+/// Ticks a route may take before it counts as failed.
+const WALK_LIMIT: u8 = 200;
 /// The kick lands at tick 8 of `frontkick`.
 const KICK_TICK: u8 = 8;
 
@@ -252,18 +256,27 @@ pub(crate) unsafe fn tick(
         // The walk: a step toward the route's goal on the walker's move ticks, the timer counting
         // failed steps. Reaching the goal ends the movement.
         let goal = pos32(ai().rows[i].goal);
+        let walked = ai().rows[i].aux.saturating_add(1);
+        ai().rows[i].aux = walked;
         if dist2_xz(PROP_POS[pi], goal) < REACHED * REACHED {
             PROP_STATE[pi] = PROP_STATE_IDLE;
             PROP_AI_TIMER[pi] = 0;
+        } else if walked >= WALK_LIMIT {
+            // A route that does not arrive (the walker circles a corner): the task fails.
+            PROP_AI_TIMER[pi] = STUCK;
         } else {
             let dest = [goal[0], PROP_POS[pi][1], goal[2]];
-            if prop_move_towards_point(m, pm, pi, dest, 15) {
+            if prop_move_towards_point(m, pm, pi, dest, RUN_SPEED) {
                 PROP_AI_TIMER[pi] = 0;
             } else {
                 PROP_AI_TIMER[pi] = timer.saturating_add(1);
             }
         }
-    } else if timer & SEQ_LEFT != 0 {
+    } else if ai().rows[i].aux != 0 {
+        ai().rows[i].aux = 0;
+    }
+    let timer = PROP_AI_TIMER[pi];
+    if PROP_STATE[pi] != PROP_STATE_MOVE && timer & SEQ_LEFT != 0 {
         PROP_AI_TIMER[pi] = timer - 1;
         w.events(pi, timer);
         if timer & SEQ_LEFT == 1 {

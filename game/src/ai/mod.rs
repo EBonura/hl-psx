@@ -43,8 +43,10 @@ const COMPLETE: u8 = 4;
 /// Longest schedule run in one think (the original loops ten times).
 const MAX_STEPS: u8 = 10;
 
-/// One monster's schedule state.
+/// One monster's schedule state. `repr(C)` and exactly 36 bytes: the tick log reads the rows of the static
+/// pool as RAM words (`conds` at +8, `memory`/`wait_until` at +12, `slot`/`enemy`/`squad`/`fail`/`aux` at +16).
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct Row {
     pub prop: u8,
     pub species: u8,
@@ -70,6 +72,8 @@ pub struct Row {
     pub goal: [i16; 3],
     pub last: [i16; 3],
 }
+
+const _: () = assert!(core::mem::size_of::<Row>() == 36);
 
 impl Row {
     pub const EMPTY: Row = Row {
@@ -543,7 +547,6 @@ impl<const N: usize> Ai<N> {
 
     #[optimize(size)]
     fn change_schedule(&mut self, i: usize, id: u8) {
-        self.vacate(i);
         let r = &mut self.rows[i];
         r.sched = id;
         r.idx = 0;
@@ -621,6 +624,8 @@ impl<const N: usize> Ai<N> {
             let valid = r.sched != 0
                 && r.conds & (s.interrupt | cond::SCHEDULE_DONE | cond::TASK_FAILED) == 0;
             if !valid || r.state != r.ideal {
+                // `ScheduleChange`: the monster lets go of its squad slot before the new schedule picks one.
+                self.vacate(i);
                 let c = r.conds;
                 if (c != 0 && c & cond::SCHEDULE_DONE == 0)
                     || s.interrupt & cond::SCHEDULE_DONE != 0
