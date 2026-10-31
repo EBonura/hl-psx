@@ -119,7 +119,7 @@ can stop against a wall one unit short of the value the retail engine reached).
 ## Gate expressions and closed-loop aim
 
 Gate requirement: a journey with `expr=` conditions (`chain-new-game.toml` and the `@aim`/`@kill` legs) needs a
-`psoxide-gate` built from PSoXide-emulator 1d4f6d4e or later (358eae9a or later for the gauntlet's loop step), taken from `PATH` or `$PSOXIDE_GATE` (the build in
+`psoxide-gate` built from PSoXide-emulator 358eae9a or later, taken from `PATH` or `$PSOXIDE_GATE` (the build in
 `PSoXide-emulator/target/pgo/release` after `make build-pgo`). The gate is not chosen by `components.lock.json`: the lock's
 emulator revision only decides which emulator crates `.psoxide` hydrates, and it stays at 0e87b3a because 1d4f6d4e's frontend
 needs the `psx-webdisc` workspace dependency, which the pinned editor component's root `Cargo.toml` does not declare
