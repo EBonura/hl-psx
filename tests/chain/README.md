@@ -93,6 +93,19 @@ airlock, the pump room, the pipe corridor (a crouch jump: a plain jump peaks 3 u
 the lift, the console scientist (use him, he follows to the retinal scanner) and the control room, then c1a1 (the west detour to the north corridor, the two lasers, the crowbar and the glass window broken with crouched swings, the hall, the shaft window, the ladder and the upper level) to the arrival in c1a1a. The c1a1 legs were authored with a scratch waypoint planner and corrected by hand; the second laser's safe window is read from the live beam end (`BEAM_RAND_END`).
 The c1a0c legs were derived from a trace of the retail engine and are closed loop on the player's x and y.
 From c1a1a it continues through the zombie corridor into c1a1f and out of it into c1a1b (15 segments). c1a1f has no walkable standing-hull path from its arrival to its exit; the way is two crouch crawls and a crouch jump found by searching the BSP hulls (the duck hull shows the crawls): the arrival hall's outer ring to the east room, the vent hole in the inner room's east wall (y 498..530), the wall charger on the inner room's north wall (the corridor leaves 15 to 55 health), a crouch jump onto the 49 high ramp base at (-868,176) (the retail engine does it with the same input), the walkway above the hall (crouched, ceiling 46 above the floor), the crab room, the long south corridor and the exit alcove's wall hole at y -1084..-1072. Two of its holds are narrow: align x to -888..-878 with slow f38/f-38 holds before the jump (a f70 hold moves 30 units per call) and keep the alignment at the exit short (a slide zombie arrives within a few seconds at 35 health).
+It then plays c1a1b and the first half of c1a1c (the chain ends on the lift, `arrive-c1a1c` to `qy1`).
+c1a1b: the airlock button (stand off it: it fires on touch and locks the view), the aira doors (a sliding cycle of about 40 ticks;
+the doorway is crossed on `@wait expr="i32(ENT_PHASE[38]) < 400"`, never on a count), the corridor, two houndeyes killed with
+`@kill`, the first aid unit, the door corridor, the vortigaunt (`@kill prop=12`), the 44 wide hole (crouched, aligned on x from the
+north), the canal ring (planner legs), the valve, the flooded swim to the exit grate (rise only until `floor_grate2` starts, wait
+for it on `TRAIN_OFF[8]`, then climb) and the changelevel. After the climb the player stands on the north lip of the hole: step
+east round it before walking south. c1a1c: the planner legs to the catwalk, the clip pickup, the lever, the jump over the south
+lip onto the lift, and the walk back to the deck's north edge with the magazine reloaded. The headcrab gauntlet (`@fight`, 20
+crabs) is not in the committed chain: `@fight` unrolls its guard loop into one gate step per poll group and the journey comes to
+42 MB (land.sh refuses files over 5 MB). The gate needs a loop step, or `@fight` a much cheaper encoding, before it can join.
+A `@face` that has to turn through its last 59 units can stall in a chain (the single-step nudge turns nothing): use a
+`@hold t60 until expr=...` with a wide window when the exact yaw does not matter.
+
 
 `hazard.route` (`tests/chain-hazard.toml`): title, Hazard Course row, t0a0 from the start lift through doors td1 and
 td2 and the observation hall to the catwalk north of it. That catwalk ends at the door of the swimming shaft (`waterout`),
