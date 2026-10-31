@@ -8125,6 +8125,12 @@ fn load_clips_manifest() -> std::collections::HashMap<(u16, String), ScriptClip>
     out
 }
 
+/// The extractor's manifest name for a sequence that kills its actor (hl-content
+/// `DEAD_EVENT_TARGET`), and the LogicAux target id the cook gives it; the runtime's
+/// `SCRIPT_DEAD_TARGET` must match. Name ids stay below 0x4000, so 0xfffe is never a real name.
+const SCRIPT_DEAD_EVENT_TARGET: &str = "*dead*";
+const SCRIPT_DEAD_TARGET_ID: u16 = 0xfffe;
+
 #[derive(Clone)]
 struct StudioTargetEvent {
     tick: u16,
@@ -9893,7 +9899,11 @@ fn collect_logic_entities_with_lightstyles(
                     if aux_count > u8::MAX - 2 {
                         break;
                     }
-                    let target = names.id(Some(&event.target));
+                    let target = if event.target == SCRIPT_DEAD_EVENT_TARGET {
+                        SCRIPT_DEAD_TARGET_ID
+                    } else {
+                        names.id(Some(&event.target))
+                    };
                     if target == 0 {
                         continue;
                     }

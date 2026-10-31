@@ -11258,6 +11258,8 @@ unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize,
     }
 }
 
+/// LogicAux event target the cook gives a SCRIPT_EVENT_DEAD sequence (hl-bsp `SCRIPT_DEAD_TARGET_ID`).
+const SCRIPT_DEAD_TARGET: u16 = 0xfffe;
 const SCRIPT_CLIP_SLOT_MASK: u16 = 0x003f;
 const SCRIPT_CLIP_DURATION_SHIFT: u32 = 6;
 
@@ -11355,16 +11357,21 @@ unsafe fn script_tick_studio_events(m: &Map, pi: usize, idle: bool) {
         let period = metadata.target.max(1);
         let phase = if idle { elapsed % period } else { elapsed };
         if play_event == !idle && event.delay_ticks == phase {
-            logic_fire_targets(
-                m,
-                m.n_logic.min(MAX_LOGIC),
-                m.n_ents.min(MAX_ENTS),
-                event.target,
-                map::USE_TOGGLE,
-                SIM_NOW,
-                0,
-                li as u16,
-            );
+            if event.target == SCRIPT_DEAD_TARGET {
+                // SCRIPT_EVENT_DEAD: health 0 now; the corpse pose follows when the sequence ends.
+                PROP_HEALTH[pi] = 0;
+            } else {
+                logic_fire_targets(
+                    m,
+                    m.n_logic.min(MAX_LOGIC),
+                    m.n_ents.min(MAX_ENTS),
+                    event.target,
+                    map::USE_TOGGLE,
+                    SIM_NOW,
+                    0,
+                    li as u16,
+                );
+            }
         }
         ai += 2;
     }
@@ -11714,6 +11721,7 @@ unsafe fn tick_scripted_actor(
     if PROP_SCRIPT_LI[pi] != u16::MAX && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
         let li = prop_script_li(pi);
         prop_script_clear(pi);
+        script_lay_corpse(pi);
         if li < m.n_logic.min(MAX_LOGIC) {
             let rec = m.logic(li);
             script_root_motion(m, pi, rec);
@@ -11737,6 +11745,16 @@ unsafe fn tick_scripted_actor(
         return true;
     }
     false
+}
+
+/// A sequence that ended on SCRIPT_EVENT_DEAD (health 0 since the event) leaves a corpse.
+#[cold]
+#[inline(never)]
+unsafe fn script_lay_corpse(pi: usize) {
+    if PROP_HEALTH[pi] == 0 {
+        PROP_STATE[pi] = PROP_STATE_DEAD;
+        PROP_DEATH_START[pi] = SIM_NOW;
+    }
 }
 
 /// CBaseMonster::CineCleanup: a play sequence that carries its actor away

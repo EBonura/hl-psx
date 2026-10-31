@@ -239,7 +239,13 @@ pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
 
 const SEQDESC_BYTES: usize = 176;
 const EVENT_BYTES: usize = 76;
+const SCRIPT_EVENT_DEAD: i32 = 1000;
+const SCRIPT_EVENT_NOT_DEAD: i32 = 1001;
 const SCRIPT_EVENT_FIRE_TARGET: i32 = 1003;
+/// Manifest target for a sequence that leaves its actor dead (SCRIPT_EVENT_DEAD, with no later
+/// SCRIPT_EVENT_NOT_DEAD). The map cook folds it into a LogicAux event the runtime reads as
+/// "kill the actor"; it is never a real targetname (a targetname cannot contain `*`).
+const DEAD_EVENT_TARGET: &str = "*dead*";
 
 fn sequences(data: &[u8]) -> Result<(HashMap<String, usize>, usize, usize)> {
     if data.len() < 212 || &data[..4] != b"IDST" {
@@ -279,17 +285,30 @@ fn extract_events(data: &[u8], sequence: usize) -> Result<Vec<(u16, u16, String)
     let period = (((frame_count - 1).max(0) as f32 * 20.0 / fps).ceil() as i32)
         .clamp(1, u16::MAX as i32) as u16;
     let mut result = Vec::new();
+    // CBaseMonster::HandleAnimEvent: the last dead / not-dead event in frame order decides whether
+    // the sequence ends with the actor killed (c1a1f's crawling Barney and sliding zombie).
+    let mut death: Option<(i32, bool)> = None;
     for index in 0..event_count as usize {
         let at = event_offset as usize + index * EVENT_BYTES;
         let frame = i32le(data, at)?;
         let event = i32le(data, at + 4)?;
         let target = cstr(&data[at + 12..at + EVENT_BYTES]).trim().to_string();
+        if matches!(event, SCRIPT_EVENT_DEAD | SCRIPT_EVENT_NOT_DEAD)
+            && death.is_none_or(|(last, _)| frame >= last)
+        {
+            death = Some((frame, event == SCRIPT_EVENT_DEAD));
+        }
         if event != SCRIPT_EVENT_FIRE_TARGET || target.is_empty() || target.contains('|') {
             continue;
         }
         let tick =
             ((frame.max(0) as f32 * 20.0 / fps).ceil() as i32).clamp(1, u16::MAX as i32) as u16;
         result.push((tick, period, target));
+    }
+    if let Some((frame, true)) = death {
+        let tick =
+            ((frame.max(0) as f32 * 20.0 / fps).ceil() as i32).clamp(1, u16::MAX as i32) as u16;
+        result.push((tick, period, DEAD_EVENT_TARGET.to_string()));
     }
     Ok(result)
 }
@@ -826,6 +845,39 @@ pub fn transition_props(maps_dir: &Path, output: &Path, maps: &[String]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A one-sequence studio MDL whose sequence carries `events` as (frame, event id).
+    fn mdl_with_events(events: &[(i32, i32)]) -> Vec<u8> {
+        let table = 212;
+        let event_at = table + SEQDESC_BYTES;
+        let mut data = vec![0u8; event_at + events.len() * EVENT_BYTES];
+        data[..4].copy_from_slice(b"IDST");
+        data[164..168].copy_from_slice(&1i32.to_le_bytes());
+        data[168..172].copy_from_slice(&(table as i32).to_le_bytes());
+        data[table + 32..table + 36].copy_from_slice(&10.0f32.to_le_bytes());
+        data[table + 48..table + 52].copy_from_slice(&(events.len() as i32).to_le_bytes());
+        data[table + 52..table + 56].copy_from_slice(&(event_at as i32).to_le_bytes());
+        data[table + 56..table + 60].copy_from_slice(&21i32.to_le_bytes());
+        for (index, (frame, event)) in events.iter().enumerate() {
+            let at = event_at + index * EVENT_BYTES;
+            data[at..at + 4].copy_from_slice(&frame.to_le_bytes());
+            data[at + 4..at + 8].copy_from_slice(&event.to_le_bytes());
+        }
+        data
+    }
+
+    #[test]
+    fn a_sequence_ending_dead_emits_the_dead_event_and_a_revived_one_does_not() {
+        let dies = extract_events(&mdl_with_events(&[(1, SCRIPT_EVENT_DEAD)]), 0).unwrap();
+        assert_eq!(dies, vec![(2, 40, DEAD_EVENT_TARGET.to_string())]);
+        let revived = extract_events(
+            &mdl_with_events(&[(1, SCRIPT_EVENT_DEAD), (1, SCRIPT_EVENT_NOT_DEAD)]),
+            0,
+        )
+        .unwrap();
+        assert!(revived.is_empty());
+        assert!(extract_events(&mdl_with_events(&[(1, 2000)]), 0).unwrap().is_empty());
+    }
 
     #[test]
     fn entity_parser_preserves_goldsrc_keys() {

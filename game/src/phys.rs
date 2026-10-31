@@ -2674,7 +2674,13 @@ impl Player {
         let dest = add(self.pos, step);
         let raised = [dest[0], dest[1] + STEP_UP + 1, dest[2]];
         let down = trace_all(map, head, movers, raised, dest);
-        let moved = if !down.startsolid && !down.allsolid {
+        // PM_PlayerTrace reports a start inside any solid entity as startsolid; trace_all hides
+        // that for movers, so a lip step from a point already inside one (a grate lifting
+        // over a swimmer, c1a1b) would walk the player through it.
+        let moved = if !down.startsolid
+            && !down.allsolid
+            && movers_clear_at_hull(map, movers, raised, head)
+        {
             self.pos = lerp_q12(raised, dest, down.frac);
             step
         } else {
