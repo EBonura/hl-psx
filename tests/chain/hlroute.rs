@@ -259,6 +259,8 @@ fn parse_kv(tokens: &[&str]) -> Vec<(String, String)> {
 }
 
 fn assert_table(kind: &str, kvs: &[(String, String)]) -> String {
+    // `expr="..."` makes any condition a gate expression (integer arithmetic over RAM reads).
+    let kind = if kvs.iter().any(|(k, _)| k == "expr") { "expr" } else { kind };
     let mut out = format!("kind={kind:?}");
     for (k, v) in kvs {
         let numeric = v.parse::<i64>().is_ok() || v.starts_with("0x") || v == "true" || v == "false";
@@ -269,6 +271,35 @@ fn assert_table(kind: &str, kvs: &[(String, String)]) -> String {
         }
     }
     format!("{{ {out} }}")
+}
+
+/// Turn the inline-table body `a=1, b="x, y"` into one `key = value` per line, splitting only at
+/// the `, ` outside quotes (a gate expression may contain `, `).
+fn split_top(body: &str) -> String {
+    let mut out = String::new();
+    let mut quoted = false;
+    let b = body.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\\' if quoted && i + 1 < b.len() => {
+                out.push(b[i] as char);
+                out.push(b[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            b'"' => quoted = !quoted,
+            b',' if !quoted && b.get(i + 1) == Some(&b' ') => {
+                out.push('\n');
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(b[i] as char);
+        i += 1;
+    }
+    out
 }
 
 fn parse_sample(tokens: &[&str]) -> Result<Sample, String> {
@@ -317,6 +348,165 @@ fn split_line(line: &str) -> Vec<&str> {
         out.push(&line[s..]);
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Closed-loop aim: `@aim`, `@kill`, `@level`
+//
+// The conditions are gate expressions over the player's pose and the target's position, so the
+// stick is held until the angle to the target (not a tick count, not the spot the player happened
+// to stop on) says stop. Yaw word: 4096 a turn, 0 faces +y, 1024 faces +x, turning right adds.
+// The sine is an integer rational approximation (Bhaskara, error under 0.2%), so the expression
+// does not depend on where a build keeps its sine table.
+
+/// What `@aim` looks at: a prop slot (position from `PROP_POS`, liveness from `PROP_HEALTH`) or a fixed point.
+struct AimTarget {
+    x: String,
+    up: String,
+    y: String,
+    /// Expression that is true when the target no longer needs shooting (`0` for a point).
+    dead: String,
+}
+
+fn sin_q12_expr(a: &str) -> String {
+    format!("(let h = ({a}) & 2047 in (let p = h * (2048 - h) in (((({a}) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p))))")
+}
+
+#[derive(Clone, Copy)]
+enum Aim {
+    Coarse(bool),
+    Fine(bool),
+    Within,
+}
+
+impl AimTarget {
+    /// The yaw condition. `right` is the direction of the turn that is being held; `Within` is the
+    /// settled test. `lat` is the lateral miss, in units, that still counts as on target (the
+    /// angular floor is about 2.9 degrees, above the smallest turn step of 2.5).
+    fn yaw(&self, lat: i64, a: Aim) -> String {
+        let t = format!("max({lat} * 4096, d / 20)");
+        let body = match a {
+            Aim::Coarse(true) => format!("d > 0 && e <= 3 * {t}"),
+            Aim::Coarse(false) => format!("d > 0 && e >= 0 - 3 * {t}"),
+            Aim::Fine(true) => format!("d > 0 && e <= {t}"),
+            Aim::Fine(false) => format!("d > 0 && e >= 0 - {t}"),
+            Aim::Within => format!("d > 0 && abs(e) <= {t}"),
+        };
+        format!(
+            "let yaw = u16(LOGIC_PLAYER_YAW), sn = {}, cs = {}, dx = {} - i32(LOGIC_PLAYER_POS[0]), dy = {} - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in ({body})",
+            sin_q12_expr("yaw"),
+            sin_q12_expr("(yaw + 1024) & 4095"),
+            self.x,
+            self.y
+        )
+    }
+
+    /// The pitch condition: the pitch word (4096 a turn, up is positive) against the elevation of the
+    /// target from the eye. `vlat` is the vertical miss, in units, that still counts as on target.
+    fn pitch(&self, vlat: i64, aimup: i64, a: Aim) -> String {
+        let body = match a {
+            Aim::Coarse(true) => "ep >= 0 - 3 * tol".to_string(),
+            Aim::Coarse(false) => "ep <= 3 * tol".to_string(),
+            Aim::Fine(true) => "ep >= 0 - tol".to_string(),
+            Aim::Fine(false) => "ep <= tol".to_string(),
+            Aim::Within => "abs(ep) <= tol".to_string(),
+        };
+        format!(
+            "let dx = {} - i32(LOGIC_PLAYER_POS[0]), dy = {} - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = {} + {aimup} - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max({vlat} * 652 / hd, 40) in ({body})",
+            self.x, self.y, self.up
+        )
+    }
+
+    fn or_dead(&self, cond: String) -> String {
+        if self.dead == "0" {
+            cond
+        } else {
+            format!("({}) || ({cond})", self.dead)
+        }
+    }
+}
+
+fn expr_cond(e: String) -> String {
+    assert_table("ram", &[("expr".to_string(), e)])
+}
+
+/// `@aim|@kill prop=N | at=X,UP,Y [lat=4] [vlat=4] [aimup=0] [rounds=8] [timeout=150]`, and `@level [tol=48]`.
+fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
+    let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    let num = |k: &str, d: i64| -> Result<i64, String> {
+        get(k).map_or(Ok(d), |v| v.parse().map_err(|_| format!("{head}: bad {k}")))
+    };
+    let timeout = num("timeout", 150)? as u32;
+    let hold = |sample: Sample, until: String| Item::Hold { sample, until: expr_cond(until), timeout };
+    let mut out = Vec::new();
+    if head == "@level" {
+        let tol = num("tol", 48)?;
+        let p = "i16(LOGIC_PLAYER_PITCH)";
+        let up = Sample { look: 127, ..Sample::default() };
+        let down = Sample { look: -127, ..Sample::default() };
+        let fine_up = Sample { look: 29, ..Sample::default() };
+        let fine_down = Sample { look: -29, ..Sample::default() };
+        out.push(hold(up, format!("{p} >= 0 - {tol}")));
+        out.push(hold(down, format!("{p} <= {tol}")));
+        out.push(hold(fine_down, format!("{p} <= {tol}")));
+        out.push(hold(fine_up, format!("{p} >= 0 - {tol}")));
+        return Ok(out);
+    }
+    let target = if let Some(n) = get("prop") {
+        let n: i64 = n.parse().map_err(|_| format!("{head}: bad prop"))?;
+        AimTarget {
+            x: format!("i32(PROP_POS[{}])", 3 * n),
+            up: format!("i32(PROP_POS[{}])", 3 * n + 1),
+            y: format!("i32(PROP_POS[{}])", 3 * n + 2),
+            dead: format!("u8(PROP_HEALTH[{n}]) == 0"),
+        }
+    } else if let Some(at) = get("at") {
+        let v: Vec<&str> = at.split(',').collect();
+        if v.len() != 3 || v.iter().any(|s| s.parse::<i64>().is_err()) {
+            return Err(format!("{head}: at=X,UP,Y"));
+        }
+        AimTarget { x: v[0].into(), up: v[1].into(), y: v[2].into(), dead: "0".into() }
+    } else {
+        return Err(format!("{head} needs prop=N or at=X,UP,Y"));
+    };
+    let lat = num("lat", 4)?;
+    let vlat = num("vlat", 4)?;
+    let aimup = num("aimup", 0)?;
+    let rounds = if head == "@kill" { num("rounds", 8)? } else { 1 };
+    let turn = |v: i32| Sample { turn: v, ..Sample::default() };
+    let look = |v: i32| Sample { look: v, ..Sample::default() };
+    for round in 0..rounds {
+        // The first round brings the view on target (a coarse turn each way, then the dead-band triple of
+        // the smallest turn, yaw then pitch); later rounds only trim, because the target moves while the
+        // view turns, and then fire until it is dead or has moved out of the aim.
+        let yaw_fine = |out: &mut Vec<Item>| {
+            out.push(hold(turn(29), target.or_dead(target.yaw(lat, Aim::Fine(true)))));
+            out.push(hold(turn(-29), target.or_dead(target.yaw(lat, Aim::Fine(false)))));
+            out.push(hold(turn(29), target.or_dead(target.yaw(lat, Aim::Fine(true)))));
+        };
+        let pitch_fine = |out: &mut Vec<Item>| {
+            out.push(hold(look(29), target.or_dead(target.pitch(vlat, aimup, Aim::Fine(true)))));
+            out.push(hold(look(-29), target.or_dead(target.pitch(vlat, aimup, Aim::Fine(false)))));
+            out.push(hold(look(29), target.or_dead(target.pitch(vlat, aimup, Aim::Fine(true)))));
+        };
+        if round == 0 {
+            out.push(hold(turn(60), target.or_dead(target.yaw(lat, Aim::Coarse(true)))));
+            out.push(hold(turn(-60), target.or_dead(target.yaw(lat, Aim::Coarse(false)))));
+            yaw_fine(&mut out);
+            out.push(hold(look(127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(true)))));
+            out.push(hold(look(-127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(false)))));
+            pitch_fine(&mut out);
+        }
+        yaw_fine(&mut out);
+        pitch_fine(&mut out);
+        if head == "@kill" {
+            let on = format!("({}) && ({})", target.yaw(lat, Aim::Within), target.pitch(vlat, aimup, Aim::Within));
+            let mut s = Sample::default();
+            s.buttons = button_for("attack").unwrap();
+            out.push(hold(s, target.or_dead(format!("!({on})"))));
+        }
+    }
+    Ok(out)
 }
 
 fn parse_route(text: &str) -> Result<Route, String> {
@@ -515,6 +705,11 @@ fn parse_route(text: &str) -> Result<Route, String> {
                 for (sample, until) in [(up, word("ge", fine.0)), (down, word("le", fine.1)), (up, word("ge", fine.0))] {
                     b.items.push(Item::Hold { sample, until, timeout });
                 }
+            }
+            "@aim" | "@kill" | "@level" => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                let items = aim_items(head, &parse_kv(&tok[1..])).map_err(at)?;
+                b.items.extend(items);
             }
             "@stop" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
@@ -767,7 +962,7 @@ fn compile(o: &Opts) -> Result<(), String> {
                     let _ = writeln!(t, "\n[[step]]\ncheckpoint = {name:?}\ngolden = false");
                     let _ = writeln!(t, "[[step.assert]]\nkind = \"not_flat\"\n[[step.assert]]\nkind = \"card_unchanged\"");
                     for a in asserts {
-                        let _ = writeln!(t, "[[step.assert]]\n{}", a.trim_start_matches("{ ").trim_end_matches(" }").replace(", ", "\n"));
+                        let _ = writeln!(t, "[[step.assert]]\n{}", split_top(a.trim_start_matches("{ ").trim_end_matches(" }")));
                     }
                 }
                 Item::Wait(cond, timeout) => {
@@ -808,6 +1003,22 @@ fn compile(o: &Opts) -> Result<(), String> {
             if let Some(rest) = c.strip_prefix('"') {
                 if let Some(end) = rest.find('"') {
                     names.insert(rest[..end].to_string());
+                }
+            }
+        }
+        // Symbols named inside gate expressions (`expr = "..."`): capitalised identifiers.
+        for line in t.lines().filter(|l| l.contains("expr=\"")) {
+            let Some(at) = line.find("expr=\"") else { continue };
+            let body = &line[at + 6..];
+            let mut cur = String::new();
+            for c in body.chars().chain(std::iter::once(' ')) {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    cur.push(c);
+                } else {
+                    if cur.len() >= 3 && cur.chars().next().unwrap().is_ascii_uppercase() && cur.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+                        names.insert(cur.clone());
+                    }
+                    cur.clear();
                 }
             }
         }
