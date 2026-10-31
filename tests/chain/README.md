@@ -125,3 +125,13 @@ the aim, aims again and repeats up to `rounds=` times (a round that already hold
 units that still counts as on target (the angular floor is 2.9 degrees, above the 2.5 degree smallest turn). `aimup=` raises the
 aim point above the prop's `PROP_POS` up. Look level again with `@level`. Use it for any fight: find the prop slot by probing
 `PROP_HEALTH`/`PROP_POS` at a checkpoint, then `@kill prop=SLOT`.
+
+`@kill` and `@aim` also take `near=R [kind=K] [below=B]` instead of `prop=N`: the target is the nearest living prop within R units
+(3D, `PROP_POS` up is the feet), optionally of one `PROP_KIND` (2 is a headcrab, 6 a houndeye, 55 a zombie) and not more than B units
+under the player's centre (a prop under the floor cannot be shot), and the slot is found by the expression itself, so one line serves
+any slot numbering and costs no ticks while nothing is in range. `@aim rel=DX,DUP,DY [unless=R]` holds the view on a point fixed
+relative to the player (a stance: where the enemies come from; `unless=R` ends it at once when a prop is within R).
+`@fight near=R [kind=K] [below=B] [aimup=N] [lat=8] [stance=DX,DUP,DY] [reload=N] [for=300] [sleep=10]` is a guard for `for` polls:
+each round shoots whatever is in range (`@kill near=`), sleeps, and goes back to the stance; `reload=N` reloads when the magazine
+is under N. The loop is unrolled at compile time. c1a1c uses it for the headcrab gauntlet on the lift
+(`@fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=6`).

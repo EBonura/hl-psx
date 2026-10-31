@@ -430,7 +430,26 @@ fn expr_cond(e: String) -> String {
     assert_table("ram", &[("expr".to_string(), e)])
 }
 
-/// `@aim|@kill prop=N | at=X,UP,Y [lat=4] [vlat=4] [aimup=0] [rounds=8] [timeout=150]`, and `@level [tol=48]`.
+fn sign(v: i64) -> &'static str {
+    if v < 0 {
+        "-"
+    } else {
+        "+"
+    }
+}
+
+/// Distance-and-slot key of the nearest living prop within `r` units (3D): `distance^2 * 256 + slot`, or
+/// 2000000000 when none is in range. The slot is the low byte.
+fn nearest_prop_expr(r: i64, kind: Option<i64>, below: Option<i64>) -> String {
+    let d2 = |i: &str| format!("(let qx = i32(PROP_POS[3 * {i}]) - i32(LOGIC_PLAYER_POS[0]), qy = i32(PROP_POS[3 * {i} + 2]) - i32(LOGIC_PLAYER_POS[2]), qz = i32(PROP_POS[3 * {i} + 1]) - i32(LOGIC_PLAYER_POS[1]) in qx * qx + qy * qy + qz * qz)");
+    let kind = kind.map_or(String::new(), |k| format!(" && u8(PROP_KIND[i]) == {k}"));
+    // `below=B`: skip props whose feet are more than B units under the player's centre (under the floor or on a
+    // lower level, where a shot cannot reach them).
+    let below = below.map_or(String::new(), |b| format!(" && i32(PROP_POS[3 * i + 1]) - i32(LOGIC_PLAYER_POS[1]) >= 0 - {b}"));
+    format!("min(i in 0..128: (u8(PROP_HEALTH[i]) > 0{kind}{below} && {} < {}) ? ({} * 256 + i) : 2000000000)", d2("i"), r * r, d2("i"))
+}
+
+/// `@aim|@kill prop=N | near=R [kind=K] [below=B] | rel=DX,DUP,DY [unless=R] | at=X,UP,Y [lat=4] [vlat=4] [aimup=0] [rounds=8] [timeout=150]`, and `@level [tol=48]`.
 fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     let num = |k: &str, d: i64| -> Result<i64, String> {
@@ -452,6 +471,14 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         out.push(hold(fine_up, format!("{p} >= 0 - {tol}")));
         return Ok(out);
     }
+    let kind: Option<i64> = match get("kind") {
+        Some(k) => Some(k.parse().map_err(|_| format!("{head}: bad kind"))?),
+        None => None,
+    };
+    let below: Option<i64> = match get("below") {
+        Some(k) => Some(k.parse().map_err(|_| format!("{head}: bad below"))?),
+        None => None,
+    };
     let target = if let Some(n) = get("prop") {
         let n: i64 = n.parse().map_err(|_| format!("{head}: bad prop"))?;
         AimTarget {
@@ -460,6 +487,41 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
             y: format!("i32(PROP_POS[{}])", 3 * n + 2),
             dead: format!("u8(PROP_HEALTH[{n}]) == 0"),
         }
+    } else if let Some(r) = get("near") {
+        // The nearest living prop within `near` units (3D, feet height against the player's centre): the
+        // slot is found by the expression itself, so the same line serves any slot numbering. The target
+        // is "dead" when nothing living is in range, so rounds that cannot find anything cost no ticks.
+        let r: i64 = r.parse().map_err(|_| format!("{head}: bad near"))?;
+        let nearest = nearest_prop_expr(r, kind, below);
+        let slot = format!("(({nearest}) & 255)");
+        AimTarget {
+            x: format!("i32(PROP_POS[3 * {slot}])"),
+            up: format!("i32(PROP_POS[3 * {slot} + 1])"),
+            y: format!("i32(PROP_POS[3 * {slot} + 2])"),
+            dead: format!("({nearest}) >= 2000000000"),
+        }
+    } else if let Some(rel) = get("rel") {
+        // A point fixed relative to the player (dx, dup from the eye, dy in world axes): holds the view in a
+        // stance, for instance the direction an enemy is known to arrive from. `unless=R` ends it at once
+        // when a living prop is within R (fight first, re-aim later).
+        let v: Vec<&str> = rel.split(',').collect();
+        let n: Vec<i64> = v.iter().filter_map(|s| s.parse().ok()).collect();
+        if v.len() != 3 || n.len() != 3 {
+            return Err(format!("{head}: rel=DX,DUP,DY"));
+        }
+        let dead = match get("unless") {
+            Some(r) => {
+                let r: i64 = r.parse().map_err(|_| format!("{head}: bad unless"))?;
+                format!("({}) < 2000000000", nearest_prop_expr(r, kind, below))
+            }
+            None => "0".into(),
+        };
+        AimTarget {
+            x: format!("(i32(LOGIC_PLAYER_POS[0]) {} {})", sign(n[0]), n[0].abs()),
+            up: format!("(i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT) {} {})", sign(n[1]), n[1].abs()),
+            y: format!("(i32(LOGIC_PLAYER_POS[2]) {} {})", sign(n[2]), n[2].abs()),
+            dead,
+        }
     } else if let Some(at) = get("at") {
         let v: Vec<&str> = at.split(',').collect();
         if v.len() != 3 || v.iter().any(|s| s.parse::<i64>().is_err()) {
@@ -467,7 +529,7 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         }
         AimTarget { x: v[0].into(), up: v[1].into(), y: v[2].into(), dead: "0".into() }
     } else {
-        return Err(format!("{head} needs prop=N or at=X,UP,Y"));
+        return Err(format!("{head} needs prop=N, near=R, rel=DX,DUP,DY or at=X,UP,Y"));
     };
     let lat = num("lat", 4)?;
     let vlat = num("vlat", 4)?;
@@ -510,6 +572,55 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
             s.buttons = button_for("attack").unwrap();
             out.push(hold(s, target.or_dead(format!("!({on})"))));
         }
+    }
+    Ok(out)
+}
+
+/// `@fight near=R [kind=K] [below=B] [reload=N] [for=300] [sleep=10] [stance=DX,DUP,DY] [lat=8] [aimup=0] [rounds=3]`: a guard that
+/// shoots whatever living prop (of `kind`) comes within `near` units, nearest first, for `for` polls. Each
+/// round is `@kill near=` (no cost when nothing is in range), `sleep` neutral polls, and, when a `stance` is
+/// given, `@aim rel=` back to the direction the enemies come from (skipped at once while one is in range).
+/// The loop is unrolled at compile time, so the polls spent idle are the only cost of a quiet stretch.
+fn fight_items(kv: &[(String, String)]) -> Result<Vec<Item>, String> {
+    let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    let num = |k: &str, d: i64| -> Result<i64, String> {
+        get(k).map_or(Ok(d), |v| v.parse().map_err(|_| format!("@fight: bad {k}")))
+    };
+    let near = get("near").ok_or("@fight needs near=R")?;
+    let (sleep, total) = (num("sleep", 10)?.max(1), num("for", 300)?);
+    let mut kill: Vec<(String, String)> = vec![("near".into(), near.clone()), ("rounds".into(), num("rounds", 3)?.to_string())];
+    kill.push(("lat".into(), num("lat", 8)?.to_string()));
+    for k in ["kind", "below", "aimup", "vlat"] {
+        if let Some(v) = get(k) {
+            kill.push((k.into(), v));
+        }
+    }
+    let stance: Option<Vec<(String, String)>> = get("stance").map(|v| {
+        vec![
+            ("rel".into(), v),
+            ("unless".into(), near.clone()),
+            ("lat".into(), num("stancelat", 20).unwrap_or(20).to_string()),
+            ("vlat".into(), num("stancevlat", 40).unwrap_or(40).to_string()),
+            ("timeout".into(), "60".into()),
+        ]
+    });
+    let mut out = Vec::new();
+    let mut spent = 0;
+    let topup = num("reload", 0)?;
+    while spent < total {
+        if topup > 0 {
+            // Reload when the magazine is under `reload` rounds (ends at once when it is not).
+            let mut sample = Sample::default();
+            sample.buttons = button_for("reload").unwrap();
+            let until = expr_cond(format!("i16(LOGIC_PLAYER_CLIP_AMMO) >= {topup} || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0"));
+            out.push(Item::Hold { sample, until, timeout: 80 });
+        }
+        out.extend(aim_items("@kill", &kill)?);
+        out.push(Item::Run(sleep as u32, Sample::default()));
+        if let Some(st) = &stance {
+            out.extend(aim_items("@aim", st)?);
+        }
+        spent += sleep + 1;
     }
     Ok(out)
 }
@@ -710,6 +821,11 @@ fn parse_route(text: &str) -> Result<Route, String> {
                 for (sample, until) in [(up, word("ge", fine.0)), (down, word("le", fine.1)), (up, word("ge", fine.0))] {
                     b.items.push(Item::Hold { sample, until, timeout });
                 }
+            }
+            "@fight" => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                let items = fight_items(&parse_kv(&tok[1..])).map_err(at)?;
+                b.items.extend(items);
             }
             "@aim" | "@kill" | "@level" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
