@@ -662,7 +662,7 @@ impl World for Guest<'_> {
     fn turn_by(&mut self, p: u8, deg: i16) -> u16 {
         unsafe {
             let cur = prop_yaw_value(PROP_YAW[p as usize]) as i32;
-            ((cur + deg as i32 * 4096 / 360) & 0xfff) as u16
+            ((cur - deg as i32 * 4096 / 360) & 0xfff) as u16
         }
     }
 
