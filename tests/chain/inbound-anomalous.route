@@ -1370,7 +1370,7 @@ map c1a1f next c1a1b
 map c1a1b next c1a1c
   @checkpoint arrive-c1a1b
   @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=90 value_hi=100
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-440 value_hi=-330
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-180 value_hi=-80
   # arrival (-400,-136) with the speed of the crawl still on him (the player coasts east some 70 units): let it die away first.
@@ -2157,7 +2157,7 @@ map c1a1b next c1a1c
   @checkpoint g1
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=4 op=ge value=-208 timeout=60
+  @hold f127 until expr="i32(LOGIC_PLAYER_POS[1]) >= -208 || u8(PLAYER_WATER_LEVEL) == 0" timeout=60
   @level
   # out of the grate in the exit room (floor -250): walk backwards south to the changelevel plane (y -1124, x 1816..1984); the map word is the state read (do not linger: the vent zombie wakes)
   # the player stands on the hole's north lip (y -866): going straight south drops him back into the shaft, so step round it to the east first (the hole is x 1880..1912)

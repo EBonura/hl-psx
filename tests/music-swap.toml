@@ -19,8 +19,8 @@ max_ticks = 14000
 
 # Bound to the build by scripts/bind-weapon-addr.sh (hl_psx::CD_TRACK_* are split statics).
 [addr]
-CD_TRACK_CUR = 0x801c27cc
-CD_TRACK_WANT = 0x801c76ec
+CD_TRACK_CUR = 0x801c252c
+CD_TRACK_WANT = 0x801c744c
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them"

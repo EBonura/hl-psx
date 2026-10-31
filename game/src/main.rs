@@ -11365,22 +11365,24 @@ unsafe fn script_tick_studio_events(m: &Map, pi: usize, idle: bool) {
         let play_event = metadata.delay_ticks != 0;
         let period = metadata.target.max(1);
         let phase = if idle { elapsed % period } else { elapsed };
-        if play_event == !idle && event.delay_ticks == phase {
-            if event.target == SCRIPT_DEAD_TARGET {
-                // SCRIPT_EVENT_DEAD: health 0 now; the corpse pose follows when the sequence ends.
+        if event.target == SCRIPT_DEAD_TARGET {
+            // SCRIPT_EVENT_DEAD is a state, not a pulse: once its tick has passed the actor
+            // is dead (health 0; the corpse pose follows when the sequence ends), so a
+            // sim tick on which this actor was not visited cannot make it miss the event.
+            if play_event == !idle && event.delay_ticks <= phase {
                 PROP_HEALTH[pi] = 0;
-            } else {
-                logic_fire_targets(
-                    m,
-                    m.n_logic.min(MAX_LOGIC),
-                    m.n_ents.min(MAX_ENTS),
-                    event.target,
-                    map::USE_TOGGLE,
-                    SIM_NOW,
-                    0,
-                    li as u16,
-                );
             }
+        } else if play_event == !idle && event.delay_ticks == phase {
+            logic_fire_targets(
+                m,
+                m.n_logic.min(MAX_LOGIC),
+                m.n_ents.min(MAX_ENTS),
+                event.target,
+                map::USE_TOGGLE,
+                SIM_NOW,
+                0,
+                li as u16,
+            );
         }
         ai += 2;
     }
