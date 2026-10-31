@@ -43,7 +43,7 @@ const COMPLETE: u8 = 4;
 /// Longest schedule run in one think (the original loops ten times).
 const MAX_STEPS: u8 = 10;
 
-/// One monster's schedule state. `repr(C)` and exactly 36 bytes: the tick log reads the rows of the static
+/// One monster's schedule state. `repr(C)` and exactly 40 bytes: the tick log reads the rows of the static
 /// pool as RAM words (`conds` at +8, `memory`/`wait_until` at +12, `slot`/`enemy`/`squad`/`fail`/`aux` at +16).
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -71,9 +71,11 @@ pub struct Row {
     pub yaw: u16,
     pub goal: [i16; 3],
     pub last: [i16; 3],
+    /// Closest the walker has been to its goal on this route (the world's progress check).
+    pub best: u16,
 }
 
-const _: () = assert!(core::mem::size_of::<Row>() == 36);
+const _: () = assert!(core::mem::size_of::<Row>() == 40);
 
 impl Row {
     pub const EMPTY: Row = Row {
@@ -96,6 +98,7 @@ impl Row {
         yaw: 0,
         goal: [0; 3],
         last: [0; 3],
+        best: 0,
     };
 }
 

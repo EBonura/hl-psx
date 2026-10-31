@@ -66,11 +66,13 @@ unsafe fn clip(pi: usize) -> u8 {
 /// A walker is at its goal within this many units.
 const REACHED: i32 = 32;
 /// `prop_move_towards_point` speed that nets the retail run (9.5 units a tick).
-const RUN_SPEED: i32 = 12;
+const RUN_SPEED: i32 = 10;
 /// Failed steps (move ticks) before a route is given up.
 const STUCK: u8 = 12;
-/// Ticks a route may take before it counts as failed.
-const WALK_LIMIT: u8 = 200;
+/// Ticks a route may go without progress before it counts as failed.
+const WALK_LIMIT: u8 = 40;
+/// Units a step must gain on the goal to count as progress.
+const PROGRESS: u16 = 8;
 /// The kick lands at tick 8 of `frontkick`.
 const KICK_TICK: u8 = 8;
 /// `reload_mp5` is 35 ticks long and refills the weapon at tick 24 (`HGRUNT_AE_RELOAD`).
@@ -274,8 +276,19 @@ pub(crate) unsafe fn tick(
         // The walk: a step toward the route's goal on the walker's move ticks, the timer counting
         // failed steps. Reaching the goal ends the movement.
         let goal = pos32(ai().rows[i].goal);
-        let walked = ai().rows[i].aux.saturating_add(1);
-        ai().rows[i].aux = walked;
+        let to_go = isqrt_i32(dist2_xz(PROP_POS[pi], goal)) as u16;
+        let row = &mut ai().rows[i];
+        if row.aux == 0 && row.best == 0 {
+            row.best = u16::MAX;
+        }
+        // Ticks since the walker last got a step nearer: a route that goes nowhere fails.
+        if to_go + PROGRESS < row.best {
+            row.best = to_go;
+            row.aux = 1;
+        } else {
+            row.aux = row.aux.saturating_add(1);
+        }
+        let walked = row.aux;
         if dist2_xz(PROP_POS[pi], goal) < REACHED * REACHED {
             PROP_STATE[pi] = PROP_STATE_IDLE;
             PROP_AI_TIMER[pi] = 0;
@@ -292,6 +305,7 @@ pub(crate) unsafe fn tick(
         }
     } else if ai().rows[i].aux != 0 {
         ai().rows[i].aux = 0;
+        ai().rows[i].best = 0;
     }
     let timer = PROP_AI_TIMER[pi];
     if PROP_STATE[pi] != PROP_STATE_MOVE && timer & SEQ_LEFT != 0 {
@@ -337,7 +351,8 @@ impl Guest<'_> {
             }
         } else if timer & SEQ_BURST != 0 {
             let elapsed = ATTACK_TICKS - left;
-            if elapsed == 2 || elapsed == 4 {
+            // The burst sequence loops: its first frame's round goes out again at tick 12.
+            if elapsed == 2 || elapsed == 4 || elapsed == 12 {
                 self.shoot(pi, false);
             }
         } else if timer & SEQ_KICK != 0 && left == 20 - KICK_TICK {
