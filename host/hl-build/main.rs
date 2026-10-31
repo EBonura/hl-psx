@@ -32,6 +32,10 @@ struct CookManifest {
     schema: u32,
     hl_psx_revision: String,
     hl_psx_tree_sha256: String,
+    /// Digest of what the cooker reads (`cook_inputs_digest`). Empty in a manifest written
+    /// before the field existed: such a cook cannot be trusted and is refused.
+    #[serde(default)]
+    cook_inputs_sha256: String,
     psoxide_source: String,
     psoxide_revision: String,
     psoxide_tree_sha256: String,
@@ -255,6 +259,40 @@ fn cook_manifest_path(repository: &Path) -> PathBuf {
     repository.join(COOK_MANIFEST_PATH)
 }
 
+/// Cooker sources: the BSP cooker, the content cooker, the shared format crate and the
+/// model-variant planner of the build driver.
+const COOK_INPUT_ROOTS: [&str; 3] = ["host/hl-bsp", "host/hl-content", "shared/hl-format"];
+/// Single files the cook reads: the driver's model-variant planner, the game sources the
+/// cooker includes by path (`#[path]` in hl-bsp, `include_str!`) and the toolchain pins.
+const COOK_INPUT_FILES: [&str; 6] = [
+    "host/hl-build/model_variants.rs",
+    "game/src/env_bubbles.rs",
+    "game/src/weaponbox.rs",
+    "game/src/map_catalog.rs",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+];
+
+/// Digest of every file the cooker reads, so a recook is demanded exactly when the
+/// cooked bytes could differ. Unlike `source_tree_digest` it ignores game code, tests and
+/// the pack step, which never change cooked data; unlike a hand-edited manifest it
+/// cannot be made to agree by copying the current revision in.
+fn cook_inputs_digest(repository: &Path) -> Result<String> {
+    let mut files = Vec::new();
+    for root in COOK_INPUT_ROOTS {
+        let before = files.len();
+        let mut found = Vec::new();
+        collect_files_skipping(&repository.join(root), &repository.join(root), &mut found, &["target", ".git", "__pycache__"])?;
+        files.extend(found.into_iter().map(|path| Path::new(root).join(path)));
+        if files.len() == before {
+            return Err(format!("cook input root is empty: {root}").into());
+        }
+    }
+    files.extend(COOK_INPUT_FILES.iter().map(PathBuf::from));
+    files.retain(|path| path.file_name().and_then(OsStr::to_str) != Some(".DS_Store"));
+    digest_files(repository, files)
+}
+
 fn cooked_tree_digest(repository: &Path) -> Result<String> {
     tree_digest(
         &repository.join("data"),
@@ -267,6 +305,7 @@ fn current_cook_manifest(repository: &Path, valve: &Path, psoxide: &Path) -> Res
         schema: COOK_MANIFEST_SCHEMA,
         hl_psx_revision: git_revision(repository)?,
         hl_psx_tree_sha256: source_tree_digest(repository)?,
+        cook_inputs_sha256: cook_inputs_digest(repository)?,
         psoxide_source: psoxide_source(psoxide)?,
         psoxide_revision: psoxide_revision(psoxide)?,
         psoxide_tree_sha256: psoxide_tree_digest(psoxide)?,
@@ -320,22 +359,23 @@ fn verify_cook_manifest(repository: &Path, psoxide: &Path) -> Result<CookManifes
         )
         .into());
     }
-    let revision = git_revision(repository)?;
-    let source_tree = source_tree_digest(repository)?;
+    let cook_inputs = cook_inputs_digest(repository)?;
+    if manifest.cook_inputs_sha256.is_empty() {
+        return Err(format!(
+            "stale cooked assets: the manifest at {} predates the cooker-input digest, so nothing says which cooker wrote data/; run `cargo hl-build assets --half-life PATH --psoxide PATH` (the cooker-input digest is {cook_inputs})",
+            path.display()
+        )
+        .into());
+    }
     let psoxide_source = psoxide_source(psoxide)?;
     let psoxide_revision = psoxide_revision(psoxide)?;
     let psoxide_tree = psoxide_tree_digest(psoxide)?;
     let cooked_tree = cooked_tree_digest(repository)?;
     let checks = [
         (
-            "HL-PSX revision",
-            manifest.hl_psx_revision.as_str(),
-            revision.as_str(),
-        ),
-        (
-            "HL-PSX source tree",
-            manifest.hl_psx_tree_sha256.as_str(),
-            source_tree.as_str(),
+            "cooker inputs (extractor, content cooker, format crate)",
+            manifest.cook_inputs_sha256.as_str(),
+            cook_inputs.as_str(),
         ),
         (
             "PSoXide source",
@@ -368,7 +408,7 @@ fn verify_cook_manifest(repository: &Path, psoxide: &Path) -> Result<CookManifes
         .into());
     }
     println!("Cook provenance verified: {}", path.display());
-    println!("  HL-PSX  : {revision}");
+    println!("  cooker  : {cook_inputs}");
     println!("  PSoXide : {psoxide_revision} ({psoxide_source})");
     println!("  cooked  : {cooked_tree}");
     Ok(manifest)
@@ -3623,6 +3663,40 @@ mod tests {
         assert_eq!(before, tree_digest(&root, None).unwrap());
         fs::write(root.join("nested/a.bin"), b"changed").unwrap();
         assert_ne!(before, tree_digest(&root, None).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cook_inputs_digest_follows_the_cooker_and_ignores_game_code() {
+        let root = std::env::temp_dir().join(format!(
+            "hl-psx-cook-inputs-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&root);
+        for dir in COOK_INPUT_ROOTS {
+            fs::create_dir_all(root.join(dir).join("src")).unwrap();
+            fs::write(root.join(dir).join("src/lib.rs"), b"cooker").unwrap();
+        }
+        for dir in ["host/hl-build", "game/src", ".cargo"] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in COOK_INPUT_FILES {
+            fs::write(root.join(file), b"input").unwrap();
+        }
+        fs::write(root.join("game/src/main.rs"), b"game").unwrap();
+        fs::write(root.join("host/hl-build/main.rs"), b"driver").unwrap();
+        let before = cook_inputs_digest(&root).unwrap();
+        // Game code and the driver never change cooked bytes.
+        fs::write(root.join("game/src/main.rs"), b"game, edited").unwrap();
+        fs::write(root.join("host/hl-build/main.rs"), b"driver, edited").unwrap();
+        assert_eq!(before, cook_inputs_digest(&root).unwrap());
+        // A cooker edit, or a game file the cooker includes, does.
+        fs::write(root.join("host/hl-content/src/lib.rs"), b"cooker, edited").unwrap();
+        let edited = cook_inputs_digest(&root).unwrap();
+        assert_ne!(before, edited);
+        fs::write(root.join("game/src/weaponbox.rs"), b"input, edited").unwrap();
+        assert_ne!(edited, cook_inputs_digest(&root).unwrap());
         fs::remove_dir_all(root).unwrap();
     }
 
