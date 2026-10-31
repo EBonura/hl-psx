@@ -12406,6 +12406,29 @@ fn door_seals(
     out
 }
 
+/// Append the AI schedule-table trailer (`hl_format::ai`) when the map can hold a monster that runs on the
+/// schedule runtime; returns the bytes added.
+fn append_ai_tables(o: &mut Vec<u8>, ents: &[u8], hints: &[TransitionTypeHint]) -> Result<usize, String> {
+    let mut kinds: Vec<u16> = Vec::new();
+    for block in entity_text(ents).split('{') {
+        let class = ent_value(block, "classname").unwrap_or("");
+        let named = if class == "monstermaker" { ent_value(block, "monstertype").unwrap_or("") } else { class };
+        if let Some(k) = monster_type_id(named) {
+            kinds.push(k);
+        }
+    }
+    kinds.extend(hints.iter().map(|h| h.ty & 0x0fff));
+    let Some((trailer, _)) = hl_sched::section_for_kinds(&kinds).map_err(|e| format!("ai tables: line {}: {}", e.line, e.msg))?
+    else {
+        return Ok(0);
+    };
+    while o.len() % 4 != 0 {
+        o.push(0);
+    }
+    o.extend_from_slice(&trailer);
+    Ok(trailer.len())
+}
+
 const DOOR_SEAL_MAX_GROUP: usize = 12;
 const DOOR_SEAL_MAX_RECORDS: usize = 16;
 
@@ -16185,6 +16208,13 @@ fn cook_pass(
             seals.len(),
             seal_bytes
         );
+    }
+
+    // Schedule tables for the monsters that run on the AI runtime: the placed ones, the monstermaker
+    // types, and every type that can arrive by a changelevel carry (the transition hints).
+    let ai_bytes = append_ai_tables(&mut o, bsp.lump(LUMP_ENTITIES), &transition_hints)?;
+    if ai_bytes != 0 {
+        eprintln!("  ai tables: {ai_bytes} bytes");
     }
 
     if panels == PanelFilter::Lightmap && o.len() > ROOM_BYTES_CEILING {

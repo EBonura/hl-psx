@@ -929,12 +929,18 @@ impl Map {
         }
     }
 
+    /// The room's schedule tables (`hl_format::ai`), validated by the cooker; `None` when the map carries none.
+    #[inline]
+    pub fn ai_tables(&self) -> Option<hl_format::ai::Tables> {
+        hl_format::ai::section(self.data).map(hl_format::ai::Tables::trusted)
+    }
+
     /// Door-occluder section `(record count, first record offset)`, found
     /// from the trailing `u32 offset | "DSL1"` the cook appends 4-aligned;
     /// `(0, 0)` when absent. Older runtimes ignore the trailing bytes.
     #[inline(always)]
     pub fn door_seal_section(&self) -> (usize, usize) {
-        let len = self.data.len() & !3;
+        let len = hl_format::ai::room_end(self.data);
         if len < 12 || self.door_seal_word(len - 4) != u32::from_le_bytes(*b"DSL1") {
             return (0, 0);
         }
@@ -952,7 +958,7 @@ impl Map {
         let end = if seal_first != 0 {
             seal_first - 4
         } else {
-            self.data.len() & !3
+            hl_format::ai::room_end(self.data)
         };
         if end < 12 || self.door_seal_word(end - 4) != u32::from_le_bytes(cooked::SKY_BOX_TAG) {
             return (0, 0, 0);

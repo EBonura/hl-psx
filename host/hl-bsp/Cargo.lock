@@ -7,6 +7,7 @@ name = "hl-bsp"
 version = "0.1.0"
 dependencies = [
  "hl-format",
+ "hl-sched",
  "psx-anim-cook",
  "psx-math",
  "psx-render-contract",
@@ -15,6 +16,13 @@ dependencies = [
 [[package]]
 name = "hl-format"
 version = "0.1.0"
+
+[[package]]
+name = "hl-sched"
+version = "0.1.0"
+dependencies = [
+ "hl-format",
+]
 
 [[package]]
 name = "psx-anim-cook"
