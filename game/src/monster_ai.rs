@@ -544,6 +544,9 @@ impl Guest<'_> {
                 continue;
             }
             let at = self.m.nav_node(node).pos;
+            if !nav_actor_vertical(pi, pos, at) {
+                continue; // another floor: a walker does not get there directly
+            }
             let d = isqrt_i32(dist2_3(pos, at)) as i32;
             if d < min || d >= max {
                 continue;

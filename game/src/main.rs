@@ -17682,24 +17682,19 @@ unsafe fn prop_move_towards_point(
         return moved;
     }
     prop_face_point(pi, goal);
-    // A HECU grunt follows the node route the way the retail monster does (a route waypoint, not a
-    // straight line through whatever stands between): only the last stretch goes straight.
-    let by_route = PROP_KIND[pi] == 8 && m.n_nav > 0 && dist2_xz(pos, goal) > 96 * 96;
     // Try the authored direction first without the old five-direction fan.
     // A sideways fan can always make *some* local progress beside a wall, so
     // it used to orbit the obstacle forever and the info_node graph was never
     // consulted. This was most visible in c1a0's two entrance scientists.
-    if !by_route
-        && prop_try_step(
-            m,
-            movers,
-            pi,
-            goal[0] - pos[0],
-            goal[2] - pos[2],
-            speed,
-            false,
-        )
-    {
+    if prop_try_step(
+        m,
+        movers,
+        pi,
+        goal[0] - pos[0],
+        goal[2] - pos[2],
+        speed,
+        false,
+    ) {
         return true;
     }
     let moved = if let Some(wp) = nav_waypoint_towards(m, movers, pi, goal) {
