@@ -1,0 +1,71 @@
+@journey name=hl-stage-c1a1c-vent title="Half-Life c1a1c stage: resume from the bridge approach save, cross the pipes to the vent box, draw the crowbar and break the vent cover" prologue=load card_fixture=tests/cards/c1a1c-bridge.mcd card_sha256=2862e710927fd200c0205d14949032f005a788cf6c3ae2b6f8b3a967b0dc5fc4 max_ticks=60000
+# Resumes from the memory-card save the chain writes at the bridge approach (explore: savep, `@save` after yv5).
+# The map restarts fresh from the save, so the lift and the gauntlet are not played here.
+map c1a1c next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  @checkpoint resumed
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -640 && i32(LOGIC_PLAYER_POS[0]) <= -520 && i32(LOGIC_PLAYER_POS[2]) >= -860 && i32(LOGIC_PLAYER_POS[2]) <= -780"
+  @face 3940 right
+  @hold f127 until y>=-708 timeout=40
+  8
+  @checkpoint bridge-stop
+  @assert expr="i32(LOGIC_PLAYER_POS[2]) >= -720 && i32(LOGIC_PLAYER_POS[2]) <= -600"
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+
+  @face 970 right
+  @hold f127 until x>=-420 timeout=40
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until x>=-240 timeout=40
+  4
+  @checkpoint pipe-ledge
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -260 && i32(LOGIC_PLAYER_POS[2]) >= -2690 && i32(LOGIC_PLAYER_POS[2]) <= -2660 || i32(LOGIC_PLAYER_POS[1]) >= -2690"
+
+  @face 60 left
+  @hold f127 until y>=-500 timeout=60
+  8
+  @hold s127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold s127 until x>=-190 timeout=30
+  @hold f127 until y>=-345 timeout=60
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until y>=-270 timeout=40
+  6
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until y>=-228 timeout=40
+  @face 3100 left
+  @hold f127 until x<=-285 timeout=50
+  @hold s127 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 until x<=-450 timeout=40
+  @hold s60 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 until x<=-600 timeout=40
+  @hold s60 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 until x<=-686 timeout=40
+  @hold s60 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until x<=-830 timeout=40
+  @checkpoint vent-box-top
+  @assert expr="i32(LOGIC_PLAYER_POS[1]) >= -2560"
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) <= -800"
+
+  @face 4030 right
+  @hold f127 until y>=-150 timeout=20
+  @weapon crowbar
+  @checkpoint crowbar-drawn
+  @assert expr="u8(VM_LIVE_WM) == 4"
+
+  @hold s40 duck until x>=-818 timeout=60
+  10 duck
+  @hold s-30 duck until x<=-796 timeout=40
+  10 duck
+  # Brush entity 65 is BSP model *86, the vent cover (the cooked entity index is not the model number).
+  @swing ent=65 duck=true timeout=60
+  @hold f127 duck until y>=-76 timeout=40
+  @checkpoint in-vent
+  @assert expr="u8(ENT_ACTIVE[65]) == 0"
+  @assert expr="i32(LOGIC_PLAYER_POS[2]) >= -80"
+  @stop

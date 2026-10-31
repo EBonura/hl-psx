@@ -148,3 +148,44 @@ relative to the player (a stance: where the enemies come from; `unless=R` ends i
 each round shoots whatever is in range (`@kill near=`), sleeps, and goes back to the stance; `reload=N` reloads when the magazine
 is under N. The loop is unrolled at compile time. c1a1c uses it for the headcrab gauntlet on the lift
 (`@fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=6`).
+
+## Stages: save, load and resume
+
+A long chain is awkward to author in one piece (the first lift is about 25 minutes of emulated play), so a route can
+be cut at any point with a game save and continued from it.
+
+`@save` pauses, opens Save Game, saves to Card 1 Manual and persists the card image (`cards/card-step-NNN.mcd`
+under the run's report folder). Later checkpoints in the same journey stop asserting `card_unchanged`. A save keeps
+what a changelevel keeps (weapons, ammunition, health, suit, skill) and where the player stands; the map itself
+starts fresh, so triggers the player has already fired are armed again (a save taken at the bridge approach of c1a1c
+has a lift that has not been called and a gauntlet that has not run).
+
+A stage journey starts from such a card: `@journey ... prologue=load card_fixture=tests/cards/NAME.mcd
+card_sha256=SHA`. The prologue boots, skips the intro, and chooses Load game on the title; the first block's map
+wait then confirms what the card restored. `card_sha256=AUTO` is replaced by the file's hash when the journey is built
+with `stage.sh`-style tooling; the gate itself needs the real hash.
+
+Cards are bound to the save format of the build that wrote them. Regenerate them by running the stage that ends in
+`@save` again; do not hand-edit them.
+
+## Weapon and melee directives
+
+`@weapon NAME [dir=prev|next] [timeout=60]` presses the cycle button once (L1 prev, R1 next: one rising edge, so one
+step through the owned weapons) and holds it until `VM_LIVE_WM` reads that weapon's viewmodel, then rests 14 polls
+for the deploy delay. It costs nothing if the weapon is already in hand. Read the live weapon from `VM_LIVE_WM`
+(the viewmodel index of `WeaponDef::wm`: crowbar 4, glock 0), never from `CARRY_CURRENT`, which is only the snapshot a
+changelevel or save writes and does not change when the player switches.
+
+`@swing ent=N [duck=true] [pitch=P] [timeout=40]` holds attack (crouched if asked) until brush entity N is gone
+(`ENT_ACTIVE[N] == 0`). `pitch=P` first brings the view to P within 48 units (crouched if asked): a crouched swing
+at pitch 0 breaks a vent cover that a standing swing needs a 41 degree look down for.
+
+`@hold SAMPLE until x>=V | x<=V | y>=V | y<=V | up>=V | up<=V timeout=N` is shorthand for a position leg:
+the expression reads `LOGIC_PLAYER_POS`. A crawl is `@hold f127 duck until x<=-1004 timeout=100`.
+
+`stage-c1a1c-vent.route` (`tests/stage-c1a1c-vent.toml`) is the first stage journey: it loads `tests/cards/c1a1c-bridge.mcd`
+(a Manual save taken at the bridge approach of c1a1c, after the chain's lift ride and headcrab gauntlet), crosses the
+pipes to the vent box, draws the crowbar (`@weapon crowbar`) and breaks the vent cover (`@swing ent=65`, BSP model *86),
+and ends crawling into the vent. It runs in about 12 s. The card was written by the full chain with an `@save` after the
+bridge approach (the gauntlet makes that route too large to commit until the gate has a loop step); when the save format
+or an earlier map changes, regenerate the card from the chain and rebuild the journey. Check it with `hlroute verify tests/chain/stage-c1a1c-vent.route . tests/stage-c1a1c-vent.toml --tape-dir tests/chain/tapes-stage --map MAP`.

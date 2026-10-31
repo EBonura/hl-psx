@@ -230,6 +230,9 @@ enum Item {
         timeout: u32,
     },
     Raw(String),
+    /// Pause, Save Game to Card 1 Manual, then persist the card (`card-step-NNN.mcd` in the
+    /// report folder). Later checkpoints no longer assert `card_unchanged`.
+    Save,
     /// End of the journey: later items and blocks are not compiled.
     Stop,
 }
@@ -424,6 +427,22 @@ impl AimTarget {
             format!("({}) || ({cond})", self.dead)
         }
     }
+}
+
+/// `x>=-812`, `y<=-69`, `up>=-300` as a gate expression over `LOGIC_PLAYER_POS` (x, up, y).
+fn position_shorthand(tok: &str) -> Option<String> {
+    let (axis, rest) = if let Some(r) = tok.strip_prefix("up") {
+        (1, r)
+    } else if let Some(r) = tok.strip_prefix('x') {
+        (0, r)
+    } else if let Some(r) = tok.strip_prefix('y') {
+        (2, r)
+    } else {
+        return None;
+    };
+    let (op, num) = ["<=", ">="].iter().find_map(|op| rest.strip_prefix(op).map(|n| (*op, n)))?;
+    let v: i64 = num.parse().ok()?;
+    Some(format!("i32(LOGIC_PLAYER_POS[{axis}]) {op} {v}"))
 }
 
 fn expr_cond(e: String) -> String {
@@ -710,7 +729,15 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     .position(|t| *t == "until")
                     .ok_or_else(|| at("@hold needs `until`".into()))?;
                 let sample = parse_sample(&tok[1..split]).map_err(at)?;
-                let mut kv = parse_kv(&tok[split + 1..]);
+                // Shorthand for the commonest leg end: `until x>=-812`, `y<=-69`, `up>=-300`.
+                let mut kv = match tok.get(split + 1).and_then(|t| position_shorthand(t)) {
+                    Some(e) => {
+                        let mut kv = vec![("expr".to_string(), e)];
+                        kv.extend(parse_kv(&tok[split + 2..]));
+                        kv
+                    }
+                    None => parse_kv(&tok[split + 1..]),
+                };
                 let ti = kv.iter().position(|(k, _)| k == "timeout");
                 let timeout = match ti {
                     Some(i) => kv.remove(i).1.parse().map_err(|_| at("timeout".into()))?,
@@ -762,7 +789,7 @@ fn parse_route(text: &str) -> Result<Route, String> {
                 b.items.push(Item::Run(settle, Sample::default()));
             }
             "@face" => {
-                // `@face YAW right|left [timeout=N]`: turn until the player's yaw word (0..4095, 1024 is
+                // `@face YAW right|left [timeout=N] [duck=true]`: turn until the player's yaw word (0..4095, 1024 is
                 // a quarter turn, right is increasing) is within 60 units past YAW (before it, turning left).
                 // A coarse t60 turn to 90 units short of the target (one-sided), then a dead-band triple of
                 // single-step turns (29 units) that recovers from a late stop in either direction.
@@ -807,17 +834,20 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     )
                 };
                 let sign = if right { 1 } else { -1 };
+                // `duck=true` keeps the crouch button down through the turn (a vent or a crawl: the hull
+                // must not stand up).
+                let buttons = if kv.iter().any(|(k, v)| k == "duck" && v == "true") { BTN_TRIANGLE } else { 0 };
                 // Coarse: one-sided, so a start already past the band (or an overshoot) ends the hold at once
                 // and the fine stage turns back, where a two-sided window would send it round the circle.
                 b.items.push(Item::Hold {
-                    sample: Sample { turn: 60 * sign, ..Sample::default() },
+                    sample: Sample { turn: 60 * sign, buttons, ..Sample::default() },
                     until: if right { word("ge", coarse.0 + 80) } else { word("le", coarse.1 - 80) },
                     timeout,
                 });
                 // Fine: dead-band triple with the smallest turn (29 a tick, narrower than the band): up to the
                 // low edge, back down to the high edge, up again. Each hold that already holds ends at once.
-                let up = Sample { turn: 29, ..Sample::default() };
-                let down = Sample { turn: -29, ..Sample::default() };
+                let up = Sample { turn: 29, buttons, ..Sample::default() };
+                let down = Sample { turn: -29, buttons, ..Sample::default() };
                 for (sample, until) in [(up, word("ge", fine.0)), (down, word("le", fine.1)), (up, word("ge", fine.0))] {
                     b.items.push(Item::Hold { sample, until, timeout });
                 }
@@ -835,6 +865,71 @@ fn parse_route(text: &str) -> Result<Route, String> {
             "@stop" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
                 b.items.push(Item::Stop);
+            }
+            "@swing" => {
+                // `@swing ent=N [duck=true] [pitch=P] [timeout=40]`: swing the selected melee weapon (attack
+                // held, crouched if asked) until brush entity N is gone (`ENT_ACTIVE[N] == 0`; N is the
+                // cooked entity index, not the BSP model number: find it by scanning `ENT_ACTIVE` before
+                // and after one swing). `pitch=P` first brings the view to P (+-48), crouched if asked, so the swing is aimed
+                // without a target point.
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                let kv = parse_kv(&tok[1..]);
+                let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+                let ent: i64 = get("ent").and_then(|v| v.parse().ok()).ok_or_else(|| at("@swing needs ent=N".into()))?;
+                let duck = get("duck") == Some("true");
+                let timeout: u32 = get("timeout").map_or(Ok(40), |v| v.parse().map_err(|_| at("timeout".into())))?;
+                let buttons = if duck { BTN_TRIANGLE } else { 0 };
+                if let Some(p) = get("pitch") {
+                    let p: i64 = p.parse().map_err(|_| at("pitch".into()))?;
+                    let pe = "i16(LOGIC_PLAYER_PITCH)";
+                    b.items.push(Item::Hold {
+                        sample: Sample { look: 127, buttons, ..Sample::default() },
+                        until: expr_cond(format!("{pe} >= {} ", p - 48)),
+                        timeout: 40,
+                    });
+                    b.items.push(Item::Hold {
+                        sample: Sample { look: -127, buttons, ..Sample::default() },
+                        until: expr_cond(format!("{pe} <= {}", p + 48)),
+                        timeout: 40,
+                    });
+                }
+                b.items.push(Item::Hold {
+                    sample: Sample { buttons: buttons | BTN_R2, ..Sample::default() },
+                    until: expr_cond(format!("u8(ENT_ACTIVE[{ent}]) == 0")),
+                    timeout,
+                });
+            }
+            "@weapon" => {
+                // `@weapon NAME [dir=prev|next] [timeout=60]`: press the cycle button once (L1 is
+                // prev, R1 next, one rising edge) and hold it until the viewmodel of that weapon
+                // is live (`VM_LIVE_WM`, which only reads it once its chunk has streamed in),
+                // then rest for the deploy delay. Free if it is already in hand. `CARRY_CURRENT`
+                // is the changelevel snapshot, not the live weapon: do not wait on it.
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                let name = tok.get(1).ok_or_else(|| at("@weapon needs a name".into()))?;
+                let wm = WEAPON_VIEWMODELS
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(_, wm)| *wm)
+                    .ok_or_else(|| at(format!("@weapon: unknown weapon `{name}`")))?;
+                let kv = parse_kv(&tok[2..]);
+                let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+                let button = match get("dir").unwrap_or("prev") {
+                    "prev" => BTN_L1,
+                    "next" => BTN_R1,
+                    _ => return Err(at("@weapon dir= is prev or next".into())),
+                };
+                let timeout: u32 = get("timeout").map_or(Ok(60), |v| v.parse().map_err(|_| at("timeout".into())))?;
+                b.items.push(Item::Hold {
+                    sample: Sample { buttons: button, ..Sample::default() },
+                    until: expr_cond(format!("u8(VM_LIVE_WM) == {wm}")),
+                    timeout,
+                });
+                b.items.push(Item::Run(WEAPON_DEPLOY_POLLS, Sample::default()));
+            }
+            "@save" => {
+                let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
+                b.items.push(Item::Save);
             }
             "@raw" => {
                 let b = route.blocks.last_mut().ok_or_else(|| at("no map".into()))?;
@@ -946,6 +1041,63 @@ struct Opts {
     until: Option<String>,
 }
 
+/// Viewmodel index (`WeaponDef::wm`) by weapon name: `VM_LIVE_WM` holds it once that weapon is drawn.
+const WEAPON_VIEWMODELS: [(&str, u8); 14] = [
+    ("crowbar", 4),
+    ("glock", 0),
+    ("357", 1),
+    ("mp5", 2),
+    ("shotgun", 12),
+    ("crossbow", 3),
+    ("rpg", 9),
+    ("gauss", 6),
+    ("egon", 5),
+    ("hornet", 8),
+    ("grenade", 7),
+    ("snark", 13),
+    ("tripmine", 14),
+    ("satchel", 10),
+];
+
+/// DefaultDeploy blocks attacks for 0.5 s after a weapon is drawn.
+const WEAPON_DEPLOY_POLLS: u32 = 14;
+
+/// The pause menu's Save Game to Card 1 Manual (the steps `save-repin.toml` proves), then the card
+/// image is persisted into the report folder.
+const SAVE_STEPS: &str = "
+[[step]]
+label = \"pause and open Save Game\"
+press = [\"start\"]
+hold = 8
+wait = 25
+
+[[step]]
+press = [\"down\"]
+hold = 8
+wait = 12
+
+[[step]]
+press = [\"cross\"]
+hold = 8
+wait = 35
+
+[[step]]
+label = \"save to Card 1 Manual\"
+press = [\"cross\"]
+hold = 8
+wait = 400
+
+[[step]]
+checkpoint = \"game-saved\"
+golden = false
+[[step.assert]]
+kind = \"card_writes\"
+min_count = 5
+
+[[step]]
+card = { action = \"snapshot\" }
+";
+
 fn compile(o: &Opts) -> Result<(), String> {
     let text = fs::read_to_string(&o.route).map_err(|e| format!("{}: {e}", o.route.display()))?;
     let mut route = parse_route(&text)?;
@@ -984,7 +1136,7 @@ fn compile(o: &Opts) -> Result<(), String> {
     }
     if let Some(prologue) = jv("prologue") {
         // `new_game`: wait out the boot and press Cross on the title.
-        if prologue == "new_game" || prologue == "hazard" || prologue == "segment" {
+        if prologue == "new_game" || prologue == "hazard" || prologue == "segment" || prologue == "load" {
             // A disc with the intro stage opens with the studio splash and then the
             // movie, each skipped with Start; a disc without them ignores the presses.
             t.push_str("\n[[step]]\nlabel = \"skip the studio splash and the startup movie, if the disc has them\"\nwait = 100\n");
@@ -1018,6 +1170,12 @@ fn compile(o: &Opts) -> Result<(), String> {
             }
             t.push_str("\n[[step]]\nlabel = \"launch the diagnostic segment\"\npress = [\"cross\"]\nhold = 8\nwait = 12\n");
         }
+        // `load`: resume from a save card (`card_fixture=` + `card_sha256=`): the title's Load game row.
+        // The first block's map wait then confirms what the card restored.
+        if prologue == "load" {
+            t.push_str("\n[[step]]\nlabel = \"title: Load game\"\npress = [\"down\"]\nhold = 8\nwait = 12\nrepeat = 3\n");
+            t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 60\n");
+        }
         if prologue == "new_game" {
             // `skill=easy|hard`: Left/Right on the New game row first (Medium is the default).
             let (skill, key) = match jv("skill").as_deref() {
@@ -1032,6 +1190,7 @@ fn compile(o: &Opts) -> Result<(), String> {
         }
     }
     let mut total_samples = 0usize;
+    let mut card_dirty = false;
     let mut ids = std::collections::HashMap::new();
     let ids_text = fs::read_to_string(o.repo.join("tests/chain/map-ids.txt")).unwrap_or_default();
     for line in ids_text.lines().filter(|l| !l.starts_with('#')) {
@@ -1081,7 +1240,10 @@ fn compile(o: &Opts) -> Result<(), String> {
                 Item::Checkpoint { name, asserts } => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
                     let _ = writeln!(t, "\n[[step]]\ncheckpoint = {name:?}\ngolden = false");
-                    let _ = writeln!(t, "[[step.assert]]\nkind = \"not_flat\"\n[[step.assert]]\nkind = \"card_unchanged\"");
+                    let _ = writeln!(t, "[[step.assert]]\nkind = \"not_flat\"");
+                    if !card_dirty {
+                        let _ = writeln!(t, "[[step.assert]]\nkind = \"card_unchanged\"");
+                    }
                     for a in asserts {
                         let _ = writeln!(t, "[[step.assert]]\n{}", split_top(a.trim_start_matches("{ ").trim_end_matches(" }")));
                     }
@@ -1103,6 +1265,11 @@ fn compile(o: &Opts) -> Result<(), String> {
                     let _ = button_name(0);
                 }
                 Item::Stop => {}
+                Item::Save => {
+                    flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
+                    card_dirty = true;
+                    t.push_str(SAVE_STEPS);
+                }
                 Item::Raw(line) => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
                     let _ = writeln!(t, "{line}");
