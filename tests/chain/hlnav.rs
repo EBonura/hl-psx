@@ -6,6 +6,8 @@
 //!     /tmp/hlnav MAP hop  X Y Z GX GY [...]       [--hop 170] [--drop 140]
 //!     /tmp/hlnav MAP floors X0 X1 Y0 Y1 [STEP]    (ascii floor map)
 //!
+//! `--hull 3` plans for the crouched player (vents, crawl spaces; Z is then the crouched origin, 18 above
+//! the floor); the legs it prints then need `duck` held by hand.
 //! `Z` is the player's origin height (`LOGIC_PLAYER_POS` up), the hull centre, not the floor. The maps
 //! directory defaults to `$HL_DIR/maps` (the retail `valve` folder).
 //!
@@ -50,7 +52,7 @@ fn le_f32(b: &[u8], o: usize) -> f64 {
 
 impl World {
     /// Reads `maps_dir/MAP.bsp`; `extra_models` adds those brush models' hulls to the solid set.
-    fn load(maps_dir: &PathBuf, map: &str, extra_models: &[usize]) -> Result<World, String> {
+    fn load(maps_dir: &PathBuf, map: &str, extra_models: &[usize], hull: usize) -> Result<World, String> {
         let path = maps_dir.join(format!("{map}.bsp"));
         let b = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let lump = |i: usize| (le_i32(&b, 4 + 8 * i) as usize, le_i32(&b, 8 + 8 * i) as usize);
@@ -72,8 +74,9 @@ impl World {
             .collect();
         let (mo, ml) = lump(14);
         let model_count = ml / 64;
-        // A model is 9 floats (mins, maxs, origin) then headnode[4] (index 1 is the standing hull).
-        let head = |k: usize| le_i32(&b, mo + 64 * k + 36 + 4);
+        // A model is 9 floats (mins, maxs, origin) then headnode[4]: 1 is the standing hull, 2 the big
+        // monster hull, 3 the crouched player.
+        let head = |k: usize| le_i32(&b, mo + 64 * k + 36 + 4 * hull);
         let mut heads = vec![head(0)];
         for &m in extra_models {
             if m >= model_count {
@@ -478,11 +481,11 @@ fn floor_map(w: &World, x0: i32, x1: i32, y0: i32, y1: i32, step: i32) {
 
 fn parse_args() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let usage = "usage: hlnav MAP walk|hop X Y Z GX GY [GX GY ...] [--models 2,3] [--hop N] [--drop N] [--maps DIR] | hlnav MAP floors X0 X1 Y0 Y1 [STEP]";
+    let usage = "usage: hlnav MAP walk|hop X Y Z GX GY [GX GY ...] [--models 2,3] [--hop N] [--drop N] [--hull 1|3] [--maps DIR] | hlnav MAP floors X0 X1 Y0 Y1 [STEP]";
     if args.len() < 3 {
         return Err(usage.into());
     }
-    let (mut pos, mut models, mut reach, mut drop) = (Vec::new(), Vec::new(), 170, 140);
+    let (mut pos, mut models, mut reach, mut drop, mut hull) = (Vec::new(), Vec::new(), 170, 140, 1usize);
     let mut maps = std::env::var("HL_DIR").map(|d| PathBuf::from(d).join("maps")).unwrap_or_default();
     let mut it = args[2..].iter();
     let flag = |v: Option<&String>| v.cloned().ok_or(usage.to_string());
@@ -492,12 +495,13 @@ fn parse_args() -> Result<(), String> {
                 models = flag(it.next())?.split(',').filter_map(|m| m.parse().ok()).collect();
             }
             "--hop" => reach = flag(it.next())?.parse().map_err(|_| "bad --hop")?,
+            "--hull" => hull = flag(it.next())?.parse().map_err(|_| "bad --hull")?,
             "--drop" => drop = flag(it.next())?.parse().map_err(|_| "bad --drop")?,
             "--maps" => maps = PathBuf::from(flag(it.next())?),
             n => pos.push(n.parse::<f64>().map_err(|_| format!("bad number {n}"))?),
         }
     }
-    let w = World::load(&maps, &args[0], &models)?;
+    let w = World::load(&maps, &args[0], &models, hull)?;
     match args[1].as_str() {
         "floors" if pos.len() >= 4 => {
             let step = pos.get(4).map_or(16, |&s| s as i32);
