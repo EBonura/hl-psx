@@ -607,7 +607,8 @@ impl<const N: usize> Ai<N> {
         if p == NONE || self.rows[i].state == state::DEAD {
             return;
         }
-        if sense {
+        // The first think only settles the monster into its idle state (retail looks from the next one).
+        if sense && self.rows[i].sched != 0 {
             let sounds = t.sched(self.rows[i].sched).sound;
             let (enemy, conds) = w.look(p, self.rows[i].enemy, sounds);
             self.rows[i].enemy = enemy;

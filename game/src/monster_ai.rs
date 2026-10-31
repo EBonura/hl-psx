@@ -34,10 +34,15 @@ const R_AFTER_LAST: u8 = 4; // ... and it is the goal
 const R_RUN: u8 = 8;
 const R_BUILT: u8 = 16; // a route to the row's goal exists (made by a cover search or a path task)
 const R_ENEMY: u8 = 32; // the goal is the enemy: it does not block the walk
+/// The new run sequence takes two thinks to show a step: the walk skips these many (`R_WAIT`
+/// counts down in the two top bits).
+const R_WAIT: u8 = 0xC0;
+const R_WAIT_ONE: u8 = 0x40;
 
 /// A monster's route. Retail keeps up to eight waypoints; this keeps the node chain they are cut
 /// from and cuts the next one when the walker gets there (the same corner cuts, one at a time).
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct Route {
     /// The waypoint being walked to.
     wp: [i16; 3],
@@ -326,21 +331,8 @@ pub(crate) unsafe fn tick(
         return;
     };
     let mut w = Guest { m, pm, sight, player: player_pos, health, armor, nprops, t };
-    if PROP_STATE[pi] == PROP_STATE_MOVE && (pi as u16 ^ MOVE_TICK) & 1 == 0 {
-        // The walk, once per retail think: check the way ahead, then step toward the waypoint.
-        match w.walk(pi, i) {
-            Walked::Arrived => {
-                PROP_STATE[pi] = PROP_STATE_IDLE;
-                PROP_AI_TIMER[pi] = 0;
-                routes()[i].flags &= !R_BUILT;
-            }
-            Walked::Failed => {
-                PROP_AI_TIMER[pi] = STUCK;
-                routes()[i].flags &= !R_BUILT;
-            }
-            Walked::Moving(true) => PROP_AI_TIMER[pi] = 0,
-            Walked::Moving(false) => PROP_AI_TIMER[pi] = PROP_AI_TIMER[pi].saturating_add(1),
-        }
+    if TRACE && pi == 17 && SIM_NOW == 2 {
+        w.probe(pi);
     }
     let timer = PROP_AI_TIMER[pi];
     if PROP_STATE[pi] != PROP_STATE_MOVE && timer & SEQ_LEFT != 0 {
@@ -351,7 +343,24 @@ pub(crate) unsafe fn tick(
         }
     }
     if (pi as u32).wrapping_add(AI_TICK) & 1 == 0 {
+        let _scope = Scope::new(0);
         ai().think(&mut w, &t, i, true);
+        // `MonsterThink`: the schedule runs, then the monster moves, in the same think.
+        if PROP_STATE[pi] == PROP_STATE_MOVE {
+            match w.walk(pi, i) {
+                Walked::Arrived => {
+                    PROP_STATE[pi] = PROP_STATE_IDLE;
+                    PROP_AI_TIMER[pi] = 0;
+                    routes()[i].flags &= !R_BUILT;
+                }
+                Walked::Failed => {
+                    PROP_AI_TIMER[pi] = STUCK;
+                    routes()[i].flags &= !R_BUILT;
+                }
+                Walked::Moving(true) => PROP_AI_TIMER[pi] = 0,
+                Walked::Moving(false) => PROP_AI_TIMER[pi] = PROP_AI_TIMER[pi].saturating_add(1),
+            }
+        }
     }
 }
 
@@ -489,6 +498,7 @@ impl Guest<'_> {
     #[inline(never)]
     #[optimize(size)]
     unsafe fn grenade_ok(&mut self, pi: usize, aim: [i32; 3]) -> bool {
+        let _scope = Scope::new(3);
         if PROP_STATE[pi] == PROP_STATE_MOVE
             || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0
             || !hecu_grenades::due(GRUNT_GREN[pi], SIM_NOW)
@@ -526,12 +536,18 @@ impl Guest<'_> {
             _ => None,
         };
         let end = [b[0], floor.unwrap_or(b[1]), b[2]];
+        let scope = Scope::new(7);
         let world = actor_chord_blocked(self.m, self.pm, pi, a, end);
-        let other = if actors {
-            script_human_actor_blocked_fraction(pi, a, end, Some((self.player, LOGIC_PLAYER_HALF_HEIGHT)))
-        } else {
-            None
-        };
+        drop(scope);
+        let scope = Scope::new(8);
+        // The enemy the walk is aimed at may be touched; every other actor blocks.
+        let other = script_human_actor_blocked_fraction(
+            pi,
+            a,
+            end,
+            if actors { Some((self.player, LOGIC_PLAYER_HALF_HEIGHT)) } else { None },
+        );
+        drop(scope);
         let frac = match (world, other) {
             (Some(w), Some(o)) => Some(w.min(o)),
             (w, o) => w.or(o),
@@ -549,6 +565,7 @@ impl Guest<'_> {
 
     /// Retail `FTriangulate` around a blocker `dist` units along the way from `a` to `b`.
     unsafe fn detour(&self, pi: usize, a: [i32; 3], b: [i32; 3], dist: i32, actors: bool) -> Option<[i32; 3]> {
+        let _scope = Scope::new(9);
         let player = if actors { Some((self.player, LOGIC_PLAYER_HALF_HEIGHT)) } else { None };
         script_local_detour(self.m, self.pm, pi, 0, a, b, dist, player)
     }
@@ -604,6 +621,7 @@ impl Guest<'_> {
     #[inline(never)]
     #[optimize(size)]
     unsafe fn build_route(&self, pi: usize, i: usize, goal: [i32; 3], enemy: bool) -> bool {
+        let _scope = Scope::new(6);
         let pos = PROP_POS[pi];
         let keep = routes()[i].flags & R_RUN;
         let r = &mut routes()[i];
@@ -635,6 +653,9 @@ impl Guest<'_> {
         }
         r.cur = src;
         r.dst = dst;
+        if TRACE {
+            trace(0, i, [pos[0], pos[2], goal[0], goal[2], src as i32, dst as i32, 0]);
+        }
         self.cut(pi, r, goal);
         true
     }
@@ -644,6 +665,7 @@ impl Guest<'_> {
     #[inline(never)]
     #[optimize(size)]
     unsafe fn walk(&mut self, pi: usize, i: usize) -> Walked {
+        let _scope = Scope::new(4);
         let r = &mut routes()[i];
         if r.flags & R_BUILT == 0 {
             return Walked::Failed;
@@ -659,7 +681,11 @@ impl Guest<'_> {
             let len3 = isqrt_i32(dx * dx + dy * dy + dz * dz).max(1);
             let end = [pos[0] + dx * reach / len3, pos[1] + dy * reach / len3, pos[2] + dz * reach / len3];
             if let Local::Blocked { dist: blocked, .. } = self.local_move(pi, pos, end, actors) {
-                let Some(apex) = self.detour(pi, pos, wp, blocked, actors) else {
+                let found = self.detour(pi, pos, wp, blocked, actors);
+                if TRACE {
+                    trace(1, i, [pos[0], pos[2], wp[0], wp[2], blocked as i32, found.map_or(0, |a| a[0]), found.map_or(0, |a| a[2])]);
+                }
+                let Some(apex) = found else {
                     return Walked::Failed;
                 };
                 // InsertWaypoint: the detour apex first, then what the route had.
@@ -684,6 +710,11 @@ impl Guest<'_> {
             wp = pos32(r.wp);
         }
         prop_face_point(pi, wp);
+        if r.flags & R_WAIT != 0 {
+            // Retail `StudioFrameAdvance` returns a zero interval until the new sequence has run a think.
+            r.flags = (r.flags & !R_WAIT) | if r.flags & R_WAIT == R_WAIT { R_WAIT_ONE } else { 0 };
+            return Walked::Moving(true);
+        }
         let step = if r.flags & R_RUN != 0 { RUN_STEP } else { WALK_STEP };
         let moved = prop_try_step(self.m, self.pm, pi, wp[0] - pos[0], wp[2] - pos[2], step, false);
         Walked::Moving(moved)
@@ -735,6 +766,7 @@ impl Guest<'_> {
         max: i32,
         others: &[[i16; 3]],
     ) -> Option<[i32; 3]> {
+        let _scope = Scope::new(5);
         let n = nav_node_count(self.m);
         if n == 0 {
             return None;
@@ -792,6 +824,7 @@ impl World for Guest<'_> {
     #[inline(never)]
     #[optimize(size)]
     fn look(&mut self, p: u8, enemy: u8, sounds: u16) -> (u8, u32) {
+        let _scope = Scope::new(2);
         unsafe {
             let pi = p as usize;
             let prev = target_of(enemy);
@@ -981,7 +1014,7 @@ impl World for Guest<'_> {
                 }
             }
             let r = &mut routes()[i];
-            r.flags = (r.flags & !R_RUN) | if run { R_RUN } else { 0 };
+            r.flags = (r.flags & !(R_RUN | R_WAIT)) | R_WAIT | if run { R_RUN } else { 0 };
             self.set_activity(p, if run { 4 } else { 3 });
             PROP_AI_TIMER[pi] = 0;
         }
@@ -1006,6 +1039,7 @@ impl World for Guest<'_> {
     }
 
     fn find_cover(&mut self, p: u8, from: Cover, min: i32, max: i32, others: &[[i16; 3]], out: &mut [i16; 3]) -> bool {
+        let _scope = Scope::new(1);
         unsafe {
             let pi = p as usize;
             let pos = PROP_POS[pi];
@@ -1101,5 +1135,107 @@ impl Guest<'_> {
         } else {
             hecu_grenades::TOSS_ANIMATION_TICKS
         };
+    }
+}
+
+// Debug columns for the tick log, on only in test builds made with `HL_AI_TRACE` set (tbuild.sh).
+const TRACE: bool = option_env!("HL_AI_TRACE").is_some();
+static mut TRACE_LOG: [[[i16; 8]; 16]; 2] = [[[0; 8]; 16]; 2];
+#[inline(never)]
+unsafe fn trace(kind: usize, i: usize, v: [i32; 7]) {
+    if i < 16 {
+        let t = core::ptr::addr_of_mut!(TRACE_LOG) as *mut i16;
+        let p = t.add(kind * 128 + i * 8);
+        core::ptr::write_volatile(p, SIM_NOW as i16);
+        let mut k = 0;
+        while k < 7 {
+            core::ptr::write_volatile(p.add(1 + k), v[k] as i16);
+            k += 1;
+        }
+    }
+}
+
+// TRACE: the CheckLocalMove geometry probe (the oracle's HLREF_PROBE grid), results in PROBE.
+static mut PROBE: [u8; 576] = [0; 576];
+impl Guest<'_> {
+    #[inline(never)]
+    unsafe fn probe(&self, pi: usize) {
+        const DIRS: [(i32, i32); 8] = [(200, 0), (141, 141), (0, 200), (-141, 141), (-200, 0), (-141, -141), (0, -200), (141, -141)];
+        let y = PROP_POS[pi][1];
+        let mut n = 0usize;
+        for zi in 0..8 {
+            for xi in 0..9 {
+                for d in 0..8 {
+                    let s = [-1500 + xi * 112, y, -1400 + zi * 112];
+                    let e = [s[0] + DIRS[d].0, y, s[2] + DIRS[d].1];
+                    let code = match self.local_move(pi, s, e, true) {
+                        Local::Valid => 0x80u8,
+                        Local::Blocked { dist, tri } => (dist / 8).min(63) as u8 | if tri { 0 } else { 0x40 },
+                    };
+                    core::ptr::write_volatile(core::ptr::addr_of_mut!(PROBE[n]), code);
+                    n += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Hblanks one monster's think and walk took: a histogram (0, 1, 2, 3-4, 5-8, 9-16, 17+; words 0 to
+/// 6) and the worst (word 7), then the worst of each scope (`Scope`): 1 find_cover, 2 look,
+/// 3 grenade_ok, 4 walk, 5 node_cover, 6 build_route, 7 actor_chord_blocked, 8 actor sweep, 9 detour; words 16 to
+/// 25 count the calls of each, words 27 to 35 sum their hblanks.
+static mut COST: [u16; 48] = [0; 48];
+
+/// Times its scope with the hblank counter (which resets at vblank: a scope that spans one is skipped).
+struct Scope {
+    slot: u8,
+    start: u16,
+}
+
+impl Scope {
+    #[inline(always)]
+    fn new(slot: u8) -> Scope {
+        Scope { slot, start: if TRACE { psx_io::timers::counter(psx_io::timers::Timer::Timer1) } else { 0 } }
+    }
+}
+
+impl Drop for Scope {
+    #[inline(always)]
+    fn drop(&mut self) {
+        if TRACE {
+            unsafe { scope_end(self.slot, self.start) }
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn scope_end(slot: u8, started: u16) {
+    let now = psx_io::timers::counter(psx_io::timers::Timer::Timer1);
+    if now < started {
+        return;
+    }
+    let d = now - started;
+    let c = &mut *core::ptr::addr_of_mut!(COST);
+    core::ptr::write_volatile(&mut c[16 + slot as usize], c[16 + slot as usize].wrapping_add(1));
+    if slot > 0 {
+        let sum = &mut c[26 + slot as usize];
+        core::ptr::write_volatile(sum, sum.wrapping_add(d));
+    }
+    if slot == 0 {
+        let bucket = match d {
+            0 => 0,
+            1 => 1,
+            2 => 2,
+            3..=4 => 3,
+            5..=8 => 4,
+            9..=16 => 5,
+            _ => 6,
+        };
+        core::ptr::write_volatile(&mut c[bucket], c[bucket].wrapping_add(1));
+        if d > c[7] {
+            core::ptr::write_volatile(&mut c[7], d);
+        }
+    } else if d > c[7 + slot as usize] {
+        core::ptr::write_volatile(&mut c[7 + slot as usize], d);
     }
 }
