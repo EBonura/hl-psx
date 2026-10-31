@@ -10,8 +10,9 @@ max_ticks = 60000
 
 # Bound to the build this journey was written against.
 [addr]
-SIM_NOW = 0x801e63b4
-WORLD_ARENA = 0x800e2138
+AI_TEST_DAMAGE = 0x801c8b58
+SIM_NOW = 0x801e7e14
+WORLD_ARENA = 0x800e3b98
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
@@ -95,6 +96,101 @@ label = "c1a3a controller tape 0"
 tape = "tests/ai/tapes/c1a3a-00.pxtape"
 tape_rebase = true
 timeout = 1280
+
+[[step]]
+wait_until = { kind="ram", sym="AI_TEST_DAMAGE", size=4, op="gt", value=0 }
+timeout = 1800
+
+[[step]]
+checkpoint = "first-hit"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="SIM_NOW"
+size=2
+op="between"
+value=5
+value_hi=41
+
+[[step]]
+wait_until = { kind="ram", sym="SIM_NOW", size=2, op="ge", value=50 }
+timeout = 1800
+
+[[step]]
+checkpoint = "damage-by-50"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="AI_TEST_DAMAGE"
+size=4
+op="between"
+value=9
+value_hi=95
+
+[[step]]
+wait_until = { kind="ram", sym="SIM_NOW", size=2, op="ge", value=100 }
+timeout = 1800
+
+[[step]]
+checkpoint = "damage-by-100"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="AI_TEST_DAMAGE"
+size=4
+op="between"
+value=35
+value_hi=209
+
+[[step]]
+wait_until = { kind="ram", sym="SIM_NOW", size=2, op="ge", value=200 }
+timeout = 1800
+
+[[step]]
+checkpoint = "damage-by-200"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="AI_TEST_DAMAGE"
+size=4
+op="between"
+value=69
+value_hi=286
+
+[[step]]
+wait_until = { kind="ram", sym="SIM_NOW", size=2, op="ge", value=400 }
+timeout = 3000
+
+[[step]]
+checkpoint = "damage-by-400"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="ram"
+sym="AI_TEST_DAMAGE"
+size=4
+op="between"
+value=152
+value_hi=566
 
 [[step]]
 wait_until = { kind="ram", sym="SIM_NOW", size=2, op="ge", value=700 }

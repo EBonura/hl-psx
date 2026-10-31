@@ -1,6 +1,26 @@
 @journey name=hl-ai-c1a3a-trio title="Half-Life c1a3a: the HECU squad of three at (-944..-1120, -848..-720) meets the player at (-700,-848) standing still (AI parity fight against the retail oracle, Medium)" prologue=segment segment_row=24 max_ticks=60000
 
+# Parity test build only (hl-ai/tbuild.sh): the player is placed at the oracle's spot, cannot die, and
+# AI_TEST_DAMAGE counts what the grunts deal. Bounds are the oracle's [min, max] over ref/tm_21..28
+# (retail xash, Medium, 8 seeds) widened by the tolerance `hl-aicmp check` uses, in sim ticks and damage:
+#   first hit tick 21..26 +-15, damage by 50: 36..68 +-26, by 100: 88..156 +-53, by 200: 140..216 +-71,
+#   by 400: 288..431 +-135. The full 25-metric comparison is `hl-aicmp check` over the tick log (hl-ai/trio.sh).
 map c1a3a
   20
+  @wait sym=AI_TEST_DAMAGE size=4 op=gt value=0 timeout=300
+  @checkpoint first-hit
+  @assert sym=SIM_NOW size=2 op=between value=5 value_hi=41
+  @wait sym=SIM_NOW size=2 op=ge value=50 timeout=300
+  @checkpoint damage-by-50
+  @assert sym=AI_TEST_DAMAGE size=4 op=between value=9 value_hi=95
+  @wait sym=SIM_NOW size=2 op=ge value=100 timeout=300
+  @checkpoint damage-by-100
+  @assert sym=AI_TEST_DAMAGE size=4 op=between value=35 value_hi=209
+  @wait sym=SIM_NOW size=2 op=ge value=200 timeout=300
+  @checkpoint damage-by-200
+  @assert sym=AI_TEST_DAMAGE size=4 op=between value=69 value_hi=286
+  @wait sym=SIM_NOW size=2 op=ge value=400 timeout=500
+  @checkpoint damage-by-400
+  @assert sym=AI_TEST_DAMAGE size=4 op=between value=152 value_hi=566
   @wait sym=SIM_NOW size=2 op=ge value=700 timeout=900
   @stop
