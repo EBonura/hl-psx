@@ -1,0 +1,67 @@
+@journey name=hl-stage-c1a1c-return title="Half-Life c1a1c stage: resume at the arrival from c1a1d, walk to the elevator (the touch door in the south passage, the call button, the inner button) and take it to c1a2" prologue=load card_fixture=tests/cards/c1a1c-return.mcd card_sha256=7926d545d78299eeb5a40b3f828f1c2196b96537f10d0eb38150ec9306eceb31 max_ticks=40000
+# Resumes from the memory-card save that stage-c1a1d writes on its return to c1a1c (a Manual save at the arrival, (-1012,1435)).
+# Route (static world): west along the east-west corridor to x -1100, south down the strip to the door *108 (touch door, no
+# targetname: it opens when the player walks into it, `use` does nothing), through it into the hall x -1310..-1160, north to the
+# cross corridor y 1508..1620, west to the elevator front. The call button *110 (-1424,1453,-2688) is only 8 wide and 48 above the
+# floor: PlayerUse needs the view on it, so the view is aimed at it (looking level at it fails in retail too). It opens the
+# elevator doors *111/*112; the inner button *113 (-1597,1431,-2688) has master button_lock (fired when the doors have opened)
+# and starts the changelevel *115 (changetoc1a2, changedelay 1) after the doors close again.
+map c1a1c next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  @checkpoint resumed
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1040 && i32(LOGIC_PLAYER_POS[0]) <= -980 && i32(LOGIC_PLAYER_POS[2]) >= 1400 && i32(LOGIC_PLAYER_POS[2]) <= 1470"
+  3 flash
+  @face 3072 left
+  @hold f127 until x<=-1085 timeout=60
+  8
+  @face 2048 right
+  @hold f127 until y<=1140 timeout=100
+  @hold f40 until y<=1100 timeout=40
+  @hold f-40 until y>=1084 timeout=40
+  12
+  @checkpoint south-passage
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1110 && i32(LOGIC_PLAYER_POS[0]) <= -1056 && i32(LOGIC_PLAYER_POS[2]) >= 1068 && i32(LOGIC_PLAYER_POS[2]) <= 1100"
+  @face 3072 left
+  @hold f60 until x<=-1180 timeout=80
+  @checkpoint through-door
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1300 && i32(LOGIC_PLAYER_POS[0]) <= -1160"
+  @face 4005 right
+  @hold f127 until y>=1540 timeout=100
+  10
+  @checkpoint cross-corridor
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1300 && i32(LOGIC_PLAYER_POS[0]) <= -1160 && i32(LOGIC_PLAYER_POS[2]) >= 1508"
+  @face 3072 left
+  @hold f127 until x<=-1400 timeout=100
+  12
+  @face 2048 right
+  @hold f127 until y<=1500 timeout=60
+  @hold f60 until y<=1478 timeout=60
+  15
+  @aim at=-1424,-2688,1453
+  @checkpoint call-button
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1500 && i32(LOGIC_PLAYER_POS[0]) <= -1400 && i32(LOGIC_PLAYER_POS[2]) >= 1455 && i32(LOGIC_PLAYER_POS[2]) <= 1500"
+  10 use
+  10
+  @face 2048 right
+  @hold f127 until y<=1390 timeout=100
+  10
+  @checkpoint in-elevator
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1560 && i32(LOGIC_PLAYER_POS[0]) <= -1470 && i32(LOGIC_PLAYER_POS[2]) <= 1400"
+  @face 3072 left
+  @hold f127 until x<=-1585 timeout=60
+  10
+  @face 4005 right
+  @hold f60 until y>=1408 timeout=60
+  10
+  @aim at=-1597,-2688,1431
+  @checkpoint inner-button
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1640 && i32(LOGIC_PLAYER_POS[0]) <= -1580 && i32(LOGIC_PLAYER_POS[2]) >= 1400"
+  10 use
+  @wait sym=WORLD_ARENA offset=4 size=4 op=ne value=7305 timeout=200
+  60
+  @checkpoint c1a2
+  @assert sym=WORLD_ARENA offset=4 size=4 op=eq value=10037
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+  @stop

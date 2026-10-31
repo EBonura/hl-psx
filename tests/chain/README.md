@@ -171,6 +171,23 @@ with `stage.sh`-style tooling; the gate itself needs the real hash.
 Cards are bound to the save format of the build that wrote them. Regenerate them by running the stage that ends in
 `@save` again; do not hand-edit them.
 
+`stage-c1a1d.route` (`tests/stage-c1a1d.toml`) starts from the segment start and ends with an `@save` on the return to c1a1c: its card
+is `tests/cards/c1a1c-return.mcd`, which `stage-c1a1c-return.route` (`tests/stage-c1a1c-return.toml`, tapes in `tapes-stage-r`) loads. That
+stage walks from the c1a1d arrival to the elevator and rides it to c1a2 (26 checks, about 75 s emulated). Two things it needed that the
+next maps will too: a door with no targetname opens when the player walks into it (`use` does nothing, so a "locked looking" door in a
+dark passage is probably a touch door), and a button is only used when the view is on it, so aim at the button with
+`@aim at=X,UP,Y` (a low or small button, here 48 above the floor and 8 wide, is missed with the view level; retail misses it too).
+
+## Planning legs: hlnav
+
+`hlnav.rs` is a standalone planner over the retail BSP's standing hull (`rustc --edition=2021 -O tests/chain/hlnav.rs -o /tmp/hlnav`,
+`HL_DIR` = the retail `valve` folder). `hlnav MAP walk X Y Z GX GY [GX GY ...]` plans a walk (stairs up to 18, jumps up to 40) from the
+player's origin position to each goal in turn and prints closed-loop legs: one `@hold` per straight run ended on the position, and a
+dead-band pair on the minor axis (the sticks assume the view faces +x, so the output starts with `@face 1018 left`), with waypoints pushed to the middle of narrow passages. `hlnav MAP hop ...` also takes jump hops over
+gaps (crate to crate: `--hop 170 --drop 140`); `--models 2,3,4` makes those brush models solid (func_wall platforms and crates are not
+in the static world); `hlnav MAP floors X0 X1 Y0 Y1 [STEP]` prints an ascii floor map. Doors, lifts, ladders and buttons are not modelled:
+the printed legs are a starting point that is run, looked at (`@checkpoint` + `@probe` frames) and fixed by hand, as every stage route here was.
+
 ## Weapon and melee directives
 
 `@weapon NAME [dir=prev|next] [timeout=60]` presses the cycle button once (L1 prev, R1 next: one rising edge, so one

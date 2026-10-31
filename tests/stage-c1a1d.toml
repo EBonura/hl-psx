@@ -3262,4 +3262,60 @@ rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="WORLD_ARENA", offset=4, size=4, op="eq", value=7305 }
 timeout = 480
+
+[[step]]
+wait_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) != 0" }
+timeout = 720
+
+[[step]]
+label = "c1a1d controller tape 20"
+tape = "tests/chain/tapes-stage-d/c1a1d-20.pxtape"
+tape_rebase = true
+timeout = 1320
+
+[[step]]
+checkpoint = "back-in-c1a1c"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind="expr"
+expr="i32(LOGIC_PLAYER_POS[0]) >= -1040 && i32(LOGIC_PLAYER_POS[0]) <= -980 && i32(LOGIC_PLAYER_POS[2]) >= 1400 && i32(LOGIC_PLAYER_POS[2]) <= 1470"
+[[step.assert]]
+kind="expr"
+expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+
+[[step]]
+label = "pause and open Save Game"
+press = ["start"]
+hold = 8
+wait = 25
+
+[[step]]
+press = ["down"]
+hold = 8
+wait = 12
+
+[[step]]
+press = ["cross"]
+hold = 8
+wait = 35
+
+[[step]]
+label = "save to Card 1 Manual"
+press = ["cross"]
+hold = 8
+wait = 400
+
+[[step]]
+checkpoint = "game-saved"
+golden = false
+[[step.assert]]
+kind = "card_writes"
+min_count = 5
+
+[[step]]
+card = { action = "snapshot" }
 # trailing wait of 0 ticks is replaced by the next block's load wait
