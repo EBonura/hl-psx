@@ -18370,7 +18370,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     let health_before = PROP_HEALTH[pi];
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
-    if PROP_KIND[pi] == 8 {
+    if matches!(PROP_KIND[pi], 8 | 5 | 55) {
         monster_ai::damaged(pi, dmg);
     }
     if MONSTER_TRIGGER_END != 0 {
@@ -21220,7 +21220,7 @@ unsafe fn tick_props(
             continue;
         }
         if PROP_HEALTH[pi] == 0 {
-            if ty == 8 {
+            if matches!(ty, 8 | 5 | 55) {
                 monster_ai::died(pi);
             }
             prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);

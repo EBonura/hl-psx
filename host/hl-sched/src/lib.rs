@@ -598,6 +598,7 @@ impl Source {
 /// Species name for a model type id (`combat_defs`/model roster numbering), for the species the sources define.
 pub fn species_for_kind(kind: u16) -> Option<&'static str> {
     match kind {
+        5 | 55 => Some("zombie"),
         8 => Some("grunt"),
         _ => None,
     }
@@ -608,6 +609,7 @@ pub fn shipped() -> Result<Source, Error> {
     let mut s = Source::default();
     s.add(include_str!("../sched/base.sched"))?;
     s.add(include_str!("../sched/grunt.sched"))?;
+    s.add(include_str!("../sched/zombie.sched"))?;
     Ok(s)
 }
 
@@ -694,6 +696,15 @@ pick grunt states=COMBAT any=NEW_ENEMY none=ENEMY_DEAD when IN_SQUAD,NOT_LEADER 
         let found = ai::section(room).expect("section");
         assert_eq!(&found[..blob.len()], &blob[..]);
         assert_eq!(ai::room_end(room), 100);
+    }
+
+    #[test]
+    fn zombie_encodes_on_the_base_tables() {
+        let s = shipped().expect("shipped");
+        let blob: &'static [u8] = Box::leak(s.encode(&["zombie"]).expect("encode").into_boxed_slice());
+        let t = ai::Tables::new(blob).expect("valid");
+        assert_eq!(t.species(5).map(|d| d.melee_range), Some(64));
+        eprintln!("zombie set: {} schedules, {} tasks, {} bytes", t.n_sched(), t.n_task(), blob.len());
     }
 
     #[test]

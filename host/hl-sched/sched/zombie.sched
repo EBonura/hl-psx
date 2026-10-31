@@ -1,0 +1,5 @@
+# monster_zombie: the default monster AI (base.sched) with the zombie's melee reach. The zombie overrides no
+# schedule: it wakes angry, chases (walking: it has no run sequence), claws in reach, and flinches on damage.
+# Melee reach is the base CheckMeleeAttack1 distance (64 units) in front (dot 0.7); the cone is checked in the adapter.
+
+species zombie id=5 parent=base melee=64

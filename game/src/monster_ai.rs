@@ -8,10 +8,22 @@
 use crate::ai::{Ai, Cover, Goal, Move, Task, World, LOOK_OWNED, NONE};
 use crate::*;
 use hl_format::ai::{cond, custom, snd, Tables};
+use hl_format::setpiece_audio as SP;
 
 const ROWS: usize = 32;
 /// The species id of the HECU grunt in the tables (its prop kind).
 const KIND: u8 = 8;
+/// The zombie: prop kinds 5 and 55 (the second is the model hint variant), species 5 in the tables.
+const ZOMBIE: u8 = 5;
+
+/// The table species of a prop kind this module runs, or 0.
+fn species_of(kind: u8) -> u8 {
+    match kind {
+        KIND => KIND,
+        5 | 55 => ZOMBIE,
+        _ => 0,
+    }
+}
 /// The player as an enemy in a row (`NONE` is 0xFF there, the prop table has two sentinels).
 const PLAYER_ROW: u8 = 0xFE;
 /// `bits_COND_*` look distances and the squad recruit radius, in map units.
@@ -88,6 +100,19 @@ enum Walked {
 
 /// `(retail activity, prop state, ticks until the sequence reads finished)`. The ticks are the model's
 /// sequence length rounded up plus the two it takes the retail think to notice (`hl-aicmp mdlseqs`).
+/// The same for the zombie model (idle, turns, small flinch, big flinch, walk, melee: `attack1` 47 ticks, `attack2` 27).
+const ZACTS: [(u8, u8, u8); 7] = [
+    (1, PROP_STATE_IDLE, 42),
+    (3, PROP_STATE_MOVE, 56),
+    (15, PROP_STATE_IDLE, 17),
+    (16, PROP_STATE_IDLE, 17),
+    (26, PROP_STATE_IDLE, 8),
+    (27, PROP_STATE_IDLE, 32),
+    (30, PROP_STATE_ATTACK, 49),
+];
+/// Ticks of the zombie's `attack2` (both arms), and the marker for it in the sequence timer.
+const ZOMBIE_BOTH_TICKS: u8 = 29;
+
 const ACTS: [(u8, u8, u8); 16] = [
     (1, PROP_STATE_IDLE, 82),
     (3, PROP_STATE_MOVE, 58),
@@ -128,6 +153,8 @@ const REACHED: i32 = 32;
 /// units a think and the walk about 60 percent of that.
 const RUN_STEP: i32 = 30;
 const WALK_STEP: i32 = 18;
+/// The zombie's walk: 3.64 units a tick, 7 a think.
+const ZOMBIE_STEP: i32 = 7;
 /// Failed steps (move ticks) before a route is given up.
 const STUCK: u8 = 12;
 /// `MONSTER_CUT_CORNER_DIST`: a waypoint this close counts as reached.
@@ -181,9 +208,12 @@ pub(crate) unsafe fn reset(m: &Map, nprops: usize) {
     }
     let mut pi = 0usize;
     while pi < nprops {
-        if PROP_KIND[pi] == KIND && PROP_HEALTH[pi] > 0 && PROP_DORMANT[pi] & PROP_RUNTIME_PRISONER == 0 {
-            ai().claim(pi as u8, KIND, grenade_flags(pi));
-            AMMO[pi] = clip(pi);
+        let species = species_of(PROP_KIND[pi]);
+        if species != 0 && PROP_HEALTH[pi] > 0 && PROP_DORMANT[pi] & PROP_RUNTIME_PRISONER == 0 {
+            ai().claim(pi as u8, species, grenade_flags(pi));
+            if species == KIND {
+                AMMO[pi] = clip(pi);
+            }
         }
         pi += 1;
     }
@@ -193,7 +223,7 @@ pub(crate) unsafe fn reset(m: &Map, nprops: usize) {
     let mut n = 0usize;
     for i in 0..ROWS {
         let named = (0..TABLES.map_or(0, |t| t.n_group())).any(|g| TABLES.is_some_and(|t| t.group(g).0 == ai().rows[i].prop));
-        if ai().rows[i].prop != NONE && ai().rows[i].squad == 0 && !named {
+        if ai().rows[i].prop != NONE && ai().rows[i].species == KIND && ai().rows[i].squad == 0 && !named {
             order[n] = i as u8;
             n += 1;
         }
@@ -253,7 +283,9 @@ unsafe fn form_groups() {
 }
 
 unsafe fn grenade_flags(pi: usize) -> u8 {
-    if hecu_grenades::weapons(GRUNT_GREN[pi]) & hecu_grenades::LAUNCHER != 0 {
+    if species_of(PROP_KIND[pi]) != KIND {
+        0
+    } else if hecu_grenades::weapons(GRUNT_GREN[pi]) & hecu_grenades::LAUNCHER != 0 {
         ai::F_LAUNCHER | ai::F_FIRST_ENCOUNTER
     } else {
         ai::F_FIRST_ENCOUNTER
@@ -288,9 +320,15 @@ unsafe fn row_of(m: &Map, pi: usize) -> Option<usize> {
     if let Some(i) = ai().row_of(pi as u8) {
         return Some(i);
     }
-    let i = ai().claim(pi as u8, KIND, grenade_flags(pi))?;
-    AMMO[pi] = clip(pi);
-    form_squad(m, i);
+    let species = species_of(PROP_KIND[pi]);
+    if species == 0 {
+        return None;
+    }
+    let i = ai().claim(pi as u8, species, grenade_flags(pi))?;
+    if species == KIND {
+        AMMO[pi] = clip(pi);
+        form_squad(m, i);
+    }
     Some(i)
 }
 
@@ -325,7 +363,7 @@ pub(crate) unsafe fn tick(
     armor: &mut u16,
     nprops: usize,
 ) {
-    if advance_grunt_grenade(pi) {
+    if PROP_KIND[pi] == KIND && advance_grunt_grenade(pi) {
         return;
     }
     let Some(t) = TABLES else {
@@ -399,6 +437,10 @@ impl Guest<'_> {
     #[inline(never)]
     #[optimize(size)]
     unsafe fn events(&mut self, pi: usize, timer: u8) {
+        if species_of(PROP_KIND[pi]) == ZOMBIE {
+            self.claw(pi, timer);
+            return;
+        }
         let left = (timer & SEQ_LEFT) - 1;
         if timer & SEQ_RELOAD == SEQ_RELOAD {
             if RELOAD_TICKS - left == RELOAD_TICK {
@@ -732,7 +774,13 @@ impl Guest<'_> {
             r.flags = (r.flags & !R_WAIT) | if r.flags & R_WAIT == R_WAIT { R_WAIT_ONE } else { 0 };
             return Walked::Moving(true);
         }
-        let step = if r.flags & R_RUN != 0 { RUN_STEP } else { WALK_STEP };
+        let step = if species_of(PROP_KIND[pi]) == ZOMBIE {
+            ZOMBIE_STEP
+        } else if r.flags & R_RUN != 0 {
+            RUN_STEP
+        } else {
+            WALK_STEP
+        };
         let moved = prop_try_step(self.m, self.pm, pi, wp[0] - pos[0], wp[2] - pos[2], step, false);
         Walked::Moving(moved)
     }
@@ -864,7 +912,8 @@ impl World for Guest<'_> {
             }
             PROP_AI_TARGET[pi] = cur;
             let mut c = 0u32;
-            if AMMO[pi] == 0 {
+            let sp = species_of(PROP_KIND[pi]);
+            if sp == KIND && AMMO[pi] == 0 {
                 c |= cond::NO_AMMO_LOADED;
             }
             if sounds & snd::COMBAT != 0 && (*core::ptr::addr_of!(SOUNDS)).heard(PROP_POS[pi]).is_some() {
@@ -899,16 +948,16 @@ impl World for Guest<'_> {
             let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
             let d2 = dx * dx + dz * dz;
             let from = prop_eye(self.m, pi);
-            if d2 <= RANGE * RANGE && senses::within_cone(2048, fx, fz, dx, dz) && !self.friend_in_line(pi, from, aim) {
+            if sp == KIND && d2 <= RANGE * RANGE && senses::within_cone(2048, fx, fz, dx, dz) && !self.friend_in_line(pi, from, aim) {
                 c |= cond::CAN_RANGE_ATTACK1;
             }
-            if let Some(s) = self.t.species(KIND) {
+            if let Some(s) = self.t.species(sp) {
                 let melee = s.melee_range as i32;
                 if d2 <= melee * melee && senses::within_cone(2867, fx, fz, dx, dz) {
                     c |= cond::CAN_MELEE_ATTACK1;
                 }
             }
-            if self.grenade_ok(pi, aim) {
+            if sp == KIND && self.grenade_ok(pi, aim) {
                 c |= cond::CAN_RANGE_ATTACK2;
             }
             if target == PROP_TARGET_PLAYER {
@@ -941,13 +990,23 @@ impl World for Guest<'_> {
                 self.toss(pi);
                 return;
             }
-            let (_, state, ticks) = ACTS.iter().copied().find(|a| a.0 == act).unwrap_or((act, PROP_STATE_IDLE, 0));
-            let flags = match act {
+            let zombie = species_of(PROP_KIND[pi]) == ZOMBIE;
+            let table: &[(u8, u8, u8)] = if zombie { &ZACTS } else { &ACTS };
+            let (_, state, mut ticks) = table.iter().copied().find(|a| a.0 == act).unwrap_or((act, PROP_STATE_IDLE, 0));
+            let mut flags = match act {
                 28 => SEQ_BURST,
                 30 => SEQ_KICK,
                 32 => SEQ_RELOAD,
                 _ => 0,
             };
+            if zombie && act == 30 {
+                // The model picks one of its two melee sequences: one arm at a time, or both (1 in 5).
+                flags = 0;
+                if impact_rng().below(5) == 0 {
+                    flags = SEQ_BURST;
+                    ticks = ZOMBIE_BOTH_TICKS;
+                }
+            }
             PROP_STATE[pi] = state;
             PROP_AI_TIMER[pi] = ticks.min(SEQ_LEFT) | flags;
         }
@@ -969,7 +1028,7 @@ impl World for Guest<'_> {
                 }
             }
             let cur = prop_yaw_value(PROP_YAW[pi]);
-            let yaw = turn_toward(cur, *ideal, senses::turn_rate_q12(KIND) * 2);
+            let yaw = turn_toward(cur, *ideal, senses::turn_rate_q12(PROP_KIND[pi]) * 2);
             PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
             let diff = (*ideal as i32 - yaw as i32) & 0xfff;
             diff < FACING || diff > 4096 - FACING
@@ -1044,7 +1103,7 @@ impl World for Guest<'_> {
             }
             let r = &mut routes()[i];
             r.flags = (r.flags & !(R_RUN | R_WAIT)) | R_WAIT | if run { R_RUN } else { 0 };
-            self.set_activity(p, if run { 4 } else { 3 });
+            self.set_activity(p, if run && species_of(PROP_KIND[pi]) == KIND { 4 } else { 3 });
             PROP_AI_TIMER[pi] = 0;
         }
         true
@@ -1303,3 +1362,64 @@ impl Guest<'_> {
         }
     }
 }
+
+impl Guest<'_> {
+    /// The zombie's claw events at their tick of the running sequence (`timer` is the value before this
+    /// tick): `attack1` swings one arm at 13.3 and 25.3 ticks (20 damage each), `attack2` both arms at 8
+    /// (40). Each claw sweeps a 32-wide hull 70 units ahead and throws the player 5 units a tick away.
+    #[inline(never)]
+    #[optimize(size)]
+    unsafe fn claw(&mut self, pi: usize, timer: u8) {
+        let both = timer & SEQ_BURST != 0;
+        let left = (timer & SEQ_LEFT) - 1;
+        let elapsed = (if both { ZOMBIE_BOTH_TICKS } else { 49 }) - left;
+        let hit = if both { elapsed == CLAW_BOTH } else { elapsed == CLAW_FIRST || elapsed == CLAW_SECOND };
+        if !hit {
+            return;
+        }
+        let target = PROP_AI_TARGET[pi];
+        let pos = PROP_POS[pi];
+        let Some(aim) = target_aim_point(target, self.player, self.nprops) else {
+            return;
+        };
+        let yaw = prop_yaw_value(PROP_YAW[pi]);
+        let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
+        let fwd = (sincos::sin_q12(yaw) * dx + sincos::sin_q12((yaw + 1024) & 0x0fff) * dz) >> 12;
+        let side = (sincos::sin_q12((yaw + 1024) & 0x0fff) * dx - sincos::sin_q12(yaw) * dz) >> 12;
+        if (0..=86).contains(&fwd) && side.abs() <= 32 {
+            damage_target(
+                target,
+                skill_hit(if both { Sk::ZombieBothSlash } else { Sk::ZombieSlash }),
+                pos,
+                self.health,
+                self.armor,
+            );
+            if target == PROP_TARGET_PLAYER {
+                let lateral = if both {
+                    0
+                } else if elapsed == CLAW_FIRST {
+                    -5
+                } else {
+                    5
+                };
+                let len = isqrt_i32(dx * dx + dz * dz).max(1);
+                species::set_knock([(dx * 5 + dz * lateral) / len, 0, (dz * 5 - dx * lateral) / len]);
+            }
+            if setpiece_sfx::has(SP::ZO_CLAW) {
+                species::cue(SP::ZO_CLAW, pos);
+                if both || elapsed == CLAW_SECOND {
+                    sfx::play_world(sfx::ZO_ATTACK, pos);
+                }
+            } else {
+                sfx::play_world(sfx::ZO_ATTACK, pos);
+            }
+        } else {
+            species::cue(SP::ZO_MISS, pos);
+        }
+    }
+}
+
+/// Ticks into the sequence the claws land: `attack1` at 13.3 and 25.3, `attack2` at 8.0.
+const CLAW_FIRST: u8 = 13;
+const CLAW_SECOND: u8 = 25;
+const CLAW_BOTH: u8 = 8;

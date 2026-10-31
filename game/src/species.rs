@@ -8,7 +8,7 @@ use hl_format::setpiece_audio as SP;
 
 /// A cue from the map's monster sound bank (silent when the bank lacks it).
 #[inline(always)]
-unsafe fn cue(slot: u8, pos: [i32; 3]) {
+pub(crate) unsafe fn cue(slot: u8, pos: [i32; 3]) {
     setpiece_sfx::play(slot, pos);
 }
 
@@ -588,97 +588,14 @@ pub(crate) unsafe fn tick_ranged(
 /// the player-move epilogue.
 static mut KNOCK: [i32; 3] = [0; 3];
 
+/// Shove the player with the next player-move epilogue (units per tick).
+pub(crate) unsafe fn set_knock(v: [i32; 3]) {
+    KNOCK = v;
+}
+
 #[inline(always)]
 pub(crate) unsafe fn take_knock() -> [i32; 3] {
     core::mem::take(&mut *core::ptr::addr_of_mut!(KNOCK))
-}
-
-/// monster_zombie: wakes on what it sees within 60 degrees of its facing,
-/// walks to 64 units, and claws: 80% two 20-damage hits at +15 and +27 ticks of
-/// a 52-tick bout, else one 40 at +11 of a 40-tick bout (Medium). The claw ticks are
-/// the reference runtime's (one-claw swing at +15 and +27 ticks after the attack state
-/// shows, both-arms swing at +11) and the bouts are its attack-to-attack spacing of 40 to 60 ticks.
-/// `done` counts the ticks after the one that set the bout, so a claw at +N is `done == N - 1`.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn tick_zombie(
-    m: &Map,
-    movers: &[phys::Mover],
-    sight: &[phys::Mover],
-    pi: usize,
-    player_pos: [i32; 3],
-    health: &mut u16,
-    armor: &mut u16,
-    nprops: usize,
-) {
-    let yaw_before = PROP_YAW[pi];
-    let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 700) else {
-        return;
-    };
-    let pos = PROP_POS[pi];
-    let d2 = dist2_xz(pos, aim);
-    let t = PROP_AI_TIMER[pi]; // low 6 bits: bout ticks left, bit 6: the single heavy swing
-    let left = t & 63;
-    if left > 0 {
-        // TASK_MELEE_ATTACK1 never turns the zombie: the bout keeps the heading it started with.
-        PROP_YAW[pi] = yaw_before;
-        PROP_STATE[pi] = PROP_STATE_ATTACK;
-        PROP_AI_TIMER[pi] = t - 1;
-        let done = if t & 64 != 0 { 40 - left } else { 52 - left };
-        let hit = if t & 64 != 0 {
-            done == 10
-        } else {
-            done == 14 || done == 26
-        };
-        // CheckTraceHullAttack(70): a 32-wide hull swept 70 units straight ahead; the target's
-        // centre is reached within 70 + 16 in front and 16 + 16 to the side.
-        let yaw = prop_yaw_value(PROP_YAW[pi]);
-        let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
-        let fwd = (sincos::sin_q12(yaw) * dx + sincos::sin_q12((yaw + 1024) & 0x0fff) * dz) >> 12;
-        let side = (sincos::sin_q12((yaw + 1024) & 0x0fff) * dx - sincos::sin_q12(yaw) * dz) >> 12;
-        if hit && (0..=86).contains(&fwd) && side.abs() <= 32 {
-            let swing = skill_hit(if t & 64 != 0 {
-                Sk::ZombieBothSlash
-            } else {
-                Sk::ZombieSlash
-            });
-            damage_target(target, swing, pos, health, armor);
-            if target == PROP_TARGET_PLAYER {
-                // Each claw throws the player 5 units per tick away from the zombie; the
-                // first claw also to the zombie's left, the second to its right.
-                let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
-                let side = if t & 64 != 0 {
-                    0
-                } else if done == 14 {
-                    -5
-                } else {
-                    5
-                };
-                let len = isqrt_i32(dx * dx + dz * dz).max(1);
-                KNOCK = [(dx * 5 + dz * side) / len, 0, (dz * 5 - dx * side) / len];
-            }
-            // The claws land with claw_strike; the second swipe of a bout (or
-            // the lone heavy one) adds the zombie's roar.
-            if setpiece_sfx::has(SP::ZO_CLAW) {
-                cue(SP::ZO_CLAW, pos);
-                if t & 64 != 0 || done == 26 {
-                    sfx::play_world(sfx::ZO_ATTACK, pos);
-                }
-            } else {
-                sfx::play_world(sfx::ZO_ATTACK, pos);
-            }
-        } else if hit {
-            // A swing that finds nothing: claw_miss.
-            cue(SP::ZO_MISS, pos);
-        }
-    } else if d2 <= 64 * 64 && visible {
-        let heavy = impact_rng().below(5) == 0;
-        PROP_STATE[pi] = PROP_STATE_ATTACK;
-        PROP_AI_TIMER[pi] = if heavy { 64 | 40 } else { 52 };
-    } else {
-        PROP_STATE[pi] = PROP_STATE_MOVE;
-        prop_move_towards_point(m, movers, pi, aim, 4);
-    }
 }
 
 /// monster_bullchicken: spits twice from 65 to 780 units (10 damage, a 30-tick
@@ -890,7 +807,7 @@ pub(crate) unsafe fn tick_melee(
     nprops: usize,
 ) {
     if ty == 5 || ty == 55 {
-        tick_zombie(m, movers, sight, pi, player_pos, health, armor, nprops);
+        monster_ai::tick(m, movers, sight, pi, player_pos, health, armor, nprops);
     } else {
         tick_headcrab(m, movers, sight, pi, player_pos, health, armor, nprops);
     }
