@@ -178,6 +178,8 @@ next maps will too: a door with no targetname opens when the player walks into i
 dark passage is probably a touch door), and a button is only used when the view is on it, so aim at the button with
 `@aim at=X,UP,Y` (a low or small button, here 48 above the floor and 8 wide, is missed with the view level; retail misses it too).
 
+`stage-c1a2-part1.route` (`tests/stage-c1a2-part1.toml`, tapes in `tapes-stage-c1a2p1`) is c1a2 part 1: from the segment start (segment_row=18, the elevator) to the dark space behind cover *87 above the corridor (about 12,000 ticks, 242 checks on a disc built from 606d1b7), ending with an `@save`: its card is `tests/cards/c1a2-part1.mcd`, which the next part loads (resumed position (578,-408,-862), checked). c1a2 is cut into parts like this so a restart never replays more than one part. Order: grate *74, duct, soda room barnacle (crowbar from its tongue column), lounge switch *152, hall window *1, window to the flooded room, vent *73, shaft, cover *87.
+
 ## Planning legs: hlnav
 
 `hlnav.rs` is a standalone planner over the retail BSP's standing hull (`rustc --edition=2021 -O tests/chain/hlnav.rs -o /tmp/hlnav`,
