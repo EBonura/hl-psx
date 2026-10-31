@@ -7,6 +7,20 @@
 
 use hl_format::ai::{cond, fx, mem, op, pred, state, ty, Sched, Species, Tables, TYPE_REDIRECT};
 
+/// Conditions the world's `look` recomputes at every think.
+pub const LOOK_OWNED: u32 = cond::SEE_HATE
+    | cond::SEE_FEAR
+    | cond::SEE_DISLIKE
+    | cond::SEE_ENEMY
+    | cond::ENEMY_OCCLUDED
+    | cond::ENEMY_TOOFAR
+    | cond::CAN_RANGE_ATTACK1
+    | cond::CAN_MELEE_ATTACK1
+    | cond::CAN_RANGE_ATTACK2
+    | cond::CAN_MELEE_ATTACK2
+    | cond::ENEMY_FACING_ME
+    | cond::HEAR_SOUND;
+
 /// "No row" / "no enemy" marker in the byte fields.
 pub const NONE: u8 = 0xFF;
 /// Squad slot bits (engage x2, grenade x2, split), as in the retail squad slot word.
@@ -51,6 +65,8 @@ pub struct Row {
     /// Schedule type to run when the current one fails (0 = the species' fail schedule).
     pub fail: u8,
     pub aux: u8,
+    /// Yaw the monster is turning to (12-bit), set by the turn tasks.
+    pub yaw: u16,
     pub goal: [i16; 3],
     pub last: [i16; 3],
 }
@@ -73,6 +89,7 @@ impl Row {
         squad: 0,
         fail: 0,
         aux: 0,
+        yaw: 0,
         goal: [0; 3],
         last: [0; 3],
     };
@@ -109,7 +126,6 @@ pub enum Goal {
     EnemyCorpse,
     Leader,
     Target,
-    LastPosition,
     BestSound,
 }
 
@@ -134,10 +150,10 @@ pub trait World {
     fn now(&self) -> u16;
     fn rand(&mut self, n: u32) -> u32;
     fn skill_hard(&self) -> bool;
-    /// Sensing for one think: returns the enemy to keep (or `NONE`) and the conditions to set
-    /// (SEE_ENEMY, ENEMY_OCCLUDED, CAN_*_ATTACK*, ENEMY_FACING_ME, NEW_ENEMY, ENEMY_DEAD, HEAR_SOUND,
-    /// LIGHT/HEAVY_DAMAGE, SPECIAL1 ...).
-    fn look(&mut self, p: u8, enemy: u8) -> (u8, u32);
+    /// Sensing for one think: returns the enemy to keep (or `NONE`) and the new value of the sensed
+    /// conditions (`LOOK_OWNED`: SEE_ENEMY, ENEMY_OCCLUDED, CAN_*_ATTACK*, ENEMY_FACING_ME, HEAR_SOUND ...)
+    /// plus NEW_ENEMY and ENEMY_DEAD when they apply. `sounds` is the current schedule's sound mask.
+    fn look(&mut self, p: u8, enemy: u8, sounds: u16) -> (u8, u32);
     fn enemy_is_player(&self, e: u8) -> bool;
     /// The last damage came from roughly in front of the monster.
     fn damage_ahead(&self, p: u8) -> bool;
@@ -145,17 +161,20 @@ pub trait World {
     fn danger_sound(&self, p: u8) -> bool;
     fn set_activity(&mut self, p: u8, act: u8);
     fn seq_done(&self, p: u8) -> bool;
-    /// Turn toward the enemy's last known position (`face_enemy`) or the stored ideal yaw; true when facing.
-    fn face(&mut self, p: u8, enemy: bool) -> bool;
-    /// Set the ideal yaw `deg` degrees left (positive) or right (negative) of the current yaw.
-    fn turn_by(&mut self, p: u8, deg: i16);
+    /// Turn toward the enemy's last known position (`enemy`) or toward `ideal`; true when facing.
+    /// With `enemy` the new ideal yaw is returned in `ideal`.
+    fn face(&mut self, p: u8, enemy: bool, ideal: &mut u16) -> bool;
+    /// The ideal yaw `deg` degrees left (positive) or right (negative) of the current yaw.
+    fn turn_by(&mut self, p: u8, deg: i16) -> u16;
     fn stop(&mut self, p: u8);
     /// Build the route to `goal`; `out` receives the destination point.
     fn path_to(&mut self, p: u8, goal: Goal, out: &mut [i16; 3]) -> bool;
     /// Start moving along the built route (movement activity run or walk).
     fn begin_move(&mut self, p: u8, run: bool) -> bool;
-    fn move_tick(&mut self, p: u8) -> Move;
-    fn find_cover(&mut self, p: u8, from: Cover, min: i32, max: i32, out: &mut [i16; 3]) -> bool;
+    /// One think of the route toward `goal`.
+    fn move_tick(&mut self, p: u8, goal: [i16; 3]) -> Move;
+    /// Cover search; `others` are the other squad members' positions (a cover point near one is not valid).
+    fn find_cover(&mut self, p: u8, from: Cover, min: i32, max: i32, others: &[[i16; 3]], out: &mut [i16; 3]) -> bool;
     fn store_position(&self, p: u8) -> [i16; 3];
     /// Begin an attack animation effect (fire, kick, throw); the activity itself is set by the runtime.
     fn attack(&mut self, p: u8, task: u8);
@@ -285,6 +304,10 @@ impl<const N: usize> Ai<N> {
                 count += 1;
             }
             j += 1;
+        }
+        // No single-member squads.
+        if count == 1 {
+            self.leave_squad(i);
         }
     }
 
@@ -579,9 +602,10 @@ impl<const N: usize> Ai<N> {
             return;
         }
         if sense {
-            let (enemy, conds) = w.look(p, self.rows[i].enemy);
+            let sounds = t.sched(self.rows[i].sched).sound;
+            let (enemy, conds) = w.look(p, self.rows[i].enemy, sounds);
             self.rows[i].enemy = enemy;
-            self.rows[i].conds |= conds;
+            self.rows[i].conds = (self.rows[i].conds & !LOOK_OWNED) | conds;
         }
         for _ in 0..MAX_STEPS {
             let r = self.rows[i];
@@ -655,8 +679,8 @@ impl<const N: usize> Ai<N> {
         let p = self.rows[i].prop;
         let now = w.now();
         match o {
-            op::TURN_LEFT => w.turn_by(p, a),
-            op::TURN_RIGHT => w.turn_by(p, -a),
+            op::TURN_LEFT => self.rows[i].yaw = w.turn_by(p, a),
+            op::TURN_RIGHT => self.rows[i].yaw = w.turn_by(p, -a),
             op::REMEMBER => {
                 self.rows[i].memory |= a as u16;
                 self.complete(i);
@@ -706,16 +730,18 @@ impl<const N: usize> Ai<N> {
             op::WAIT | op::WAIT_FACE_ENEMY => self.rows[i].wait_until = now.wrapping_add(a as u16),
             op::WAIT_RANDOM => self.rows[i].wait_until = now.wrapping_add(2 + w.rand(a.max(1) as u32) as u16),
             op::CLEAR_MOVE_WAIT => self.complete(i),
+            op::GET_PATH_TO_LASTPOSITION => {
+                self.rows[i].goal = self.rows[i].last;
+                self.complete(i);
+            }
             op::GET_PATH_TO_ENEMY | op::GET_PATH_TO_ENEMY_LKP | op::GET_PATH_TO_ENEMY_CORPSE
-            | op::GET_PATH_TO_LEADER | op::GET_PATH_TO_TARGET | op::GET_PATH_TO_LASTPOSITION
-            | op::GET_PATH_TO_BESTSOUND => {
+            | op::GET_PATH_TO_LEADER | op::GET_PATH_TO_TARGET | op::GET_PATH_TO_BESTSOUND => {
                 let goal = match o {
                     op::GET_PATH_TO_ENEMY => Goal::Enemy,
                     op::GET_PATH_TO_ENEMY_LKP => Goal::EnemyLkp,
                     op::GET_PATH_TO_ENEMY_CORPSE => Goal::EnemyCorpse,
                     op::GET_PATH_TO_LEADER => Goal::Leader,
                     op::GET_PATH_TO_TARGET => Goal::Target,
-                    op::GET_PATH_TO_LASTPOSITION => Goal::LastPosition,
                     _ => Goal::BestSound,
                 };
                 let mut out = self.rows[i].goal;
@@ -746,7 +772,18 @@ impl<const N: usize> Ai<N> {
                     _ => (0, 0),
                 };
                 let mut out = self.rows[i].goal;
-                if (from == Cover::Enemy && self.rows[i].enemy == NONE) || !w.find_cover(p, from, min, max, &mut out) {
+                let mut others = [[0i16; 3]; 3];
+                let mut n = 0;
+                let sq = self.rows[i].squad;
+                let mut j = 0;
+                while sq != 0 && j < N && n < 3 {
+                    if j != i && self.rows[j].prop != NONE && self.rows[j].squad == sq {
+                        others[n] = w.store_position(self.rows[j].prop);
+                        n += 1;
+                    }
+                    j += 1;
+                }
+                if !w.find_cover(p, from, min, max, &others[..n], &mut out) {
                     self.fail(i);
                 } else {
                     self.rows[i].goal = out;
@@ -783,12 +820,16 @@ impl<const N: usize> Ai<N> {
         match o {
             op::TURN_LEFT | op::TURN_RIGHT | op::FACE_IDEAL | op::FACE_TARGET | op::FACE_ROUTE
             | op::FACE_LASTPOSITION => {
-                if w.face(p, false) {
+                let mut yaw = self.rows[i].yaw;
+                if w.face(p, false, &mut yaw) {
                     self.complete(i);
                 }
             }
             op::FACE_ENEMY => {
-                if w.face(p, true) {
+                let mut yaw = self.rows[i].yaw;
+                let done = w.face(p, true, &mut yaw);
+                self.rows[i].yaw = yaw;
+                if done {
                     self.complete(i);
                 }
             }
@@ -798,7 +839,9 @@ impl<const N: usize> Ai<N> {
                 }
             }
             op::PLAY_SEQUENCE_FACE_ENEMY => {
-                w.face(p, true);
+                let mut yaw = self.rows[i].yaw;
+                w.face(p, true, &mut yaw);
+                self.rows[i].yaw = yaw;
                 if w.seq_done(p) {
                     self.complete(i);
                 }
@@ -809,19 +852,23 @@ impl<const N: usize> Ai<N> {
                 }
             }
             op::WAIT_FACE_ENEMY => {
-                w.face(p, true);
+                let mut yaw = self.rows[i].yaw;
+                w.face(p, true, &mut yaw);
+                self.rows[i].yaw = yaw;
                 if waited(&self.rows[i]) {
                     self.complete(i);
                 }
             }
-            op::WAIT_FOR_MOVEMENT => match w.move_tick(p) {
+            op::WAIT_FOR_MOVEMENT => match w.move_tick(p, self.rows[i].goal) {
                 Move::Done => self.complete(i),
                 Move::Failed => self.fail(i),
                 Move::Moving => {}
             },
             op::RANGE_ATTACK1 | op::RANGE_ATTACK2 | op::MELEE_ATTACK1 | op::MELEE_ATTACK2
             | op::SPECIAL_ATTACK1 | op::SPECIAL_ATTACK2 | op::RELOAD => {
-                w.face(p, true);
+                let mut yaw = self.rows[i].yaw;
+                w.face(p, true, &mut yaw);
+                self.rows[i].yaw = yaw;
                 if w.seq_done(p) {
                     self.complete(i);
                 }

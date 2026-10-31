@@ -22,19 +22,19 @@ pub(crate) unsafe fn cue_or(slot: u8, core: u8, pos: [i32; 3]) {
     }
 }
 
-/// Keep or find the enemy and face it. Clears the actor's target and returns
-/// `None` when there is nothing to fight.
+/// The enemy a monster keeps or finds, and whether it sees it (re-run every
+/// `AI_REACQUIRE_INTERVAL` ticks, cached between).
 #[inline(never)]
 #[optimize(size)]
-unsafe fn acquire(
+pub(crate) unsafe fn acquire_target(
     m: &Map,
     sight: &[phys::Mover],
     pi: usize,
     player_pos: [i32; 3],
     nprops: usize,
     wake: i32,
-) -> Option<(u8, bool, [i32; 3])> {
-    let (target, visible) = if ai_reacquire(pi) {
+) -> (u8, bool) {
+    if ai_reacquire(pi) {
         let selected =
             retained_actor_target(m, sight, pi, player_pos, nprops).unwrap_or_else(|| {
                 if prop_waits_for_trigger(pi) {
@@ -47,7 +47,22 @@ unsafe fn acquire(
         selected
     } else {
         (PROP_AI_TARGET[pi], prop_ai_target_visible(pi))
-    };
+    }
+}
+
+/// Keep or find the enemy and face it. Clears the actor's target and returns
+/// `None` when there is nothing to fight.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn acquire(
+    m: &Map,
+    sight: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    nprops: usize,
+    wake: i32,
+) -> Option<(u8, bool, [i32; 3])> {
+    let (target, visible) = acquire_target(m, sight, pi, player_pos, nprops, wake);
     let aim = if target == PROP_TARGET_NONE {
         None
     } else {
@@ -561,7 +576,7 @@ pub(crate) unsafe fn tick_ranged(
     match ty {
         6 => tick_hound(m, movers, sight, pi, player_pos, health, armor, nprops),
         7 => tick_squid(m, movers, sight, pi, player_pos, health, armor, nprops),
-        8 => tick_grunt(m, movers, sight, pi, player_pos, health, armor, nprops),
+        8 => monster_ai::tick(m, movers, sight, pi, player_pos, health, armor, nprops),
         9 => tick_slave(m, movers, sight, pi, player_pos, health, armor, nprops),
         _ => tick_shooter(
             m, movers, sight, pi, player_pos, health, armor, nprops, true,

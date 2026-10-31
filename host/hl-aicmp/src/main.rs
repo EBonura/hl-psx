@@ -123,8 +123,41 @@ fn analyse(text: &str, class: &str) -> Metrics {
     m
 }
 
+fn le32(d: &[u8], o: usize) -> i32 {
+    i32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
+}
+
+/// `hl-aicmp mdlseqs FILE.mdl`: every sequence of a studio model with its activity, length in 20 Hz ticks
+/// and animation events (frame converted to ticks), the source for the port's activity table.
+fn mdlseqs(path: &str) {
+    let d = fs::read(path).unwrap_or_else(|e| {
+        eprintln!("{path}: {e}");
+        std::process::exit(2)
+    });
+    let (n, base) = (le32(&d, 164) as usize, le32(&d, 168) as usize);
+    for i in 0..n {
+        let o = base + i * 176;
+        let label: String = d[o..o + 32].iter().take_while(|b| **b != 0).map(|b| *b as char).collect();
+        let fps = f32::from_le_bytes([d[o + 32], d[o + 33], d[o + 34], d[o + 35]]);
+        let (flags, act, nev, ev0, frames) =
+            (le32(&d, o + 36), le32(&d, o + 40), le32(&d, o + 48) as usize, le32(&d, o + 52) as usize, le32(&d, o + 56));
+        let ticks = if frames > 1 && fps > 0.0 { (frames - 1) as f32 / fps * 20.0 } else { 0.0 };
+        let mut ev = String::new();
+        for k in 0..nev {
+            let e = ev0 + k * 76;
+            let t = if frames > 1 { le32(&d, e) as f32 / (frames - 1) as f32 * ticks } else { 0.0 };
+            ev.push_str(&format!(" ev{}@{:.1}t", le32(&d, e + 4), t));
+        }
+        println!("{i:3} {label:<18} act={act:<3} fps={fps:<5} frames={frames:<4} loop={} ticks={ticks:.2}{ev}", flags & 1);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() == 3 && args[1] == "mdlseqs" {
+        mdlseqs(&args[2]);
+        return;
+    }
     if args.len() < 3 {
         eprintln!("usage: hl-aicmp summary|envelope OUT... [--class monster_human_grunt]");
         std::process::exit(2);

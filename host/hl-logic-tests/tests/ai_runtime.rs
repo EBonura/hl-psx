@@ -57,7 +57,7 @@ impl World for Mock {
     fn now(&self) -> u16 { self.now }
     fn rand(&mut self, _n: u32) -> u32 { 0 }
     fn skill_hard(&self) -> bool { false }
-    fn look(&mut self, _p: u8, enemy: u8) -> (u8, u32) {
+    fn look(&mut self, _p: u8, enemy: u8, _sounds: u16) -> (u8, u32) {
         if self.sees {
             let new = if enemy == NONE { cond::NEW_ENEMY } else { 0 };
             (0, cond::SEE_ENEMY | cond::CAN_RANGE_ATTACK1 | new)
@@ -70,16 +70,16 @@ impl World for Mock {
     fn danger_sound(&self, _p: u8) -> bool { false }
     fn set_activity(&mut self, _p: u8, _a: u8) {}
     fn seq_done(&self, p: u8) -> bool { self.seq_left[p as usize] == 0 }
-    fn face(&mut self, _p: u8, _e: bool) -> bool { true }
-    fn turn_by(&mut self, _p: u8, _d: i16) {}
+    fn face(&mut self, _p: u8, _e: bool, _y: &mut u16) -> bool { true }
+    fn turn_by(&mut self, _p: u8, _d: i16) -> u16 { 0 }
     fn stop(&mut self, p: u8) { self.moving[p as usize] = 0; }
     fn path_to(&mut self, _p: u8, _g: Goal, out: &mut [i16; 3]) -> bool { *out = [1, 2, 3]; true }
     fn begin_move(&mut self, p: u8, _run: bool) -> bool { self.moving[p as usize] = 6; true }
-    fn move_tick(&mut self, p: u8) -> Move {
+    fn move_tick(&mut self, p: u8, _goal: [i16; 3]) -> Move {
         let m = &mut self.moving[p as usize];
         if *m == 0 { Move::Done } else { *m -= 1; if *m == 0 { Move::Done } else { Move::Moving } }
     }
-    fn find_cover(&mut self, _p: u8, _f: Cover, _a: i32, _b: i32, out: &mut [i16; 3]) -> bool { *out = [9, 9, 9]; true }
+    fn find_cover(&mut self, _p: u8, _f: Cover, _a: i32, _b: i32, _o: &[[i16; 3]], out: &mut [i16; 3]) -> bool { *out = [9, 9, 9]; true }
     fn store_position(&self, _p: u8) -> [i16; 3] { [0; 3] }
     fn attack(&mut self, p: u8, _t: u8) { self.seq_left[p as usize] = 4; self.shots += 1; }
     fn custom(&mut self, _p: u8, _id: i16, _first: bool) -> (Task, u32) { (Task::Complete, 0) }

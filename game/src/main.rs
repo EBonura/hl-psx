@@ -49,6 +49,8 @@ mod gman_damage;
 mod gonarch;
 mod ground_logic;
 mod hecu_grenades;
+mod ai;
+mod monster_ai;
 mod hev;
 #[allow(dead_code)]
 mod proj_fx;
@@ -18358,6 +18360,9 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     let health_before = PROP_HEALTH[pi];
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
     PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+    if PROP_KIND[pi] == 8 {
+        monster_ai::damaged(pi, dmg);
+    }
     if MONSTER_TRIGGER_END != 0 {
         monster_damage_ai_triggers(pi);
     }
@@ -21066,6 +21071,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
             }
         }
     }
+    monster_ai::reset(m, PROP_COUNT.min(CARRY_MAILBOX_FIRST));
 }
 
 // Build exact candidate lists only after incoming actors have been appended or
@@ -21204,6 +21210,9 @@ unsafe fn tick_props(
             continue;
         }
         if PROP_HEALTH[pi] == 0 {
+            if ty == 8 {
+                monster_ai::died(pi);
+            }
             prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);
             PROP_STATE[pi] = PROP_STATE_DEAD;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
