@@ -24,6 +24,8 @@ const FACING: i32 = 114;
 static mut AI: Ai<ROWS> = Ai::new();
 static mut TABLES: Option<Tables> = None;
 static mut COVER_START: u8 = 0;
+/// Rounds left in each grunt's weapon (`m_cAmmoLoaded`).
+static mut AMMO: [u8; MAX_PROPS] = [0; MAX_PROPS];
 
 /// `(retail activity, prop state, ticks until the sequence reads finished)`. The ticks are the model's
 /// sequence length rounded up plus the two it takes the retail think to notice (`hl-aicmp mdlseqs`).
@@ -40,7 +42,7 @@ const ACTS: [(u8, u8, u8); 16] = [
     (26, PROP_STATE_IDLE, 14),
     (28, PROP_STATE_ATTACK, ATTACK_TICKS),
     (30, PROP_STATE_ATTACK, 20),
-    (32, PROP_STATE_IDLE, 37),
+    (32, PROP_STATE_IDLE, RELOAD_TICKS),
     (47, PROP_STATE_ATTACK, 16),
     (60, PROP_STATE_ATTACK, 23),
     (65, PROP_STATE_IDLE, 14),
@@ -51,6 +53,16 @@ const ATTACK_TICKS: u8 = 14;
 const SEQ_LEFT: u8 = 63;
 const SEQ_BURST: u8 = 0x40;
 const SEQ_KICK: u8 = 0x80;
+/// Rounds in a full magazine: the MP5 36, the shotgun 8.
+unsafe fn clip(pi: usize) -> u8 {
+    let weapons = hecu_grenades::weapons(GRUNT_GREN[pi]);
+    if weapons & 1 == 0 && weapons & 8 != 0 {
+        8
+    } else {
+        36
+    }
+}
+
 /// A walker is at its goal within this many units.
 const REACHED: i32 = 32;
 /// `prop_move_towards_point` speed that nets the retail run (9.5 units a tick).
@@ -61,6 +73,10 @@ const STUCK: u8 = 12;
 const WALK_LIMIT: u8 = 200;
 /// The kick lands at tick 8 of `frontkick`.
 const KICK_TICK: u8 = 8;
+/// `reload_mp5` is 35 ticks long and refills the weapon at tick 24 (`HGRUNT_AE_RELOAD`).
+const RELOAD_TICKS: u8 = 37;
+const RELOAD_TICK: u8 = 24;
+const SEQ_RELOAD: u8 = SEQ_BURST | SEQ_KICK;
 
 #[inline]
 fn row_enemy(target: u8) -> u8 {
@@ -101,6 +117,7 @@ pub(crate) unsafe fn reset(m: &Map, nprops: usize) {
     while pi < nprops {
         if PROP_KIND[pi] == KIND && PROP_HEALTH[pi] > 0 && PROP_DORMANT[pi] & PROP_RUNTIME_PRISONER == 0 {
             ai().claim(pi as u8, KIND, grenade_flags(pi));
+            AMMO[pi] = clip(pi);
         }
         pi += 1;
     }
@@ -206,6 +223,7 @@ unsafe fn row_of(m: &Map, pi: usize) -> Option<usize> {
         return Some(i);
     }
     let i = ai().claim(pi as u8, KIND, grenade_flags(pi))?;
+    AMMO[pi] = clip(pi);
     form_squad(m, i);
     Some(i)
 }
@@ -313,7 +331,11 @@ impl Guest<'_> {
     #[optimize(size)]
     unsafe fn events(&mut self, pi: usize, timer: u8) {
         let left = (timer & SEQ_LEFT) - 1;
-        if timer & SEQ_BURST != 0 {
+        if timer & SEQ_RELOAD == SEQ_RELOAD {
+            if RELOAD_TICKS - left == RELOAD_TICK {
+                AMMO[pi] = clip(pi);
+            }
+        } else if timer & SEQ_BURST != 0 {
             let elapsed = ATTACK_TICKS - left;
             if elapsed == 2 || elapsed == 4 {
                 self.shoot(pi, false);
@@ -339,6 +361,7 @@ impl Guest<'_> {
         let pos = PROP_POS[pi];
         let from = prop_eye(self.m, pi);
         let weapons = hecu_grenades::weapons(GRUNT_GREN[pi]);
+        AMMO[pi] = AMMO[pi].saturating_sub(1);
         if weapons & 1 == 0 && weapons & 8 != 0 {
             // A shotgun marine: one blast of `sk_hgrunt_pellets` pellets.
             if first {
@@ -564,6 +587,9 @@ impl World for Guest<'_> {
             }
             PROP_AI_TARGET[pi] = cur;
             let mut c = 0u32;
+            if AMMO[pi] == 0 {
+                c |= cond::NO_AMMO_LOADED;
+            }
             if sounds & snd::COMBAT != 0 && (*core::ptr::addr_of!(SOUNDS)).heard(PROP_POS[pi]).is_some() {
                 c |= cond::HEAR_SOUND;
             }
@@ -642,6 +668,7 @@ impl World for Guest<'_> {
             let flags = match act {
                 28 => SEQ_BURST,
                 30 => SEQ_KICK,
+                32 => SEQ_RELOAD,
                 _ => 0,
             };
             PROP_STATE[pi] = state;
