@@ -486,8 +486,8 @@ unsafe fn walk_props(p: &mut Port, m: Option<&Map>, tick: u16) {
                 | ((PROP_DORMANT[pi] | PROP_MAKER[pi] != 0) as u8) << 7;
         }
         p.b(&mut flags);
-        let mut dormant = PROP_DORMANT[pi.min(MAX_PROPS - 1)];
-        let mut maker = PROP_MAKER[pi.min(MAX_PROPS - 1)];
+        let mut dormant = PROP_DORMANT[pi.min(LIVE_PROPS - 1)];
+        let mut maker = PROP_MAKER[pi.min(LIVE_PROPS - 1)];
         if flags & 1 != 0 {
             if flags & 0x80 != 0 {
                 p.b(&mut dormant);
@@ -501,8 +501,8 @@ unsafe fn walk_props(p: &mut Port, m: Option<&Map>, tick: u16) {
         if flags & 2 != 0 {
             p.b(&mut health);
         }
-        let mut pos = PROP_POS[pi.min(MAX_PROPS - 1)];
-        let mut yaw = PROP_YAW[pi.min(MAX_PROPS - 1)];
+        let mut pos = PROP_POS[pi.min(LIVE_PROPS - 1)];
+        let mut yaw = PROP_YAW[pi.min(LIVE_PROPS - 1)];
         let follower = flags & 3 == 3 && flags & PROP_SCI_FOLLOWING != 0;
         if follower {
             let mut k = 0;

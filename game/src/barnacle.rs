@@ -103,7 +103,7 @@ pub(crate) unsafe fn tick(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut
                     return;
                 }
                 (player_pos, PLAYER_TOP)
-            } else if (victim as usize) < MAX_PROPS
+            } else if (victim as usize) < LIVE_PROPS
                 && PROP_ACTIVE[victim as usize] != 0
                 && PROP_HEALTH[victim as usize] > 0
             {

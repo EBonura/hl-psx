@@ -1106,7 +1106,7 @@ unsafe fn lay_baby(m: &Map, parent: usize, at: [i32; 3]) -> bool {
     PROP_ANIM_CLIP[q] = PROP_ANIM_CLIP_FRESH;
     PROP_DORMANT[q] = 0;
     PROP_JUMP[q] = monsterjump::State::EMPTY;
-    PROP_FLIGHT[q] = air_navigation::Flight::EMPTY;
+    PROP_FLIGHT.release(q);
     PROP_ACTIVE[q] = 1;
     PROP_MAKER[q] = 0;
     PROP_NAME[q] = 0;
