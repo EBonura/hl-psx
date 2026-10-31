@@ -1,3 +1,7 @@
+# RED since the scripted-death landing (SCRIPT_EVENT_DEAD, hl-parity 10-31): the tape was recorded against a port whose c1a1f
+# slide zombie lived and clawed the player at the exit crawl. It now dies in its sequence, as in the reference, nothing shoves the
+# player into the hole and this absolute tape ends in c1a1f at (-12, y -1065), before the crawl. It needs a re-recorded playtest
+# (title to the c1a1b vent mouth), not a code change.
 # Embedded hull release: a hull sunk 4 to 6 units into the clip slab of the c1a1b vent mouth
 # (room 14) froze the player for good, because the unstick pass only reached 2 units.
 # The tape is a playtest on the shipping disc from the title (intro, menu, chapter select
