@@ -104,6 +104,14 @@ can stop against a wall one unit short of the value the retail engine reached).
 
 ## Gate expressions and closed-loop aim
 
+Gate requirement: a journey with `expr=` conditions (`chain-new-game.toml` and the `@aim`/`@kill` legs) needs a
+`psoxide-gate` built from PSoXide-emulator 1d4f6d4e or later, taken from `PATH` or `$PSOXIDE_GATE` (the build in
+`PSoXide-emulator/target/pgo/release` after `make build-pgo`). The gate is not chosen by `components.lock.json`: the lock's
+emulator revision only decides which emulator crates `.psoxide` hydrates, and it stays at 0e87b3a because 1d4f6d4e's frontend
+needs the `psx-webdisc` workspace dependency, which the pinned editor component's root `Cargo.toml` does not declare
+(`cargo hl-build sdk` fails on it). An older gate fails at once and says so (ABORTED, TOML parse error,
+unknown field "expr", 0 checks and 0 ticks). Do not read that as a journey failure; use a newer gate.
+
 Any `@hold`, `@wait` or `@assert` condition may be a psoxide-gate expression (`expr="..."`, integer reads of guest RAM,
 `let`, `abs`, `min`/`max`, `any`/`all`/`min` over index ranges; psoxide-gate TESTING.md, "Expression conditions"). Symbols named
 inside the expression are bound by `--map` like the `sym=` ones, and the text must not contain `#`. The c1a1a zombie corridor
