@@ -10899,6 +10899,16 @@ unsafe fn script_human_actor_blocked_fraction(
             && PROP_HEALTH[other] > 0
             && PROP_KIND[other] != PROP_TYPE_HOLO
         {
+            // Cheap reject on the position alone (no actor reaches 200 units past the segment).
+            let p = PROP_POS[other];
+            if p[0] < from[0].min(to[0]) - 200
+                || p[0] > from[0].max(to[0]) + 200
+                || p[2] < from[2].min(to[2]) - 200
+                || p[2] > from[2].max(to[2]) + 200
+            {
+                other += 1;
+                continue;
+            }
             let (mins, maxs) = actor_collision_bounds(PROP_KIND[other], PROP_POS[other]);
             if let Some(hit) = ground_logic::sweep_player_actor(from, to, mins, maxs, half) {
                 best = best.min(hit.frac);

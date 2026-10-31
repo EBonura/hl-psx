@@ -24,6 +24,10 @@ const FACING: i32 = 114;
 static mut AI: Ai<ROWS> = Ai::new();
 static mut TABLES: Option<Tables> = None;
 static mut COVER_START: u8 = 0;
+/// `SIM_NOW + 1` of the tick that last ran a cover search or a node route (0 = none yet).
+static mut SEARCHED_AT: u32 = 0;
+/// Rows whose think was pushed to the next tick.
+static mut DEFERRED: u32 = 0;
 /// Rounds left in each grunt's weapon (`m_cAmmoLoaded`).
 static mut AMMO: [u8; MAX_PROPS] = [0; MAX_PROPS];
 
@@ -342,7 +346,14 @@ pub(crate) unsafe fn tick(
             PROP_AI_TIMER[pi] = 0;
         }
     }
-    if (pi as u32).wrapping_add(AI_TICK) & 1 == 0 {
+    let bit = 1u32 << i;
+    let due = (pi as u32).wrapping_add(AI_TICK) & 1 == 0 || DEFERRED & bit != 0;
+    if due && SEARCHED_AT == SIM_NOW as u32 + 1 {
+        // Another monster already searched this tick: this think waits one tick (the original spreads
+        // its thinks over time, and one frame cannot afford two searches).
+        DEFERRED |= bit;
+    } else if due {
+        DEFERRED &= !bit;
         let _scope = Scope::new(0);
         ai().think(&mut w, &t, i, true);
         // `MonsterThink`: the schedule runs, then the monster moves, in the same think.
@@ -531,6 +542,7 @@ impl Guest<'_> {
     #[inline(never)]
     #[optimize(size)]
     unsafe fn local_move(&self, pi: usize, a: [i32; 3], b: [i32; 3], actors: bool) -> Local {
+        let _total = Scope::new(13);
         let floor = match prop_floor_y(self.m, pi, b) {
             Some(f) if (f - b[1]).abs() <= LAND_MAX => Some(f),
             _ => None,
@@ -592,6 +604,7 @@ impl Guest<'_> {
     #[inline(never)]
     #[optimize(size)]
     unsafe fn cut(&self, pi: usize, r: &mut Route, goal: [i32; 3]) {
+        let _scope = Scope::new(15);
         let n = nav_node_count(self.m);
         let start = pos32(r.start);
         let actors = r.flags & R_ENEMY == 0;
@@ -630,11 +643,15 @@ impl Guest<'_> {
         r.start = pos16(pos);
         r.wp = pos16(goal);
         r.goal = r.wp;
-        match self.local_move(pi, pos, goal, !enemy) {
-            Local::Valid => {
-                r.flags |= R_LAST;
-                return true;
-            }
+        let direct = self.local_move(pi, pos, goal, !enemy);
+        if direct == Local::Valid {
+            r.flags |= R_LAST;
+            return true;
+        }
+        // Past the direct walk is the costly part of a route: one per tick.
+        SEARCHED_AT = SIM_NOW as u32 + 1;
+        match direct {
+            Local::Valid => {}
             Local::Blocked { dist, tri: true } => {
                 if let Some(apex) = self.detour(pi, pos, goal, dist, !enemy) {
                     r.wp = pos16(apex);
@@ -645,8 +662,8 @@ impl Guest<'_> {
             }
             Local::Blocked { .. } => {}
         }
-        let src = if nav_node_count(self.m) == 0 { NAV_NODE_NONE } else { nav_nearest(self.m, self.sight, pi, pos, NAV_NEAREST_RANGE2) };
-        let dst = if src == NAV_NODE_NONE { NAV_NODE_NONE } else { nav_nearest(self.m, self.sight, pi, goal, NAV_NEAREST_RANGE2) };
+        let src = if nav_node_count(self.m) == 0 { NAV_NODE_NONE } else { self.nearest_node(pi, pos) };
+        let dst = if src == NAV_NODE_NONE { NAV_NODE_NONE } else { self.nearest_node(pi, goal) };
         if src == NAV_NODE_NONE || dst == NAV_NODE_NONE || self.route_len(src, dst as usize) >= i32::MAX / 2 {
             r.flags &= !R_BUILT;
             return false;
@@ -774,8 +791,8 @@ impl Guest<'_> {
         let max = if max == 0 { 784 } else { max };
         let min = min.min(max / 2);
         let pos = PROP_POS[pi];
-        let mine = nav_nearest(self.m, self.sight, pi, pos, NAV_NEAREST_RANGE2);
-        let theirs = nav_nearest(self.m, self.sight, pi, threat, NAV_NEAREST_RANGE2);
+        let mine = self.nearest_node(pi, pos);
+        let theirs = self.nearest_node(pi, threat);
         if mine == NAV_NODE_NONE {
             return None;
         }
@@ -786,7 +803,11 @@ impl Guest<'_> {
             let node = (k + COVER_START as usize) % n;
             COVER_START = (node + 1) as u8;
             k += 1;
-            if !nav_actor_node(self.m, pi, node) {
+            let usable = {
+                let _scope = Scope::new(12);
+                nav_actor_node(self.m, pi, node)
+            };
+            if !usable {
                 continue;
             }
             let at = self.m.nav_node(node).pos;
@@ -794,10 +815,18 @@ impl Guest<'_> {
             if d < min || d >= max {
                 continue;
             }
-            if actor_line_clear(self.m, self.sight, [at[0], at[1] + view, at[2]], eyes) {
+            let seen = {
+                let _scope = Scope::new(10);
+                actor_line_clear(self.m, self.sight, [at[0], at[1] + view, at[2]], eyes)
+            };
+            if seen {
                 continue;
             }
-            if (mine == theirs || self.route_len(mine, node) <= self.route_len(theirs, node))
+            let reach = {
+                let _scope = Scope::new(11);
+                mine == theirs || self.route_len(mine, node) <= self.route_len(theirs, node)
+            };
+            if reach
                 && Self::valid_cover(pi, at, others)
                 && self.build_route(pi, i, at, false)
             {
@@ -1040,6 +1069,7 @@ impl World for Guest<'_> {
 
     fn find_cover(&mut self, p: u8, from: Cover, min: i32, max: i32, others: &[[i16; 3]], out: &mut [i16; 3]) -> bool {
         let _scope = Scope::new(1);
+        unsafe { SEARCHED_AT = SIM_NOW as u32 + 1 };
         unsafe {
             let pi = p as usize;
             let pos = PROP_POS[pi];
@@ -1182,9 +1212,9 @@ impl Guest<'_> {
 
 /// Hblanks one monster's think and walk took: a histogram (0, 1, 2, 3-4, 5-8, 9-16, 17+; words 0 to
 /// 6) and the worst (word 7), then the worst of each scope (`Scope`): 1 find_cover, 2 look,
-/// 3 grenade_ok, 4 walk, 5 node_cover, 6 build_route, 7 actor_chord_blocked, 8 actor sweep, 9 detour; words 16 to
-/// 25 count the calls of each, words 27 to 35 sum their hblanks.
-static mut COST: [u16; 48] = [0; 48];
+/// 3 grenade_ok, 4 walk, 5 node_cover, 6 build_route, 7 actor_chord_blocked, 8 actor sweep, 9 detour; 10 los in node_cover, 11 route_len; 12 nav_actor_node, 13 local_move, 14 nav_nearest, 15 cut; words 16+slot hold the worst of each,
+/// 32+slot count the calls, 48+slot sum their hblanks.
+static mut COST: [u16; 64] = [0; 64];
 
 /// Times its scope with the hblank counter (which resets at vblank: a scope that spans one is skipped).
 struct Scope {
@@ -1211,14 +1241,12 @@ impl Drop for Scope {
 #[inline(never)]
 unsafe fn scope_end(slot: u8, started: u16) {
     let now = psx_io::timers::counter(psx_io::timers::Timer::Timer1);
-    if now < started {
-        return;
-    }
-    let d = now - started;
+    // The counter resets at vblank: a scope that spans one gains a frame of lines (263).
+    let d = if now >= started { now - started } else { now + 263 - started };
     let c = &mut *core::ptr::addr_of_mut!(COST);
-    core::ptr::write_volatile(&mut c[16 + slot as usize], c[16 + slot as usize].wrapping_add(1));
+    core::ptr::write_volatile(&mut c[32 + slot as usize], c[32 + slot as usize].wrapping_add(1));
     if slot > 0 {
-        let sum = &mut c[26 + slot as usize];
+        let sum = &mut c[48 + slot as usize];
         core::ptr::write_volatile(sum, sum.wrapping_add(d));
     }
     if slot == 0 {
@@ -1235,7 +1263,43 @@ unsafe fn scope_end(slot: u8, started: u16) {
         if d > c[7] {
             core::ptr::write_volatile(&mut c[7], d);
         }
-    } else if d > c[7 + slot as usize] {
-        core::ptr::write_volatile(&mut c[7 + slot as usize], d);
+    } else if d > c[16 + slot as usize] {
+        core::ptr::write_volatile(&mut c[16 + slot as usize], d);
+    }
+}
+
+impl Guest<'_> {
+    /// `nav_nearest` with the same answer (the node of least distance, the lowest index on a tie, whose
+    /// peek point is in the line of sight), found by trying candidates nearest first instead of
+    /// tracing every node that beats the best so far.
+    #[inline(never)]
+    #[optimize(size)]
+    unsafe fn nearest_node(&self, pi: usize, pos: [i32; 3]) -> u8 {
+        let _scope = Scope::new(14);
+        let n = nav_node_count(self.m);
+        let mut tried = [0u32; 8];
+        loop {
+            let mut best = (0i32, usize::MAX);
+            let mut i = 0usize;
+            while i < n {
+                if tried[i >> 5] & (1 << (i & 31)) == 0 && nav_actor_node(self.m, pi, i) {
+                    let node = self.m.nav_node(i).pos;
+                    let dy = node[1] + 8 - pos[1];
+                    let d2 = dist2_xz(pos, node) + dy * dy;
+                    if d2 < NAV_NEAREST_RANGE2 && (best.1 == usize::MAX || d2 < best.0) {
+                        best = (d2, i);
+                    }
+                }
+                i += 1;
+            }
+            if best.1 == usize::MAX {
+                return NAV_NODE_NONE;
+            }
+            tried[best.1 >> 5] |= 1 << (best.1 & 31);
+            let node = self.m.nav_node(best.1).pos;
+            if actor_line_clear(self.m, self.sight, pos, [node[0], node[1] + 8, node[2]]) {
+                return best.1 as u8;
+            }
+        }
     }
 }
