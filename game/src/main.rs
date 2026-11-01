@@ -13546,6 +13546,11 @@ unsafe fn logic_pre_tick(m: &Map, nlogic: usize, nents: usize, now: u16) {
                         0,
                         logic_state::CALLER_NONE,
                     );
+                } else if LOGIC_KIND[li] == map::LOGIC_FUNC_BREAKABLE {
+                    // A pressure plate's delayed Die(): logic_breakable_touch armed it with
+                    // WAITING, and this pass used to put it back to idle before the touch scan
+                    // could see the deadline, so the plate never broke.
+                    shatter_breakable(m, nlogic, nents, li, m.logic(li), now, 0);
                 }
             }
             scan += 1;
