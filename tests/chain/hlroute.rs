@@ -467,16 +467,19 @@ fn sign(v: i64) -> &'static str {
 
 /// Distance-and-slot key of the nearest living prop within `r` units (3D): `distance^2 * 256 + slot`, or
 /// 2000000000 when none is in range. The slot is the low byte.
-fn nearest_prop_expr(r: i64, kind: Option<i64>, below: Option<i64>) -> String {
+fn nearest_prop_expr(r: i64, kind: Option<i64>, below: Option<i64>, above: Option<i64>) -> String {
     let d2 = |i: &str| format!("(let qx = i32(PROP_POS[3 * {i}]) - i32(LOGIC_PLAYER_POS[0]), qy = i32(PROP_POS[3 * {i} + 2]) - i32(LOGIC_PLAYER_POS[2]), qz = i32(PROP_POS[3 * {i} + 1]) - i32(LOGIC_PLAYER_POS[1]) in qx * qx + qy * qy + qz * qz)");
     let kind = kind.map_or(String::new(), |k| format!(" && u8(PROP_KIND[i]) == {k}"));
     // `below=B`: skip props whose feet are more than B units under the player's centre (under the floor or on a
     // lower level, where a shot cannot reach them).
     let below = below.map_or(String::new(), |b| format!(" && i32(PROP_POS[3 * i + 1]) - i32(LOGIC_PLAYER_POS[1]) >= 0 - {b}"));
-    format!("min(i in 0..128: (u8(PROP_HEALTH[i]) > 0{kind}{below} && {} < {}) ? ({} * 256 + i) : 2000000000)", d2("i"), r * r, d2("i"))
+    // `above=A`: skip props whose feet are more than A units over the player's centre (a headcrab hanging in the
+    // ceiling is not hit by bullets until it drops, and a round spent on it never ends).
+    let above = above.map_or(String::new(), |a| format!(" && i32(PROP_POS[3 * i + 1]) - i32(LOGIC_PLAYER_POS[1]) <= {a}"));
+    format!("min(i in 0..128: (u8(PROP_HEALTH[i]) > 0{kind}{below}{above} && {} < {}) ? ({} * 256 + i) : 2000000000)", d2("i"), r * r, d2("i"))
 }
 
-/// `@aim|@kill prop=N | near=R [kind=K] [below=B] | rel=DX,DUP,DY [unless=R] | at=X,UP,Y [lat=4] [vlat=4] [aimup=0] [rounds=8] [timeout=150]`, and `@level [tol=48]`.
+/// `@aim|@kill prop=N | near=R [kind=K] [below=B] [above=A] | rel=DX,DUP,DY [unless=R] | at=X,UP,Y [lat=4] [vlat=4] [aimup=0] [rounds=8] [timeout=150]`, and `@level [tol=48]`.
 fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     let num = |k: &str, d: i64| -> Result<i64, String> {
@@ -506,6 +509,10 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         Some(k) => Some(k.parse().map_err(|_| format!("{head}: bad below"))?),
         None => None,
     };
+    let above: Option<i64> = match get("above") {
+        Some(k) => Some(k.parse().map_err(|_| format!("{head}: bad above"))?),
+        None => None,
+    };
     let target = if let Some(n) = get("prop") {
         let n: i64 = n.parse().map_err(|_| format!("{head}: bad prop"))?;
         AimTarget {
@@ -519,7 +526,7 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         // slot is found by the expression itself, so the same line serves any slot numbering. The target
         // is "dead" when nothing living is in range, so rounds that cannot find anything cost no ticks.
         let r: i64 = r.parse().map_err(|_| format!("{head}: bad near"))?;
-        let nearest = nearest_prop_expr(r, kind, below);
+        let nearest = nearest_prop_expr(r, kind, below, above);
         let slot = format!("(({nearest}) & 255)");
         AimTarget {
             x: format!("i32(PROP_POS[3 * {slot}])"),
@@ -539,7 +546,7 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         let dead = match get("unless") {
             Some(r) => {
                 let r: i64 = r.parse().map_err(|_| format!("{head}: bad unless"))?;
-                format!("({}) < 2000000000", nearest_prop_expr(r, kind, below))
+                format!("({}) < 2000000000", nearest_prop_expr(r, kind, below, above))
             }
             None => "0".into(),
         };
@@ -603,7 +610,7 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     Ok(out)
 }
 
-/// `@fight near=R [kind=K] [below=B] [reload=N] [for=300] [sleep=10] [stance=DX,DUP,DY] [lat=8] [aimup=0] [rounds=3]`: a guard that
+/// `@fight near=R [kind=K] [below=B] [reload=N] [reloadquiet=R] [for=300] [sleep=10] [stance=DX,DUP,DY] [lat=8] [aimup=0] [rounds=3]`: a guard that
 /// shoots whatever living prop (of `kind`) comes within `near` units, nearest first, for `for` polls. Each
 /// round is `@kill near=` (no cost when nothing is in range), `sleep` neutral polls, and, when a `stance` is
 /// given, `@aim rel=` back to the direction the enemies come from (skipped at once while one is in range).
@@ -618,7 +625,7 @@ fn fight_items(kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     let (sleep, total) = (num("sleep", 10)?.max(1), num("for", 300)?);
     let mut kill: Vec<(String, String)> = vec![("near".into(), near.clone()), ("rounds".into(), num("rounds", 3)?.to_string())];
     kill.push(("lat".into(), num("lat", 8)?.to_string()));
-    for k in ["kind", "below", "aimup", "vlat"] {
+    for k in ["kind", "below", "above", "aimup", "vlat"] {
         if let Some(v) = get(k) {
             kill.push((k.into(), v));
         }
@@ -638,7 +645,17 @@ fn fight_items(kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         // Reload when the magazine is under `reload` rounds (ends at once when it is not).
         let mut sample = Sample::default();
         sample.buttons = button_for("reload").unwrap();
-        let until = expr_cond(format!("i16(LOGIC_PLAYER_CLIP_AMMO) >= {topup} || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0"));
+        // `reloadquiet=R` skips the reload while a target is within R units: a reload costs about two seconds
+        // of not shooting, which is the wrong time for it with a crab on the way.
+        let mut cond = format!("i16(LOGIC_PLAYER_CLIP_AMMO) >= {topup} || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0");
+        let quiet_r = num("reloadquiet", 0)?;
+        if quiet_r > 0 {
+            let kind: Option<i64> = get("kind").and_then(|v| v.parse().ok());
+            let below: Option<i64> = get("below").and_then(|v| v.parse().ok());
+            let above: Option<i64> = get("above").and_then(|v| v.parse().ok());
+            cond = format!("{cond} || ({}) < 2000000000", nearest_prop_expr(quiet_r, kind, below, above));
+        }
+        let until = expr_cond(cond);
         round.push(Item::Hold { sample, until, timeout: 80 });
     }
     round.extend(aim_items("@kill", &kill)?);
@@ -652,7 +669,8 @@ fn fight_items(kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         let near_n: i64 = near.parse().map_err(|_| "@fight: bad near".to_string())?;
         let kind: Option<i64> = get("kind").and_then(|v| v.parse().ok());
         let below: Option<i64> = get("below").and_then(|v| v.parse().ok());
-        let quiet = format!("({}) >= 2000000000", nearest_prop_expr(near_n, kind, below));
+        let above: Option<i64> = get("above").and_then(|v| v.parse().ok());
+        let quiet = format!("({}) >= 2000000000", nearest_prop_expr(near_n, kind, below, above));
         let end = end.trim_matches('"');
         let until = expr_cond(format!("({end}) && {quiet}"));
         let max_iter = (total / (sleep + 1) + 1) as u32;

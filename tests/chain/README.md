@@ -147,7 +147,10 @@ any slot numbering and costs no ticks while nothing is in range. `@aim rel=DX,DU
 relative to the player (a stance: where the enemies come from; `unless=R` ends it at once when a prop is within R).
 `@fight near=R [kind=K] [below=B] [aimup=N] [lat=8] [stance=DX,DUP,DY] [reload=N] [for=300] [sleep=10]` is a guard for `for` polls:
 each round shoots whatever is in range (`@kill near=`), sleeps, and goes back to the stance; `reload=N` reloads when the magazine
-is under N. Without `until` the loop is unrolled at compile time; with `until="EXPR"` the round is written once as a gate block and
+is under N, `reloadquiet=R` skips that reload while a target is within R units (a reload is about two seconds of not shooting: do it in a
+lull, not with a crab on the way), and `above=A` ignores props whose feet are more than A over the player's centre (a headcrab hanging in
+the ceiling is not hit by bullets until it drops, and a round spent shooting at it ends only by timeout, which aborts the journey; `@kill`
+and `@aim near=` take `above=` too). Without `until` the loop is unrolled at compile time; with `until="EXPR"` the round is written once as a gate block and
 repeated until EXPR holds and nothing of that kind is in range, at most `for` polls (a gate that has loops is needed: PSoXide-emulator
 358eae9a or later). c1a1c uses it for the headcrab gauntlet on the lift
 (`@fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=6`).

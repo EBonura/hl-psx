@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- stage-c1a1d no longer depends on where a full-stick hold happened to stop. Its run-up turns in single steps to a yaw of 1..29 (the drift over the run is at most 15 units), the lower crate leg and the two ledge stops are `@align` bands on x, the drop to the ledge is a jump from x 1425 (the ledge is x 1592..1768), and the arrival check is a band. It passes on the intro and no-intro discs of 18c02cf and on the 606d1b7 disc. The headcrab gauntlet in chain-new-game reloads in a lull (`reloadquiet=330`, reload under 11 rounds) instead of at 6 rounds with a crab on the way: the old line lost all 60 health on the shared PGO gate (a reload is two seconds of not shooting). hlroute `@fight`/`@kill`/`@aim` take `above=A` (ignore a prop hanging more than A over the player: bullets do not hit a ceiling headcrab and the round ends only by a timeout, which aborts the journey) and `@fight` takes `reloadquiet=R`.
+
 - Journeys are bound to the final PGO layout (r6). stage-c1a1c-return settles at the door on a RAM band (`@align`) instead of two full-stick holds that stopped 16 units apart on different builds. Known reds on this layout, all timing: stage-c1a1d (run-up jump chain after c11, divergence recorded in its route), parity-c1a1b-grate-rise (tuned first wait), chain-new-game (c1a1c gauntlet loop, red on the 82fee48 base as well), plus the older hazard-panels, parity-c1a1b-exit-grate and unstick-vent.
 
 - A bullet can hurt a barnacle that has not been drawn yet. The render-only occlusion probe tests a ray to the actor's origin, which for a barnacle sits inside the ceiling brush it hangs from, so the actor was rejected from almost every camera position and an undrawn actor takes no damage. Barnacles (kind 12) no longer use the probe.

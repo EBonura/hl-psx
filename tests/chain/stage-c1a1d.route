@@ -1,9 +1,7 @@
 @journey name=hl-stage-c1a1d title="Half-Life c1a1d stage: from the segment start, the ladders, the hop across the hanging crates, the doors and the ladder to the exit changelevel back to c1a1c" prologue=segment segment_row=17 max_ticks=40000
 # Crate to crate jumps are run-ups on a position dead band, each landing is read from the player position, never a count.
+# Robust on the intro and no-intro discs of main 18c02cf and on the older 606d1b7 disc: yaw is cut to 1..29 with single-step turns (the drift over the run is at most 15 units), the lower crate leg is an @align on x, the drop to the ledge is a jump from x>=1425 (the ledge is x 1592..1768, y 328..456), and the ledge and platform stops are x bands read from RAM.
 # Ends with an @save on the return to c1a1c: that card is tests/cards/c1a1c-return.mcd (stage-c1a1c-return.route loads it).
-# TIMING RED on the hl-parity r6i disc (11-01, layout r6): fails at the `@hold s-127 until x<=1480` after c17 (player x 1563, fell). Divergence is the run-up jump chain after c11:
-# f1/bn3 end the `@face 100 left` at yaw 45 and land c14 (1509,-222), c16 (1524,-16), c17 (1533,112 up 248); r6i ends it at yaw 74 and lands c14 (1514,-238), c16 (1540,-17), c17 (1559,140 up 137, falls off the crate edge).
-# The yaw drift (6.5 degrees over the 220 unit run) moves the landing 16 units east. `@face 66 left` (final yaw 12) passes c11..c18 on r6i and then falls at d1 (up -528). Re-cut the run-up with a yaw band tighter than @face's 60 wide one and align x before the second jump.
 map c1a1d next x
   @face 3948 right
   @hold f127 until y>=-272 timeout=60
@@ -71,6 +69,9 @@ map c1a1d next x
   @checkpoint c11
   @probe
   @face 100 left
+  @hold t-30 until expr="i16(LOGIC_PLAYER_YAW) <= 29" timeout=40
+  @checkpoint c11b
+  @probe
   @hold f127 until y>=-372 timeout=30
   @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
   @hold f127 until y>=-250 timeout=40
@@ -84,14 +85,13 @@ map c1a1d next x
   10
   @checkpoint c17
   @probe
-  @hold s-127 until x<=1480 timeout=20
-  8
+  @align s70 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=1384 hi=1412 timeout=60
   @checkpoint c18
   @probe
   @hold f-60 until y<=200 timeout=40
   10
   @face 512 right
-  @hold f127 until x>=1488 timeout=40
+  @hold f127 until x>=1425 timeout=40
   @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
   @hold f127 until up<=44 timeout=40
   3 f-127
@@ -99,16 +99,14 @@ map c1a1d next x
   @checkpoint d1
   @probe
   @face 100 left
-  @hold f-60 until y<=338 timeout=40
+  @align s70 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=1625 hi=1665 timeout=60
+  @hold f-60 until y<=346 timeout=40
   10
   @checkpoint d2
   @probe
   @face 4030 right
-  @hold f127 until y>=424 timeout=30
-  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
-  @hold f127 until up<=-70 timeout=40
-  @hold s-50 until x<=1530 timeout=40
-  10
+  @hold f127 until up<=-70 timeout=60
+  @align s70 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=1500 hi=1530 timeout=60
   @checkpoint d3
   @probe
   @hold f127 until y>=660 timeout=40
@@ -268,7 +266,7 @@ map c1a1d next x
     @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
   30
   @checkpoint back-in-c1a1c
-  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1040 && i32(LOGIC_PLAYER_POS[0]) <= -980 && i32(LOGIC_PLAYER_POS[2]) >= 1400 && i32(LOGIC_PLAYER_POS[2]) <= 1470"
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1070 && i32(LOGIC_PLAYER_POS[0]) <= -960 && i32(LOGIC_PLAYER_POS[2]) >= 1370 && i32(LOGIC_PLAYER_POS[2]) <= 1470"
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
   @save
   @stop

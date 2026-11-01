@@ -2284,7 +2284,7 @@ map c1a1c next c1a1d
   @checkpoint qy1
   @probe
   @aim rel=0,-20,-300 lat=20 vlat=40 timeout=60
-  @fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=6 until="i16(TRAIN_OFF[2]) >= 1890"
+  @fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=11 reloadquiet=330 until="i16(TRAIN_OFF[2]) >= 1890"
   @checkpoint qz1
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
