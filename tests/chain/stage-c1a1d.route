@@ -1,6 +1,9 @@
 @journey name=hl-stage-c1a1d title="Half-Life c1a1d stage: from the segment start, the ladders, the hop across the hanging crates, the doors and the ladder to the exit changelevel back to c1a1c" prologue=segment segment_row=17 max_ticks=40000
 # Crate to crate jumps are run-ups on a position dead band, each landing is read from the player position, never a count.
 # Ends with an @save on the return to c1a1c: that card is tests/cards/c1a1c-return.mcd (stage-c1a1c-return.route loads it).
+# TIMING RED on the hl-parity r6i disc (11-01, layout r6): fails at the `@hold s-127 until x<=1480` after c17 (player x 1563, fell). Divergence is the run-up jump chain after c11:
+# f1/bn3 end the `@face 100 left` at yaw 45 and land c14 (1509,-222), c16 (1524,-16), c17 (1533,112 up 248); r6i ends it at yaw 74 and lands c14 (1514,-238), c16 (1540,-17), c17 (1559,140 up 137, falls off the crate edge).
+# The yaw drift (6.5 degrees over the 220 unit run) moves the landing 16 units east. `@face 66 left` (final yaw 12) passes c11..c18 on r6i and then falls at d1 (up -528). Re-cut the run-up with a yaw band tighter than @face's 60 wide one and align x before the second jump.
 map c1a1d next x
   @face 3948 right
   @hold f127 until y>=-272 timeout=60

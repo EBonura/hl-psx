@@ -1,6 +1,7 @@
 @journey name=hl-parity-c1a1b-grate-rise title="Half-Life c1a1b: a swimmer rising at full speed under the exit grate (floor_grate2, a 4 unit func_train with dmg 500) is stopped by it while it lifts and slides away, and rises out unhurt, as in the reference (ref/rise.out: held about 30 ticks under it with health intact); the port let the lip step walk him through it and the blocked-train damage killed him" prologue=segment segment_row=15 max_ticks=80000
 
 # TIMING FRAGILE: the first wait (107 polls) is tuned on the build this journey landed with (intro disc 5979c41be044). A rebuilt disc shifts the doorway, rim and valve legs of this c1a1b block (the same fragility as c1a1b-exit-grate.route and hl-chain's c1a1b legs): when it goes red before the checkpoint `under`, vary that wait (the run takes 25 s, explore/tunegr.sh in the lane tried 100..110) before suspecting the swim code. The checks that matter are `under`, `held` and `out`.
+# 11-01 r6i (layout r6): red on that disc for every first wait 98..124 (step 669 stops at the rim x 1530 for waits 99,100,105,107,116,117,122; waits 111,115,123 run to the end with HP 20 under the 40 floor of `under`/`held`). Not in the gate set; re-tune with explore/tunegr.sh or make the rim leg read the door and the swimmer's HP.
 
 map c1a1b next x
   107

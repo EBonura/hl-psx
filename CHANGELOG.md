@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Journeys are bound to the final PGO layout (r6). stage-c1a1c-return settles at the door on a RAM band (`@align`) instead of two full-stick holds that stopped 16 units apart on different builds. Known reds on this layout, all timing: stage-c1a1d (run-up jump chain after c11, divergence recorded in its route), parity-c1a1b-grate-rise (tuned first wait), chain-new-game (c1a1c gauntlet loop, red on the 82fee48 base as well), plus the older hazard-panels, parity-c1a1b-exit-grate and unstick-vent.
+
 - A bullet can hurt a barnacle that has not been drawn yet. The render-only occlusion probe tests a ray to the actor's origin, which for a barnacle sits inside the ceiling brush it hangs from, so the actor was rejected from almost every camera position and an undrawn actor takes no damage. Barnacles (kind 12) no longer use the probe.
 
 - A barnacle can be clubbed. Its aim point was 32 units above its origin, inside the ceiling it hangs from, so every crowbar swing was stopped by the world before it; the aim point is now 16 below the origin (the middle of the retail hull). In the c1a2 soda room one crowbar swing at the top of the haul kills the barnacle over the corridor, which the new parity-barnacle journey checks. Bullets still miss it (docs/parity BN06). Data only: no code changes, same layout.

@@ -18,9 +18,7 @@ map c1a1c next x
   8
   @face 2048 right
   @hold f127 until y<=1140 timeout=100
-  @hold f40 until y<=1100 timeout=40
-  @hold f-40 until y>=1084 timeout=40
-  12
+  @align f-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=1080 hi=1096 timeout=40
   @checkpoint south-passage
   @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -1110 && i32(LOGIC_PLAYER_POS[0]) <= -1056 && i32(LOGIC_PLAYER_POS[2]) >= 1068 && i32(LOGIC_PLAYER_POS[2]) <= 1100"
   @face 3072 left
