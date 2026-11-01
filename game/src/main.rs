@@ -7887,9 +7887,17 @@ unsafe fn pushable_sweep_fraction(
 fn pushable_player_overlap(e: map::Ent, player: &phys::Player) -> bool {
     let c = pushable_world_center(e, e.origin);
     let h = pushable_half_extents(e);
+    // The player's feet (origin minus the hull half height) reach the cart's top. Testing the
+    // origin instead left a standing player 2 units above any cart lower than 34 units, so
+    // c1a2's 32-unit crate never counted as touched and could not be pushed.
+    let half_height = if player.crouch {
+        PLAYER_DUCK_HALF_HEIGHT
+    } else {
+        PLAYER_HULL_HALF_HEIGHT
+    };
     player.pos[0] - 18 <= c[0] + h[0]
         && player.pos[0] + 18 >= c[0] - h[0]
-        && player.pos[1] <= c[1] + h[1] + 2
+        && player.pos[1] - half_height <= c[1] + h[1] + 2
         && player.pos[1] + 56 >= c[1] - h[1] - 2
         && player.pos[2] - 18 <= c[2] + h[2]
         && player.pos[2] + 18 >= c[2] - h[2]
