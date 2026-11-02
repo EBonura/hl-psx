@@ -1,0 +1,175 @@
+@journey name=hl-stage-c1a2-part2 title="Half-Life c1a2 stage, part 2: from the part 1 card, the ceiling panel, the corridor crabs, the crate stack, the ladder, the ledge above it, the hatch and the duct, ending hidden behind the broken vent cover with an @save" prologue=load card_fixture=tests/cards/c1a2-part1.mcd card_sha256=1d29253bf461fe3c9b703fc9cafd8b73a2db50cfcdcc44b78c21a14ebbdcbea3 sync=poll max_ticks=40000
+# Part 2 of c1a2 (card tests/cards/c1a2-part1.mcd). The panel *2 breaks under the crouched player (pressure) or the crowbar; three ceiling crabs wake
+# at x ~475 (shoot them from the south side, the crate *4 blocks the line from y -790); the big crate *4 is pushed west, the small crate *29 east, the stack is
+# climbed with two running jumps; ladder *93 is climbed holding forward (view level) to its top (up -317, head against the ceiling); JUMP OFF it (held jump
+# = the retail dismount, lands on the ledge (146,-832,-340) in both the retail oracle and here); the ledge leads to a dead-end corridor, whose floor hatch *89
+# (ENT 74) breaks to a crouched swing straight down; the duct below runs west to the vent cover *88 (ENT 73); the player ends behind it at x -65, hidden from the
+# security gun (the gun sees the opening for x < -90: do not cross the trigger *86 there at low health).
+map c1a2 next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  3 flash
+  @hold duck f60 until x>=620 timeout=40
+  15 duck
+  @weapon crowbar
+  @aim at=640,-444,-860 timeout=80
+  10 duck
+  @swing ent=1 duck=true timeout=40
+  @level
+  @weapon glock dir=next
+  @checkpoint dropped
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  60
+  @face 3070 right
+  @checkpoint turned
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold s-127 until y<=-880 timeout=40
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=40 sleep=9 reload=11 reloadquiet=200
+  @checkpoint aligned
+  @probe
+  @hold f127 until x<=520 timeout=80
+  20
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=9 reload=11 reloadquiet=200
+  @hold f127 until x<=440 timeout=40
+  20
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=9 reload=11 reloadquiet=200
+  @hold f127 until x<=380 timeout=40
+  20
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=100 sleep=9 reload=11 reloadquiet=200
+  @checkpoint atbox
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold f127 until x<=360 timeout=40
+  @align s100 sym=LOGIC_PLAYER_POS offset=8 size=4 signed=true lo=-812 hi=-788 timeout=60
+  @face 3070 right
+  @hold f127 until x<=345 timeout=40
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=40 sleep=9 reload=11 reloadquiet=200
+  @hold f127 until expr="i32(ENT_CACHE[33]) <= -124" timeout=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=40 sleep=9 reload=11 reloadquiet=200
+  @checkpoint pushed
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @assert sym=ENT_CACHE offset=132 size=4 signed=true op=between value=-100000 value_hi=100000
+  @assert sym=ENT_CACHE offset=140 size=4 signed=true op=between value=-100000 value_hi=100000
+  20
+  @checkpoint settled
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold f-127 until x>=260 timeout=40
+  @checkpoint back
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold s-127 until y<=-840 timeout=40
+  @checkpoint south
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold f127 until x<=-60 timeout=100
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=40 sleep=9 reload=11 reloadquiet=200
+  @checkpoint west
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @align s100 sym=LOGIC_PLAYER_POS offset=8 size=4 signed=true lo=-818 hi=-790 timeout=60
+  @face 1018 left
+  @checkpoint behind
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold f127 until expr="i32(ENT_CACHE[353]) >= 100" timeout=150
+  20 f127
+  @checkpoint settledsmall
+  @probe
+  @level
+  @face 1018 left
+  @hold f127 jump until x>=104 timeout=30
+  20
+  @checkpoint onsmall
+  @probe
+  @assert sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=between value=-520 value_hi=-495
+  @hold f127 jump until x>=140 timeout=30
+  20
+  @checkpoint onbig
+  @probe
+  @assert sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=between value=-490 value_hi=-460
+  @hold f-60 until x<=170 timeout=30
+  20
+  @checkpoint backoff
+  @probe
+  @face 80 left
+  @level
+  @checkpoint northface
+  @probe
+  @hold f127 until sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=ge value=-440 timeout=60
+  @checkpoint l440
+  @probe
+  @hold f127 until sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=ge value=-400 timeout=60
+  @checkpoint l400
+  @probe
+  @hold f127 until sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=ge value=-360 timeout=60
+  @checkpoint l360
+  @probe
+  @hold f127 until sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=ge value=-320 timeout=60
+  @checkpoint l320
+  @probe
+  @hold f127 until sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=ge value=-318 timeout=60
+  @checkpoint top
+  @probe
+  3 jump
+  @checkpoint j3
+  @probe
+  10
+  @checkpoint j13
+  @probe
+  40
+  @checkpoint ledge
+  @probe
+  @hold s-127 until x<=118 timeout=30
+  @checkpoint w
+  @probe
+  @hold f127 s-100 until y>=-778 timeout=60
+  @checkpoint nw
+  @probe
+  @hold s-127 until x<=60 timeout=40
+  @checkpoint w2
+  @probe
+  @hold f60 until y>=-740 timeout=60
+  @align f50 sym=LOGIC_PLAYER_POS offset=8 size=4 signed=true lo=-715 hi=-695 timeout=60
+  @checkpoint above
+  @probe
+  @weapon crowbar
+  @aim at=19,-378,-704 timeout=80
+  @checkpoint aimed
+  @probe
+  10 duck
+  @swing ent=74 duck=true timeout=60
+  @checkpoint hit
+  @probe
+  20
+  @checkpoint after
+  @probe
+  @weapon glock dir=next
+  @level
+  @face 3070 right
+  @checkpoint facew
+  @probe
+  @hold f127 duck until x<=-50 timeout=80
+  20 duck
+  @checkpoint crawl
+  @probe
+  @weapon crowbar
+  @aim at=-95,-420,-704 timeout=80
+  @checkpoint aimed2
+  @probe
+  @swing ent=73 duck=true timeout=60
+  @checkpoint hit2
+  @weapon glock dir=next
+  @level
+  30 duck
+  @checkpoint duct-end
+  @probe
+  @assert sym=ENT_ACTIVE offset=74 size=1 op=eq value=0
+  @assert sym=ENT_ACTIVE offset=73 size=1 op=eq value=0
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -80 && i32(LOGIC_PLAYER_POS[0]) <= -50 && i32(LOGIC_PLAYER_POS[2]) >= -725 && i32(LOGIC_PLAYER_POS[2]) <= -695"
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 15"
+  @save
+  @stop
