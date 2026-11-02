@@ -27,27 +27,27 @@ map c1a2 next x
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s-127 until y<=-880 timeout=40
-  @fight near=300 kind=2 below=100 above=40 aimup=6 for=40 sleep=3 reload=11 reloadquiet=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=40 sleep=9 reload=11 reloadquiet=200
   @checkpoint aligned
   @probe
   @hold f127 until x<=520 timeout=80
   20
-  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=9 reload=11 reloadquiet=200
   @hold f127 until x<=440 timeout=40
   20
-  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=9 reload=11 reloadquiet=200
   @hold f127 until x<=380 timeout=40
   20
-  @fight near=300 kind=2 below=100 above=40 aimup=6 for=100 sleep=3 reload=11 reloadquiet=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=100 sleep=9 reload=11 reloadquiet=200
   @checkpoint atbox
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f127 until x<=300 timeout=100
-  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=9 reload=11 reloadquiet=200
   @hold f127 until x<=220 timeout=100
-  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=9 reload=11 reloadquiet=200
   @hold f127 until x<=150 timeout=100
-  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=9 reload=11 reloadquiet=200
   @align s100 sym=LOGIC_PLAYER_POS offset=8 size=4 signed=true lo=-812 hi=-796 timeout=100
   @face 3070 right
   @checkpoint east
