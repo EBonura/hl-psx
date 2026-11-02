@@ -1,4 +1,4 @@
-@journey name=hl-stage-c1a2-part1 title="Half-Life c1a2 stage, part 1: from the elevator arrival, the hall grate and duct, the soda room barnacle, the lounge switch, the hall window, the flooded room vent, the shaft and the cover, ending with an @save beyond the cover" prologue=segment segment_row=18 max_ticks=60000
+@journey name=hl-stage-c1a2-part1 title="Half-Life c1a2 stage, part 1: from the elevator arrival, the hall grate and duct, the soda room barnacle, the lounge switch, the hall window, the flooded room vent, the shaft and the cover, ending with an @save beyond the cover" prologue=segment segment_row=18 boot_wait=102 max_ticks=60000
 # Part 1 of c1a2 (about 12,000 ticks). Walkthrough order (Danny Cox ch.4): the lift, west to the hall, the wire kills headcrabs, the
 # grate *74 in the hall's north wall (crowbar), the duct to the soda room (cover *75 at its end, the barnacle that hauls the scientist
 # is clubbed from its tongue column), the lounge switch *152 (kills the hall wire and the fan), back to the hall, window *1 (crowbar
@@ -221,8 +221,7 @@ map c1a2 next x
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-964 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-936 timeout=40
   @hold f38 s-121 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-920 timeout=45
-  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2735 timeout=40
-  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=2763 timeout=40
+  # (the x 2735..2763 dead band that stood here stopped the player dead at (2789,-897) on most boot phases (a dynamic blocker, probably the rotating door *71 at (2712,-904)); the hold below is already past it)
   @hold f38 s-121 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-878 timeout=45
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2748 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=2776 timeout=40

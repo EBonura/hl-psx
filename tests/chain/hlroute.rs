@@ -1215,7 +1215,13 @@ fn compile(o: &Opts) -> Result<(), String> {
         if prologue == "new_game" || prologue == "hazard" || prologue == "segment" || prologue == "load" {
             // A disc with the intro stage opens with the studio splash and then the
             // movie, each skipped with Start; a disc without them ignores the presses.
-            t.push_str("\n[[step]]\nlabel = \"skip the studio splash and the startup movie, if the disc has them\"\nwait = 100\n");
+            // `boot_wait=N`: gate ticks idled before the first Start press (default 100). The closed-loop
+            // legs of a long route react to the video frame they happen to see, so the CD and render phase
+            // at the map's first tick (a function of this wait and of the disc build) decides whether a
+            // narrow leg lands; a build that flips a journey is retuned by one number here, not by hand
+            // edits in the generated toml (hl-chain/sweep.sh TOML LINE DISC TAG N... tries several).
+            let boot_wait: u32 = jv("boot_wait").and_then(|v| v.parse().ok()).unwrap_or(100);
+            let _ = writeln!(t, "\n[[step]]\nlabel = \"skip the studio splash and the startup movie, if the disc has them\"\nwait = {boot_wait}");
             t.push_str("\n[[step]]\npress = [\"start\"]\nhold = 8\nwait = 62\n");
             t.push_str("\n[[step]]\npress = [\"start\"]\nhold = 8\nwait = 200\n");
             t.push_str("\n[[step]]\nlabel = \"boot to the title\"\nwait = 620\n");

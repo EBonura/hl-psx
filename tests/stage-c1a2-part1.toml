@@ -27,7 +27,7 @@ WORLD_ARENA = 0x800e68e8
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
-wait = 101
+wait = 102
 
 [[step]]
 press = ["start"]
@@ -2036,20 +2036,6 @@ rstick = [128, 128]
 press = []
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=-920 }
 timeout = 270
-
-[[step]]
-lstick = [128, 58]
-rstick = [128, 128]
-press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=2735 }
-timeout = 240
-
-[[step]]
-lstick = [128, 198]
-rstick = [128, 128]
-press = []
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=2763 }
-timeout = 240
 
 [[step]]
 lstick = [7, 90]

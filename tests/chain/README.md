@@ -68,6 +68,24 @@ journey and every tape with the committed ones. Run it after any route or compil
 matches its route fails here instead of as a red chain run (the committed journey was once a compile older than
 its route and broke at a leg that the route had already fixed).
 
+## Boot phase: `boot_wait=N`
+
+A closed-loop leg (`@hold ... until`) is read by the gate once per video frame, while the game ticks once per three
+frames and catches up in bursts when a frame runs long. Which frame of a burst the gate sees decides when a stick is
+released, so a leg ends within one tick of where its dead band expects, and the burst pattern depends on the CD and
+render phase at the map's first tick. That phase moves with the disc build and with the leading wait of the prologue,
+which is why `chain-new-game` and `stage-c1a2-part1` used to flip between builds (a sweep of the leading wait on one
+disc passed at 1 value in 5 or 10 and failed in different legs for the others; the far-end failures were real obstacles
+the legs touched at some phases: at c1a2 (2789,-897) the player is stopped dead walking west, with a free static hull there
+and no prop near, most likely the rotating door *71/*72 at (2712,-904) swung into the lounge).
+
+`prologue=new_game boot_wait=99` (any prologue; default 100) sets the gate ticks idled before the first Start press, in the
+route, so a retune is one number and a regeneration reproduces the committed toml byte for byte. When a new disc turns
+one of these journeys red, run `hl-chain/sweep.sh TOML LINE DISCDIR TAG N...` (the leading `wait` is the first one in the toml)
+over a handful of values and put the first green one into the route. The permanent fix is closed-loop legs that look at
+the game once per poll instead of once per frame (a gate change); until then keep dead bands wide and keep legs away
+from moving brush entities.
+
 ## Prologues, `@face`, `@probe` and the segment table
 
 `@journey ... prologue=new_game` presses New Game on the title. Two more prologues exist for routes that do not start

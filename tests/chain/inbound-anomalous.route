@@ -1,4 +1,4 @@
-@journey name=hl-chain-new-game title="Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, c1a0c (lift, console scientist, retinal door, control room), Unforeseen Consequences' c1a1 (pipe room, two lasers, the glass window, the elevator shaft ladder) to the arrival in c1a1a" prologue=new_game max_ticks=260000
+@journey name=hl-chain-new-game title="Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, c1a0c (lift, console scientist, retinal door, control room), Unforeseen Consequences' c1a1 (pipe room, two lasers, the glass window, the elevator shaft ladder) to the arrival in c1a1a" prologue=new_game boot_wait=99 max_ticks=260000
 
 
 map c0a0 next c0a0a
