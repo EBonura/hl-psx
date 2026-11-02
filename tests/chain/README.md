@@ -68,23 +68,31 @@ journey and every tape with the committed ones. Run it after any route or compil
 matches its route fails here instead of as a red chain run (the committed journey was once a compile older than
 its route and broke at a leg that the route had already fixed).
 
-## Boot phase: `boot_wait=N`
+## Poll-synchronous legs: `sync=poll`
 
-A closed-loop leg (`@hold ... until`) is read by the gate once per video frame, while the game ticks once per three
-frames and catches up in bursts when a frame runs long. Which frame of a burst the gate sees decides when a stick is
-released, so a leg ends within one tick of where its dead band expects, and the burst pattern depends on the CD and
+A closed-loop leg (`@hold ... until`) used to be read by the gate once per video frame, while the game ticks once per
+three frames and catches up in bursts when a frame runs long (the game reads the pad once per simulation tick, one poll
+a tick: `polls - SIM_NOW` is constant over a whole run). Which frame of a burst the gate saw decided when a stick was
+released, so a leg ended within one tick of where its dead band expected, and the burst pattern depended on the CD and
 render phase at the map's first tick. That phase moves with the disc build and with the leading wait of the prologue,
-which is why `chain-new-game` and `stage-c1a2-part1` used to flip between builds (a sweep of the leading wait on one
-disc passed at 1 value in 5 or 10 and failed in different legs for the others; the far-end failures were real obstacles
-the legs touched at some phases: at c1a2 (2789,-897) the player is stopped dead walking west, with a free static hull there
-and no prop near, most likely the rotating door *71/*72 at (2712,-904) swung into the lounge).
+which is why `chain-new-game` and `stage-c1a2-part1` flipped between builds (`stage-c1a2-part1` passed at 2 boot waits of
+12 and failed in different legs for the others; the tick logs of two waits were identical until a burst differed by one
+frame, then the positions diverged).
 
-`prologue=new_game boot_wait=99` (any prologue; default 100) sets the gate ticks idled before the first Start press, in the
-route, so a retune is one number and a regeneration reproduces the committed toml byte for byte. When a new disc turns
-one of these journeys red, run `hl-chain/sweep.sh TOML LINE DISCDIR TAG N...` (the leading `wait` is the first one in the toml)
-over a handful of values and put the first green one into the route. The permanent fix is closed-loop legs that look at
-the game once per poll instead of once per frame (a gate change); until then keep dead bands wide and keep legs away
-from moving brush entities.
+`@journey ... sync=poll` makes the compiler write `sync = "poll"` on every step of a map block: the map-load and
+first-tick waits, the controller tapes, the `@hold`/`@wait` legs and the rests inside a `@kill`/`@guard` loop (in polls,
+not frames). The gate (psoxide-gate, TESTING.md "Poll-synchronous steps") then stops the CPU as each pad poll starts,
+reads the condition there, and sets the stick there, so a leg ends on the poll after the one that satisfied it with no
+frame phase in the loop. The prologue (boot wait, Start presses, menus) stays frame-based: it only has to reach the first
+map. Measured on `stage-c1a2-part1` (library disc a608d36c6c09): the player's state sequence of two boot waits is
+identical, and every boot wait 96 to 107 passes with the route unchanged; without `sync=poll` 2 of the 12 did. `chain-new-game`
+(1518 checks, 104k ticks) passes at all 12 waits with `sync=poll` and its per-poll state sequence is identical at waits 96 and 99;
+the route waits 200 polls before its first checkpoint, which otherwise lands on the black title card.
+
+Needs a gate with `sync` (PSoXide-emulator f965dbbc or later; an older gate refuses the unknown key). A route without
+`sync=poll` regenerates its toml byte for byte as before. The prologue's `boot_wait=N` (default 100; the gate ticks idled
+before the first Start press) stays a knob for frame-based routes; with `sync=poll` its value no longer matters.
+`hl-chain/sweep.sh TOML LINE DISCDIR TAG N...` still runs a toml across several waits.
 
 ## Prologues, `@face`, `@probe` and the segment table
 

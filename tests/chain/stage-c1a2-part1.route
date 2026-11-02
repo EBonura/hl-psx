@@ -1,4 +1,4 @@
-@journey name=hl-stage-c1a2-part1 title="Half-Life c1a2 stage, part 1: from the elevator arrival, the hall grate and duct, the soda room barnacle, the lounge switch, the hall window, the flooded room vent, the shaft and the cover, ending with an @save beyond the cover" prologue=segment segment_row=18 boot_wait=102 max_ticks=60000
+@journey name=hl-stage-c1a2-part1 title="Half-Life c1a2 stage, part 1: from the elevator arrival, the hall grate and duct, the soda room barnacle, the lounge switch, the hall window, the flooded room vent, the shaft and the cover, ending with an @save beyond the cover" prologue=segment segment_row=18 boot_wait=102 sync=poll max_ticks=60000
 # Part 1 of c1a2 (about 12,000 ticks). Walkthrough order (Danny Cox ch.4): the lift, west to the hall, the wire kills headcrabs, the
 # grate *74 in the hall's north wall (crowbar), the duct to the soda room (cover *75 at its end, the barnacle that hauls the scientist
 # is clubbed from its tongue column), the lounge switch *152 (kills the hall wire and the fan), back to the hall, window *1 (crowbar

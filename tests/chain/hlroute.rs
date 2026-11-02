@@ -15,6 +15,7 @@
 //!
 //! ```text
 //! @journey name=hl-chain title="..."        # once, first non-comment line
+//!                                           # (sync=poll: legs, waits and tapes run on the game's pad polls, README "Poll-synchronous legs")
 //! map c0a0 next c0a0a [id=6050]             # begin a block; id is the cooked
 //!                                           # header word that identifies the map
 //!   900                                     # 900 neutral ticks
@@ -1108,8 +1109,29 @@ const WEAPON_VIEWMODELS: [(&str, u8); 14] = [
 /// DefaultDeploy blocks attacks for 0.5 s after a weapon is drawn.
 const WEAPON_DEPLOY_POLLS: u32 = 14;
 
+/// `sync=poll` in the `@journey` line: the generated steps run on the game's pad polls instead of on video
+/// frames (`sync = "poll"` in the gate, TESTING.md "Poll-synchronous steps"). The game reads the pad once per
+/// simulation tick and ticks in bursts of one to four frames, so a frame-by-frame look at `@hold ... until`
+/// sees a different tick of a burst on every boot phase and a leg ends a tick early or late; on polls the
+/// same route does the same thing on every build and boot phase.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sync {
+    Frame,
+    Poll,
+}
+
+impl Sync {
+    /// The step line for `sync`, with its newline, or nothing for the frame default.
+    fn line(self) -> &'static str {
+        match self {
+            Sync::Frame => "",
+            Sync::Poll => "sync = \"poll\"\n",
+        }
+    }
+}
+
 /// One gate step that holds a stick and buttons until a condition holds (`prefix` is `[[step]]` or `[[block.step]]`).
-fn hold_toml(prefix: &str, sample: &Sample, until: &str, timeout: u32) -> Result<String, String> {
+fn hold_toml(prefix: &str, sample: &Sample, until: &str, timeout: u32, sync: Sync) -> Result<String, String> {
     let e = encode(*sample, &mut Vec::new())?;
     let mut press: Vec<&str> = Vec::new();
     for bit in [BTN_SQUARE, BTN_CROSS, BTN_TRIANGLE, BTN_R2, BTN_L2, BTN_CIRCLE, BTN_R1, BTN_L1, BTN_L3] {
@@ -1129,11 +1151,12 @@ fn hold_toml(prefix: &str, sample: &Sample, until: &str, timeout: u32) -> Result
     }
     let _ = button_name(0);
     Ok(format!(
-        "\n{prefix}\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\nhold_until = {until}\ntimeout = {}\n",
+        "\n{prefix}\nlstick = [{}, {}]\nrstick = [{}, {}]\npress = {press:?}\n{}hold_until = {until}\ntimeout = {}\n",
         e[4],
         e[5],
         e[2],
         e[3],
+        sync.line(),
         timeout * GATE_TICKS_PER_POLL
     ))
 }
@@ -1192,6 +1215,11 @@ fn compile(o: &Opts) -> Result<(), String> {
         b.items.truncate(at);
     }
     let jv = |k: &str| route.journey.iter().find(|(n, _)| n == k).map(|(_, v)| v.trim_matches('"').to_string());
+    let sync = match jv("sync").as_deref() {
+        None | Some("frame") => Sync::Frame,
+        Some("poll") => Sync::Poll,
+        Some(other) => return Err(format!("sync={other}: use poll or frame")),
+    };
     let name = jv("name").ok_or("@journey needs name=")?;
     let title = jv("title").unwrap_or_else(|| name.clone());
     let mut t = String::new();
@@ -1289,8 +1317,8 @@ fn compile(o: &Opts) -> Result<(), String> {
                 .get(&block.map)
                 .ok_or_else(|| format!("map {} has no id= and is not in map-ids.txt", block.map))?,
         };
-        let _ = writeln!(t, "[[step]]\nlabel = \"{} loads\"\nwait_until = {{ kind = \"ram\", {}, size = 4, op = \"eq\", value = {id} }}\ntimeout = 9000", block.map, o.header);
-        let _ = writeln!(t, "\n[[step]]\nlabel = \"{} first simulation tick\"\nwait_until = {{ kind = \"ram\", sym = \"SIM_NOW\", size = 2, op = \"lt\", value = 64 }}\ntimeout = 9000", block.map);
+        let _ = writeln!(t, "[[step]]\nlabel = \"{} loads\"\n{}wait_until = {{ kind = \"ram\", {}, size = 4, op = \"eq\", value = {id} }}\ntimeout = 9000", block.map, sync.line(), o.header);
+        let _ = writeln!(t, "\n[[step]]\nlabel = \"{} first simulation tick\"\n{}wait_until = {{ kind = \"ram\", sym = \"SIM_NOW\", size = 2, op = \"lt\", value = 64 }}\ntimeout = 9000", block.map, sync.line());
         // Drop the trailing neutral run: the journey waits for the next map.
         let mut items: Vec<&Item> = block.items.iter().collect();
         let mut tail_ticks = 0u32;
@@ -1311,7 +1339,7 @@ fn compile(o: &Opts) -> Result<(), String> {
             let file = format!("{}/{}-{:02}.pxtape", o.tape_dir, block.map, *piece);
             compensate(pending);
             write_tape(&o.repo.join(&file), pending)?;
-            let _ = writeln!(t, "\n[[step]]\nlabel = \"{} controller tape {}\"\ntape = {file:?}\ntape_rebase = true\ntimeout = {}", block.map, *piece, pending.len() as u64 * 4 + 1200);
+            let _ = writeln!(t, "\n[[step]]\nlabel = \"{} controller tape {}\"\n{}tape = {file:?}\ntape_rebase = true\ntimeout = {}", block.map, *piece, sync.line(), pending.len() as u64 * 4 + 1200);
             *total += pending.len();
             *piece += 1;
             pending.clear();
@@ -1322,7 +1350,7 @@ fn compile(o: &Opts) -> Result<(), String> {
                 Item::Run(n, s) => pending.extend(std::iter::repeat(*s).take(*n as usize)),
                 Item::Checkpoint { name, asserts } => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
-                    let _ = writeln!(t, "\n[[step]]\ncheckpoint = {name:?}\ngolden = false");
+                    let _ = writeln!(t, "\n[[step]]\n{}checkpoint = {name:?}\ngolden = false", sync.line());
                     let _ = writeln!(t, "[[step.assert]]\nkind = \"not_flat\"");
                     if !card_dirty {
                         let _ = writeln!(t, "[[step.assert]]\nkind = \"card_unchanged\"");
@@ -1333,11 +1361,11 @@ fn compile(o: &Opts) -> Result<(), String> {
                 }
                 Item::Wait(cond, timeout) => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
-                    let _ = writeln!(t, "\n[[step]]\nwait_until = {cond}\ntimeout = {}", timeout * GATE_TICKS_PER_POLL);
+                    let _ = writeln!(t, "\n[[step]]\n{}wait_until = {cond}\ntimeout = {}", sync.line(), timeout * GATE_TICKS_PER_POLL);
                 }
                 Item::Hold { sample, until, timeout } => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
-                    t.push_str(&hold_toml("[[step]]", sample, until, *timeout)?);
+                    t.push_str(&hold_toml("[[step]]", sample, until, *timeout, sync)?);
                 }
                 Item::Loop { body, until, max_iter, timeout } => {
                     flush(&mut t, &mut pending, &mut piece, &mut total_samples)?;
@@ -1345,10 +1373,16 @@ fn compile(o: &Opts) -> Result<(), String> {
                     let _ = writeln!(t, "\n[[block]]\nname = \"round{loop_n}\"");
                     for it in body {
                         match it {
-                            Item::Hold { sample, until, timeout } => t.push_str(&hold_toml("[[block.step]]", sample, until, *timeout)?),
-                            Item::Run(n, s) if s.neutral() => {
-                                let _ = writeln!(t, "\n[[block.step]]\nwait = {}", n * 3);
-                            }
+                            Item::Hold { sample, until, timeout } => t.push_str(&hold_toml("[[block.step]]", sample, until, *timeout, sync)?),
+                            Item::Run(n, s) if s.neutral() => match sync {
+                                // A rest of n polls: three frames a poll in frame mode, n polls in poll mode.
+                                Sync::Frame => {
+                                    let _ = writeln!(t, "\n[[block.step]]\nwait = {}", n * 3);
+                                }
+                                Sync::Poll => {
+                                    let _ = writeln!(t, "\n[[block.step]]\nsync = \"poll\"\nwait = {n}");
+                                }
+                            },
                             _ => return Err("a loop body holds only holds and neutral rests".into()),
                         }
                     }
