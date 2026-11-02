@@ -6952,6 +6952,11 @@ const LOGIC_STATE_GOING_UP: u8 = 1;
 const LOGIC_STATE_TOP: u8 = 2;
 const LOGIC_STATE_GOING_DOWN: u8 = 3;
 const LOGIC_STATE_WAITING: u8 = 4;
+/// A func_breakable armed by a pressure plate touch: its Die() is due at LOGIC_NEXT. A state of
+/// its own, because the generic WAITING pass of logic_pre_tick (which scans every record when the
+/// hot lists overflow, as in c1a2) puts a WAITING record back to idle before the touch scan can
+/// see the deadline.
+const LOGIC_STATE_PRESSURE: u8 = 5;
 const LOGIC_STATE_REMOVED: u8 = 255;
 const LOGIC_PROP_NONE: u8 = 255;
 const SF_DOOR_START_OPEN: u16 = 1;
@@ -7280,7 +7285,7 @@ unsafe fn logic_breakable_touch(
 ) {
     if !logic_state::breakable_accepts_damage(rec.arg1)
         || rec.spawnflags & SF_BREAK_TRIGGER_ONLY != 0
-        || LOGIC_STATE[li] == LOGIC_STATE_WAITING
+        || LOGIC_STATE[li] == LOGIC_STATE_PRESSURE
     {
         return;
     }
@@ -7291,7 +7296,7 @@ unsafe fn logic_breakable_touch(
         }
     }
     if rec.spawnflags & SF_BREAK_PRESSURE != 0 && player_pos[1] - half_height >= rec.maxs[1] - 2 {
-        LOGIC_STATE[li] = LOGIC_STATE_WAITING;
+        LOGIC_STATE[li] = LOGIC_STATE_PRESSURE;
         LOGIC_NEXT[li] = now.wrapping_add(rec.delay_ticks.max(2));
     }
 }
@@ -14327,7 +14332,7 @@ unsafe fn logic_touch_triggers(
                 | map::LOGIC_TRIGGER_ENDSECTION => {}
                 map::LOGIC_FUNC_BREAKABLE => {
                     // A pressure plate's delayed Die() fires from here.
-                    if LOGIC_STATE[li] == LOGIC_STATE_WAITING && time_reached(now, LOGIC_NEXT[li]) {
+                    if LOGIC_STATE[li] == LOGIC_STATE_PRESSURE && time_reached(now, LOGIC_NEXT[li]) {
                         let rec = m.logic(li);
                         shatter_breakable(m, nlogic, nents, li, rec, now, 0);
                         scan += 1;

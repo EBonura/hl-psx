@@ -1,0 +1,62 @@
+@journey name=hl-parity-c1a2-pressure-crate title="c1a2 duct end: a crouched player standing on the false ceiling panel breaks it by pressure alone, and a standing player pushes the 32-unit crate in the corridor" prologue=load card_fixture=tests/cards/c1a2-part1.mcd card_sha256=1d29253bf461fe3c9b703fc9cafd8b73a2db50cfcdcc44b78c21a14ebbdcbea3 max_ticks=30000
+# Parity journey for two func_breakable / func_pushable rules. (1) A pressure panel (spawnflags 260, *2 over the corridor)
+# breaks 0.1 s after a player stands on it, with no crowbar swing (CBreakable::BreakTouch arms Die()); the port's generic
+# WAITING pass used to put the armed panel back to idle before the touch scan could shatter it. (2) The small crate *29
+# (a 32-unit cube) is pushed by a standing player: the touch test compared the player's origin, not the feet, with the cart's
+# top, so a cart lower than 34 units was never touched. Retail oracle: ref/crate.route (hl-parity lane), the crate moves at
+# once under a standing player. The card is part 1's end state (tests/cards/c1a2-part1.mcd, the dark space behind cover *87).
+map c1a2 next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  3 flash
+  @checkpoint onplenum
+  @probe
+  @assert sym=ENT_ACTIVE offset=1 size=1 op=between value=1 value_hi=1
+  @hold duck f60 until x>=620 timeout=40
+  15 duck
+  60 duck
+  @level
+  @checkpoint dropped
+  @probe
+  @assert sym=ENT_ACTIVE offset=1 size=1 op=between value=0 value_hi=0
+  @assert sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=between value=-562 value_hi=-554
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  60
+  @face 3070 right
+  @checkpoint turned
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold s-127 until y<=-880 timeout=40
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=40 sleep=3 reload=11 reloadquiet=200
+  @checkpoint aligned
+  @probe
+  @hold f127 until x<=520 timeout=80
+  20
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @hold f127 until x<=440 timeout=40
+  20
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @hold f127 until x<=380 timeout=40
+  20
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=100 sleep=3 reload=11 reloadquiet=200
+  @checkpoint atbox
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
+  @hold f127 until x<=300 timeout=100
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @hold f127 until x<=220 timeout=100
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @hold f127 until x<=150 timeout=100
+  @fight near=300 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 reload=11 reloadquiet=200
+  @align s100 sym=LOGIC_PLAYER_POS offset=8 size=4 signed=true lo=-812 hi=-796 timeout=100
+  @face 3070 right
+  @checkpoint east
+  @probe
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @hold f127 until x<=60 timeout=100
+  @hold f127 until expr="i32(ENT_CACHE[353]) <= -20" timeout=120
+  @checkpoint pushed
+  @probe
+  @assert sym=ENT_CACHE offset=1412 size=4 signed=true op=between value=-40 value_hi=-20
+  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  @stop
