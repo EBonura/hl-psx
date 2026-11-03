@@ -1,0 +1,92 @@
+@journey name=hl-stage-c1a2-part3 title="Half-Life c1a2 stage, part 3: from the part 2 card, the duct crab, the drop into the gun room, the south-west corner, the west corridor with its headcrabs, the stairs and the changelevel to c1a2a, ending with an @save at the real arrival" prologue=load card_fixture=tests/cards/c1a2-part2.mcd card_sha256=d74a1d065dd22d28b6aaef97fdcb2949c9bd557a8dc979bbd7e09f87b1dbca18 sync=poll max_ticks=40000
+# Part 3 of c1a2 (card tests/cards/c1a2-part2.mcd, hidden in the duct at x -65, 50 health). Order: the crab that follows the player down the duct (ent 211) is shot from the duct
+# facing east (it arrives about 76 polls after the card, so the turn east starts at once; facing west it bites); turn back west, crouch to the mouth, drop out at x ~ -224
+# (the security gun deploys on first sight, its first shot is 41 polls later: the route is out of its sight, x < -350, well before that), south round crate *5 (x -304..-240,
+# y -704..-640: walking west along y -700 pushes it into the wall at x -630), west along y -690 to x -640, face north, then the west corridor x -650..-600 up to y -90.
+# The trigger *86 (x -94) made the multi_manager spawn five 'turret_fodder' headcrabs along that corridor (monstermakers at x -733..-620, y -406..-112) and the scripted crab
+# runs after the scientist; they leap from about 250 units (27 units a poll), so one bite per crab cannot be avoided with the pistol (the fight loop turns 29 units a poll
+# and fires about every 13 polls). The crowbar kills a crab in one hit and cost 3 bites against 4 for the pistol; `near=220` ignores a crab that is stuck and out of reach (a
+# fight round on it ends only by timeout). Between the legs `@fight stance=0,0,250` turns back north. The player leaves with 20 health; c1a2a has health kits and chargers.
+# The lever *27 (turret_off) and the charger *142 are in the gun's alcove (x -320..-100, y -300..-180), which the crate row *6/*143/*7 closes (*143 is an unbreakable pushable
+# jammed between *7 and *6): not reached. The exit trigger *49 (y -240..-236) fires at y -227, and a changelevel load stops the pad polls, so the last hold waits on the map id.
+map c1a2 next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  @face 1018 left
+  @checkpoint faceE
+  @probe
+  @fight near=400 kind=2 below=100 above=40 aimup=6 for=80 sleep=3 reload=8 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @checkpoint crab-dead
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 45"
+  @face 3040 right
+  @checkpoint facew
+  @probe
+  @hold f127 duck until x<=-109 timeout=40
+  @checkpoint mouth
+  @hold f127 until x<=-185 timeout=40
+  @hold s-127 until y<=-726 timeout=40
+  @checkpoint s726
+  @probe
+  @hold f127 until x<=-330 timeout=40
+  @hold s127 until y>=-690 timeout=40
+  @checkpoint n690
+  @hold f127 until x<=-400 timeout=40
+  @face 4000 right
+  @hold t29 until expr="i16(LOGIC_PLAYER_YAW) >= 4080 || i16(LOGIC_PLAYER_YAW) <= 20" timeout=20
+  @checkpoint facen
+  @probe
+  @hold s-127 until x<=-640 timeout=60
+  @checkpoint w640
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 45"
+  @weapon crowbar
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=120 sleep=3 stance=0,0,200 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @checkpoint fought
+  @probe
+  @align s60 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-668 hi=-645 timeout=80
+  @checkpoint e655
+  @probe
+  @hold f127 until y>=-580 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-520 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-470 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @align s60 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-630 hi=-600 timeout=80
+  @checkpoint e612
+  @probe
+  @hold f127 until y>=-430 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-380 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-330 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-280 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-230 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-180 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @hold f127 until y>=-130 timeout=60
+  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @checkpoint n130
+  @probe
+  @hold f127 until y>=-95 timeout=60
+  @hold t60 until expr="i16(LOGIC_PLAYER_YAW) >= 960 && i16(LOGIC_PLAYER_YAW) <= 1040" timeout=60
+  @checkpoint faceNE
+  @probe
+  @hold f127 until x>=-500 timeout=60
+  @checkpoint e500
+  @probe
+  @face 2048 right
+  @checkpoint faceS
+  @probe
+  @hold f127 until sym=WORLD_ARENA offset=4 size=4 op=eq value=9721 timeout=300
+    @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  @checkpoint arrive-c1a2a
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 10"
+  @weapon glock dir=next
+  @save
+  @stop
