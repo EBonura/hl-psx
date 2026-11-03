@@ -1,4 +1,4 @@
-@journey name=hl-stage-c1a1d title="Half-Life c1a1d stage: from the segment start, the ladders, the hop across the hanging crates, the doors and the ladder to the exit changelevel back to c1a1c" prologue=segment segment_row=17 max_ticks=40000
+@journey name=hl-stage-c1a1d title="Half-Life c1a1d stage: from the segment start, the ladders, the hop across the hanging crates, the doors and the ladder to the exit changelevel back to c1a1c" prologue=segment segment_row=17 max_ticks=40000 sync=poll
 # Crate to crate jumps are run-ups on a position dead band, each landing is read from the player position, never a count.
 # Robust on the intro and no-intro discs of main 18c02cf and on the older 606d1b7 disc: yaw is cut to 1..29 with single-step turns (the drift over the run is at most 15 units), the lower crate leg is an @align on x, the drop to the ledge is a jump from x>=1425 (the ledge is x 1592..1768, y 328..456), and the ledge and platform stops are x bands read from RAM.
 # Ends with an @save on the return to c1a1c: that card is tests/cards/c1a1c-return.mcd (stage-c1a1c-return.route loads it).
@@ -262,7 +262,7 @@ map c1a1d next x
   @checkpoint d17
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
-  @hold f-126 until sym=WORLD_ARENA offset=4 size=4 op=eq value=7305 timeout=80
+  @hold f-126 until sym=WORLD_ARENA offset=4 size=4 op=eq value=7305 timeout=300
     @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
   30
   @checkpoint back-in-c1a1c
