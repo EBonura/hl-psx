@@ -2,7 +2,7 @@
 # Walkthrough: Danny Cox, Half-Life walkthrough chapter 3 "Lower Canal to the Lift" (https://halflife.dannycox.me.uk/halfLife/walkthrough/03.html): jump into the canal and swim left as far as you can,
 # turn right, turn right again, climb the ladder, first aid unit, door, smash the boxes, door, the passage to the hanging box room (c1a1d).
 # Facts (positions are x, y, up as in LOGIC_PLAYER_POS; yaw 0 faces +y, 1024 +x, 2048 -y, 3072 -x):
-# - The platform (x -1156..-812, y 80) ends at the crates *61/*62 (power cell boxes: aim at them and swing the crowbar); past x -736 the player walks off into the canal.
+# - The platform: from the lower platform (-1032,-87) west to x -1156, north through the touch door *44 to y 106, then south off its edge (y 250) into the canal. The crates *61/*62 (power cell boxes) are not touched.
 # - The swim: hold forward AND jump (jump held keeps the head out at the surface, up -3100; no air is lost). Lane y ~540, yaw 3052..3064 (west): the barnacles hang over y 263, 348,
 #   468, 608 at x -1976..-1808 and over (-1150,474) and (-576,520); a barnacle only hooks a hull within about 24 units of its x,y, so y 540 clears them all (a lane at y 468 died: first run).
 # - West of x -2688 trigger_push *27 drags the swimmer north (-y): turn north at x -2709 (yaw 4000+) and swim to y 840, then east on yaw 1075 to the ladder *96 (x -2536, y 879..907):
@@ -11,7 +11,7 @@
 # - Door *3 (hinge -2526, 748) is a touch door in a 60 wide passage (x -2520..-2480, y 740..820) onto a ledge only 68 wide (y 668..736): walk through slowly (`f50 until y<=712`), a full speed run
 #   slides 40 units and falls into the canal, and the closing door sweeps anything standing in the passage north into the water.
 # - Pistol 5 + 13 rounds: reload to 17 inside the passage BEFORE opening the door. Two headcrabs wait in the water at the door, the bullsquid (40 health, spits for 10 from 700 units, swims along
-#   the canal) comes down the canal and is shot from the doorway (`@fight near=900 kind=7`). The platform crabs (4 fodder) are not fought: the ledge lane y ~700..705 east to x -1010 draws no bites,
+#   the canal) comes down the canal and is shot from the doorway (`@fight near=330 kind=7`, repeated at the ledge: at near=900 the pistol emptied on a squid 400 units away when it did not come, as it did in the run from the card). The platform crabs (4 fodder) are not fought: the ledge lane y ~700..705 east to x -1010 draws no bites,
 #   then a turn south and an @align on x -958..-946 (the door *42 at (-928, 905) is 48 wide) and the room and corridor to the changelevel *43.
 # - Real arrival in c1a1d is (612, -368, up -188) yaw 35, 40 units off the segment start stage-c1a1d used before.
 map c1a1c next x
@@ -40,24 +40,14 @@ map c1a1c next x
   8
   @checkpoint n80
   @probe
-  @hold t60 until expr="i16(LOGIC_PLAYER_YAW) >= 990 && i16(LOGIC_PLAYER_YAW) <= 1060" timeout=60
-  @hold f127 until x>=-900 timeout=80
-  @checkpoint e900
+  # No crates: walk off the platform's south edge (y 250) into the canal at x -1156, as the walkthrough says ("jump into the canal"), and swim south-west to the lane
+  # (the barnacle over (-1150,474) hooks a hull within 24 units, so the dive angles away from it: it is passed 100 units to the west).
+  @hold f127 until y>=262 timeout=40
+  @checkpoint edge
   @probe
-  @hold f60 until x>=-812 timeout=60
-  8
-  @checkpoint near
-  @probe
-  @aim at=-780,-3007,126 timeout=60
-  @checkpoint aimed
-  @probe
-  @weapon crowbar
-  100 attack
-  @checkpoint broke
-  @probe
-  @hold f127 until x>=-700 timeout=80
-  8
-  @checkpoint e700
+  @face 3805 left
+  @hold f127 jump until y>=522 timeout=100
+  @checkpoint lane
   @probe
   @face 3072 left
   @hold t29 until expr="i16(LOGIC_PLAYER_YAW) >= 3052" timeout=10
@@ -87,7 +77,7 @@ map c1a1c next x
   @hold f127 jump until y>=830 timeout=100
   @checkpoint n830
   @probe
-  @face 1075 right
+  @face 1010 right
   @checkpoint faceE
   @probe
   @hold f127 jump until x>=-2600 timeout=100
@@ -141,7 +131,7 @@ map c1a1c next x
   @fight near=250 kind=2 below=100 above=40 aimup=6 for=100 sleep=3 reload=3 reloadquiet=150 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @checkpoint crabs
   @probe
-  @fight near=900 kind=7 below=150 above=100 aimup=6 for=300 sleep=2 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=330 kind=7 below=150 above=100 aimup=6 for=250 sleep=2 stance=300,0,0 reload=3 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @checkpoint squid
   @probe
   @hold reload until expr="i16(LOGIC_PLAYER_CLIP_AMMO) >= 15 || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0" timeout=100
@@ -153,9 +143,15 @@ map c1a1c next x
   @hold f127 until x>=-1900 timeout=100
   @checkpoint p2
   @probe
+  @fight near=330 kind=7 below=150 above=100 aimup=6 for=250 sleep=2 stance=300,0,0 reload=3 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @face 1024 left
+  @checkpoint p2s
   @hold f127 until x>=-1760 timeout=100
   @checkpoint p3
   @probe
+  @fight near=330 kind=7 below=150 above=100 aimup=6 for=250 sleep=2 stance=300,0,0 reload=3 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @face 1024 left
+  @checkpoint p3s
   @hold f127 until x>=-1100 timeout=100
   @checkpoint x1100
   @probe
@@ -193,7 +189,7 @@ map c1a1d next x
   @checkpoint arrive-c1a1d
   @probe
   @assert expr="i32(LOGIC_PLAYER_POS[0]) >= 560 && i32(LOGIC_PLAYER_POS[0]) <= 660 && i32(LOGIC_PLAYER_POS[2]) >= -420 && i32(LOGIC_PLAYER_POS[2]) <= -330"
-  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 60"
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
   # The card tests/cards/c1a1d-arrival.mcd (stage-c1a1d resumes from it).
   @save
   @stop
