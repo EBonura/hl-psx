@@ -251,6 +251,10 @@ struct Block {
     map: String,
     next: String,
     id: Option<i64>,
+    /// `simwait=false`: no wait for `SIM_NOW < 64` after the map loads. A map entered again by a changelevel
+    /// from a later map keeps counting the simulation from the visit before (c1a1c, back from c1a1d), so the
+    /// counter never drops under 64; the block then waits on something of its own (`@wait expr=...`).
+    sim_wait: bool,
     items: Vec<Item>,
 }
 
@@ -378,6 +382,17 @@ struct AimTarget {
     y: String,
     /// Expression that is true when the target no longer needs shooting (`0` for a point).
     dead: String,
+    /// True when the target is so close that the view cannot be aimed on it (a crab standing on the player:
+    /// the bearing flips with every unit of motion, so a yaw hold would spin until its timeout); `0` when
+    /// `@kill`/`@fight` has no `melee=`. Aim holds end at once while it holds.
+    close: String,
+    /// True when the target is within melee reach: pitch holds and shots end at once (a melee weapon swings
+    /// level or crouched instead); `0` without `melee=`.
+    reach: String,
+    /// The coarse turns take the short way round: a target behind the player is turned to along the side it
+    /// is on (`melee=` sets it; the default turns right and then left and finds a target behind only after
+    /// most of a revolution, which is a long time with a crab biting).
+    shortest: bool,
 }
 
 fn sin_q12_expr(a: &str) -> String {
@@ -398,6 +413,8 @@ impl AimTarget {
     fn yaw(&self, lat: i64, a: Aim) -> String {
         let t = format!("max({lat} * 4096, d / 20)");
         let body = match a {
+            Aim::Coarse(true) if self.shortest => format!("e <= 0 || (d > 0 && e <= 3 * {t})"),
+            Aim::Coarse(false) if self.shortest => format!("e >= 0 || (d > 0 && e >= 0 - 3 * {t})"),
             Aim::Coarse(true) => format!("d > 0 && e <= 3 * {t}"),
             Aim::Coarse(false) => format!("d > 0 && e >= 0 - 3 * {t}"),
             Aim::Fine(true) => format!("d > 0 && e <= {t}"),
@@ -430,11 +447,29 @@ impl AimTarget {
     }
 
     fn or_dead(&self, cond: String) -> String {
-        if self.dead == "0" {
+        self.or_flags(&[&self.dead], cond)
+    }
+
+    /// `cond`, or one of the listed flags (the ones that are not the constant `0`): the hold ends at once when
+    /// any of them holds.
+    fn or_flags(&self, flags: &[&String], cond: String) -> String {
+        let mut parts: Vec<String> = flags.iter().filter(|f| f.as_str() != "0").map(|f| format!("({f})")).collect();
+        parts.push(format!("({cond})"));
+        if parts.len() == 1 {
             cond
         } else {
-            format!("({}) || ({cond})", self.dead)
+            parts.join(" || ")
         }
+    }
+
+    /// True when the target is within `r` units of the player on the floor plane.
+    fn within(&self, r: i64) -> String {
+        format!(
+            "(let wx = {} - i32(LOGIC_PLAYER_POS[0]), wy = {} - i32(LOGIC_PLAYER_POS[2]) in wx * wx + wy * wy < {})",
+            self.x,
+            self.y,
+            r * r
+        )
     }
 }
 
@@ -480,7 +515,7 @@ fn nearest_prop_expr(r: i64, kind: Option<i64>, below: Option<i64>, above: Optio
     format!("min(i in 0..128: (u8(PROP_HEALTH[i]) > 0{kind}{below}{above} && {} < {}) ? ({} * 256 + i) : 2000000000)", d2("i"), r * r, d2("i"))
 }
 
-/// `@aim|@kill prop=N | near=R [kind=K] [below=B] [above=A] | rel=DX,DUP,DY [unless=R] | at=X,UP,Y [lat=4] [vlat=4] [aimup=0] [rounds=8] [timeout=150]`, and `@level [tol=48]`.
+/// `@aim|@kill prop=N | near=R [kind=K] [below=B] [above=A] | rel=DX,DUP,DY [unless=R] | at=X,UP,Y [lat=4] [vlat=4] [aimup=0] [rounds=8] [timeout=150] [melee=R [meleeskip=28] [meleeduck=true] [meleefor=10] [meleeonly=true]]`, and `@level [tol=48]`.
 fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     let num = |k: &str, d: i64| -> Result<i64, String> {
@@ -514,13 +549,16 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         Some(k) => Some(k.parse().map_err(|_| format!("{head}: bad above"))?),
         None => None,
     };
-    let target = if let Some(n) = get("prop") {
+    let mut target = if let Some(n) = get("prop") {
         let n: i64 = n.parse().map_err(|_| format!("{head}: bad prop"))?;
         AimTarget {
             x: format!("i32(PROP_POS[{}])", 3 * n),
             up: format!("i32(PROP_POS[{}])", 3 * n + 1),
             y: format!("i32(PROP_POS[{}])", 3 * n + 2),
             dead: format!("u8(PROP_HEALTH[{n}]) == 0"),
+            close: "0".into(),
+            reach: "0".into(),
+            shortest: false,
         }
     } else if let Some(r) = get("near") {
         // The nearest living prop within `near` units (3D, feet height against the player's centre): the
@@ -534,6 +572,9 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
             up: format!("i32(PROP_POS[3 * {slot} + 1])"),
             y: format!("i32(PROP_POS[3 * {slot} + 2])"),
             dead: format!("({nearest}) >= 2000000000"),
+            close: "0".into(),
+            reach: "0".into(),
+            shortest: false,
         }
     } else if let Some(rel) = get("rel") {
         // A point fixed relative to the player (dx, dup from the eye, dy in world axes): holds the view in a
@@ -556,15 +597,39 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
             up: format!("(i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT) {} {})", sign(n[1]), n[1].abs()),
             y: format!("(i32(LOGIC_PLAYER_POS[2]) {} {})", sign(n[2]), n[2].abs()),
             dead,
+            close: "0".into(),
+            reach: "0".into(),
+            shortest: false,
         }
     } else if let Some(at) = get("at") {
         let v: Vec<&str> = at.split(',').collect();
         if v.len() != 3 || v.iter().any(|s| s.parse::<i64>().is_err()) {
             return Err(format!("{head}: at=X,UP,Y"));
         }
-        AimTarget { x: v[0].into(), up: v[1].into(), y: v[2].into(), dead: "0".into() }
+        AimTarget { x: v[0].into(), up: v[1].into(), y: v[2].into(), dead: "0".into(), close: "0".into(), reach: "0".into(), shortest: false }
     } else {
         return Err(format!("{head} needs prop=N, near=R, rel=DX,DUP,DY or at=X,UP,Y"));
+    };
+    // `melee=R`: the weapon in hand is a melee weapon with a reach of R units on the floor plane. A target inside R
+    // is swung at (crouched with `meleeduck=true`) for up to `meleefor` polls instead of being shot at, and while it
+    // is inside `meleeskip` units (default 28: it stands on the player) the yaw is not aimed either, because the
+    // bearing of a target that close flips with every unit of motion and the aim loop would spin to its timeout.
+    // `far=R`: a target more than R units away (floor plane) counts as not there yet, so a hold on it ends at once.
+    if let Some(r) = get("far") {
+        let r: i64 = r.parse().map_err(|_| format!("{head}: bad far"))?;
+        let here = target.within(r);
+        target.dead = if target.dead == "0" { format!("!{here}") } else { format!("({}) || !{here}", target.dead) };
+    }
+    let melee = match get("melee") {
+        Some(r) => {
+            let r: i64 = r.parse().map_err(|_| format!("{head}: bad melee"))?;
+            let skip = num("meleeskip", 28)?;
+            target.close = target.within(skip);
+            target.reach = target.within(r);
+            target.shortest = true;
+            true
+        }
+        None => false,
     };
     let lat = num("lat", 4)?;
     let vlat = num("vlat", 4)?;
@@ -578,22 +643,26 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
         // the smallest turn, yaw then pitch); later rounds only trim, because the target moves while the
         // view turns, and then fire until it is dead or has moved out of the aim.
         let yaw_fine = |out: &mut Vec<Item>| {
-            out.push(hold(turn(29), target.or_dead(target.yaw(lat, Aim::Fine(true)))));
-            out.push(hold(turn(-29), target.or_dead(target.yaw(lat, Aim::Fine(false)))));
-            out.push(hold(turn(29), target.or_dead(target.yaw(lat, Aim::Fine(true)))));
+            let e = |a: Aim| target.or_flags(&[&target.dead, &target.close], target.yaw(lat, a));
+            out.push(hold(turn(29), e(Aim::Fine(true))));
+            out.push(hold(turn(-29), e(Aim::Fine(false))));
+            out.push(hold(turn(29), e(Aim::Fine(true))));
         };
         let pitch_fine = |out: &mut Vec<Item>| {
-            out.push(hold(look(29), target.or_dead(target.pitch(vlat, aimup, Aim::Fine(true)))));
-            out.push(hold(look(-29), target.or_dead(target.pitch(vlat, aimup, Aim::Fine(false)))));
-            out.push(hold(look(29), target.or_dead(target.pitch(vlat, aimup, Aim::Fine(true)))));
+            let e = |a: Aim| target.or_flags(&[&target.dead, &target.reach], target.pitch(vlat, aimup, a));
+            out.push(hold(look(29), e(Aim::Fine(true))));
+            out.push(hold(look(-29), e(Aim::Fine(false))));
+            out.push(hold(look(29), e(Aim::Fine(true))));
         };
         if round == 0 {
-            out.push(hold(turn(60), target.or_dead(target.yaw(lat, Aim::Coarse(true)))));
-            out.push(hold(turn(-60), target.or_dead(target.yaw(lat, Aim::Coarse(false)))));
+            let ey = |a: Aim| target.or_flags(&[&target.dead, &target.close], target.yaw(lat, a));
+            let ep = |a: Aim| target.or_flags(&[&target.dead, &target.reach], target.pitch(vlat, aimup, a));
+            out.push(hold(turn(60), ey(Aim::Coarse(true))));
+            out.push(hold(turn(-60), ey(Aim::Coarse(false))));
             yaw_fine(&mut out);
             if with_pitch {
-                out.push(hold(look(127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(true)))));
-                out.push(hold(look(-127), target.or_dead(target.pitch(vlat, aimup, Aim::Coarse(false)))));
+                out.push(hold(look(127), ep(Aim::Coarse(true))));
+                out.push(hold(look(-127), ep(Aim::Coarse(false))));
                 pitch_fine(&mut out);
             }
         }
@@ -605,7 +674,20 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
             let on = format!("({}) && ({})", target.yaw(lat, Aim::Within), target.pitch(vlat, aimup, Aim::Within));
             let mut s = Sample::default();
             s.buttons = button_for("attack").unwrap();
-            out.push(hold(s, target.or_dead(format!("!({on})"))));
+            // `meleeonly=true`: the weapon in hand is the melee weapon, so nothing is swung at a target out of reach.
+            if !(melee && get("meleeonly") == Some("true")) {
+                out.push(hold(s, target.or_flags(&[&target.dead, &target.reach], format!("!({on})"))));
+            }
+            if melee {
+                // Swing while the target stays inside the reach (ends at once when it is not).
+                let mut sw = Sample::default();
+                sw.buttons = button_for("attack").unwrap();
+                if get("meleeduck") == Some("true") {
+                    sw.buttons |= button_for("duck").unwrap();
+                }
+                let gone = if target.dead == "0" { format!("!{}", target.reach) } else { format!("({}) || !{}", target.dead, target.reach) };
+                out.push(Item::Hold { sample: sw, until: expr_cond(gone), timeout: num("meleefor", 10)? as u32 });
+            }
         }
     }
     Ok(out)
@@ -617,19 +699,54 @@ fn aim_items(head: &str, kv: &[(String, String)]) -> Result<Vec<Item>, String> {
 /// given, `@aim rel=` back to the direction the enemies come from (skipped at once while one is in range).
 /// Without `until=EXPR` the loop is unrolled at compile time (a long guard makes a huge journey); with it the
 /// round is one gate block repeated until EXPR holds and nothing is in range, at most `for` polls.
+/// `props=A,B,..` guards fixed prop slots instead of whatever is nearest (each engaged within `near`).
+/// `melee=R` (with `meleeskip`, `meleeduck`, `meleefor`, `meleeonly`, see `aim_items`) swings the weapon in hand at a
+/// target within R units instead of aiming and shooting at it.
 fn fight_items(kv: &[(String, String)]) -> Result<Vec<Item>, String> {
     let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
     let num = |k: &str, d: i64| -> Result<i64, String> {
         get(k).map_or(Ok(d), |v| v.parse().map_err(|_| format!("@fight: bad {k}")))
     };
-    let near = get("near").ok_or("@fight needs near=R")?;
+    let near = get("near").ok_or("@fight needs near=R")?; // with `props=`, the distance at which a prop is engaged
     let (sleep, total) = (num("sleep", 10)?.max(1), num("for", 300)?);
     let mut kill: Vec<(String, String)> = vec![("near".into(), near.clone()), ("rounds".into(), num("rounds", 3)?.to_string())];
     kill.push(("lat".into(), num("lat", 8)?.to_string()));
-    for k in ["kind", "below", "above", "aimup", "vlat"] {
+    for k in ["kind", "below", "above", "aimup", "vlat", "melee", "meleeskip", "meleeduck", "meleefor", "meleeonly"] {
         if let Some(v) = get(k) {
             kill.push((k.into(), v));
         }
+    }
+    if let Some(list) = get("props") {
+        // Fixed prop slots (short expressions: a journey that guards many legs stays small), each engaged only
+        // once it is within `near` units; always unrolled, and the view is not re-aimed between rounds.
+        let mut round = Vec::new();
+        for slot in list.split(',') {
+            let mut k: Vec<(String, String)> = vec![
+                ("prop".into(), slot.trim().to_string()),
+                ("far".into(), near.clone()),
+                ("rounds".into(), "1".into()),
+                ("lat".into(), num("lat", 8)?.to_string()),
+                ("pitch".into(), "0".into()),
+            ];
+            for key in ["melee", "meleeskip", "meleeduck", "meleefor", "meleeonly"] {
+                if let Some(v) = get(key) {
+                    k.push((key.into(), v));
+                }
+            }
+            round.extend(aim_items("@kill", &k)?);
+        }
+        round.push(Item::Run(sleep as u32, Sample::default()));
+        let mut out = Vec::new();
+        let mut spent = 0;
+        while spent < total {
+            out.extend(round.iter().map(|i| match i {
+                Item::Hold { sample, until, timeout } => Item::Hold { sample: *sample, until: until.clone(), timeout: *timeout },
+                Item::Run(n, s) => Item::Run(*n, *s),
+                _ => unreachable!("a fight round holds only holds and rests"),
+            }));
+            spent += sleep + 1;
+        }
+        return Ok(out);
     }
     let stance: Option<Vec<(String, String)>> = get("stance").map(|v| {
         vec![
@@ -715,6 +832,7 @@ fn parse_route(text: &str) -> Result<Route, String> {
                 let mut kv = parse_kv(&tok[2..]);
                 let mut next = String::new();
                 let mut id = None;
+                let mut sim_wait = true;
                 if tok.len() < 2 {
                     return Err(at("map needs a name".into()));
                 }
@@ -730,12 +848,16 @@ fn parse_route(text: &str) -> Result<Route, String> {
                     if kv[i].0 == "id" {
                         id = Some(kv[i].1.parse().map_err(|_| at("bad id".into()))?);
                     }
+                    if kv[i].0 == "simwait" {
+                        sim_wait = kv[i].1 != "false";
+                    }
                     i += 1;
                 }
                 route.blocks.push(Block {
                     map: tok[1].to_string(),
                     next,
                     id,
+                    sim_wait,
                     items: Vec::new(),
                 });
             }
@@ -1324,7 +1446,9 @@ fn compile(o: &Opts) -> Result<(), String> {
                 .ok_or_else(|| format!("map {} has no id= and is not in map-ids.txt", block.map))?,
         };
         let _ = writeln!(t, "[[step]]\nlabel = \"{} loads\"\n{}wait_until = {{ kind = \"ram\", {}, size = 4, op = \"eq\", value = {id} }}\ntimeout = 9000", block.map, sync.line(), o.header);
-        let _ = writeln!(t, "\n[[step]]\nlabel = \"{} first simulation tick\"\n{}wait_until = {{ kind = \"ram\", sym = \"SIM_NOW\", size = 2, op = \"lt\", value = 64 }}\ntimeout = 9000", block.map, sync.line());
+        if block.sim_wait {
+            let _ = writeln!(t, "\n[[step]]\nlabel = \"{} first simulation tick\"\n{}wait_until = {{ kind = \"ram\", sym = \"SIM_NOW\", size = 2, op = \"lt\", value = 64 }}\ntimeout = 9000", block.map, sync.line());
+        }
         // Drop the trailing neutral run: the journey waits for the next map.
         let mut items: Vec<&Item> = block.items.iter().collect();
         let mut tail_ticks = 0u32;

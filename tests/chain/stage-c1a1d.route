@@ -72,6 +72,8 @@ map c1a1d next x
   @probe
   @face 100 left
   @hold t-30 until expr="i16(LOGIC_PLAYER_YAW) <= 29" timeout=40
+  # the turn can end on yaw 2 after a long run (a jump from there stops 3 units short of the ledge at y -250): nudge back into 12..29
+  @hold t29 until expr="i16(LOGIC_PLAYER_YAW) >= 12" timeout=10
   @checkpoint c11b
   @probe
   @hold f127 until y>=-372 timeout=30

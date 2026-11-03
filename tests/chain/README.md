@@ -120,6 +120,7 @@ the lift, the console scientist (use him, he follows to the retinal scanner) and
 The c1a0c legs were derived from a trace of the retail engine and are closed loop on the player's x and y.
 From c1a1a it continues through the zombie corridor into c1a1f and out of it into c1a1b (15 segments). c1a1f has no walkable standing-hull path from its arrival to its exit; the way is two crouch crawls and a crouch jump found by searching the BSP hulls (the duck hull shows the crawls): the arrival hall's outer ring to the east room, the vent hole in the inner room's east wall (y 498..530), the wall charger on the inner room's north wall (the corridor leaves 15 to 55 health), a crouch jump onto the 49 high ramp base at (-868,176) (the retail engine does it with the same input), the walkway above the hall (crouched, ceiling 46 above the floor), the crab room, the long south corridor and the exit alcove's wall hole at y -1084..-1072. Two of its holds are narrow: align x to -888..-878 with slow f38/f-38 holds before the jump (a f70 hold moves 30 units per call) and keep the alignment at the exit short (a slide zombie arrives within a few seconds at 35 health).
 It then plays c1a1b and the first half of c1a1c (the chain ends on the lift, `arrive-c1a1c` to `qy1`).
+Since the 11-03 splice `chain-new-game` carries on without a card: the rest of c1a1c (the vent, the floor bars, the cover, the Lower Canal door and the shaft = `stage-c1a1c-mid`; the swim, the ladder, the first aid unit, the pocket door and the ledge = `stage-c1a1c-canal`), c1a1d (`stage-c1a1d`), the walk back and the elevator (`stage-c1a1c-return`) and the changelevel into c1a2, asserted at `arrive-c1a2`. `bin/splice.py` of the hl-chain lane rebuilds the route from the stage bodies (checkpoints prefixed `m-`, `k-`, `d-`, `r-`). The ledge: dropping off the shaft fires the `squid_fodder` monstermakers, so in a continuous run four headcrabs are awake on the south platform (a card start has none); the route fights them with the crowbar (`@fight props=26,31,32,33 melee=...`, see below), then the bullsquid with the pistol. c1a1c entered again from c1a1d keeps counting `SIM_NOW` from the first visit: that block is `map c1a1c next c1a2 simwait=false` and waits on the player's position instead. Totals on library disc ab665fa49aa3 (intro) and the no-intro disc: 2151 checks, about 121,570 ticks, ending at c1a2 (2208, up -540, -869) with 80 health.
 c1a1b: the airlock button (stand off it: it fires on touch and locks the view), the aira doors (a sliding cycle of about 40 ticks;
 the doorway is crossed on `@wait expr="i32(ENT_PHASE[38]) < 400"`, never on a count), the corridor, two houndeyes killed with
 `@kill`, the first aid unit, the door corridor, the vortigaunt (`@kill prop=12`), the 44 wide hole (crouched, aligned on x from the
@@ -180,6 +181,16 @@ and `@aim near=` take `above=` too). Without `until` the loop is unrolled at com
 repeated until EXPR holds and nothing of that kind is in range, at most `for` polls (a gate that has loops is needed: PSoXide-emulator
 358eae9a or later). c1a1c uses it for the headcrab gauntlet on the lift
 (`@fight near=480 kind=2 below=70 aimup=6 stance=0,-20,-300 for=1500 sleep=3 reload=6`).
+
+Melee: `@kill` and `@fight` take `melee=R [meleeskip=28] [meleeduck=true] [meleefor=10] [meleeonly=true]` for a crowbar in hand. A target
+within R units on the floor plane is swung at (crouched with `meleeduck`) for up to `meleefor` polls instead of being aimed at and shot; inside
+`meleeskip` units (a crab standing on the player) the yaw is not aimed at all, because the bearing of a target that close flips with every unit of
+motion and the aim loop used to spin to its timeout; the coarse turns take the short way round (a target behind the player used to cost most of a
+revolution while it bit); `meleeonly=true` swings nothing at a target out of reach. `far=R` makes a hold on a target more than R away end at once (it is
+not there yet). `@fight props=A,B,.. near=R` guards fixed prop slots, each engaged once it is within R: the expressions are short, so many unrolled
+rounds stay small (a nearest-prop `@fight` repeats a 4 KB expression in every hold; an unrolled `near=` guard over seven legs made an 11 MB journey).
+c1a1c's south platform ledge uses `@fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16` in 150 unit legs,
+then a re-aim east (`@aim rel=1000,0,0`).
 
 ## Stages: save, load and resume
 

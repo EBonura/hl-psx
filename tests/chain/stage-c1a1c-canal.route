@@ -117,7 +117,7 @@ map c1a1c next x
   @checkpoint d2
   @probe
   @weapon glock
-  @hold reload until expr="i16(LOGIC_PLAYER_CLIP_AMMO) >= 17" timeout=100
+  @hold reload until expr="i16(LOGIC_PLAYER_CLIP_AMMO) >= 17 || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0" timeout=100
   @checkpoint reloaded
   @probe
   @hold f50 until y<=712 timeout=60
@@ -137,22 +137,59 @@ map c1a1c next x
   @hold reload until expr="i16(LOGIC_PLAYER_CLIP_AMMO) >= 15 || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0" timeout=100
   @checkpoint reloaded2
   @probe
+  @weapon crowbar
   @face 940 right
   @hold f127 until x>=-2300 timeout=60
-  @face 1024 right
-  @hold f127 until x>=-1900 timeout=100
-  @checkpoint p2
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  # The ledge is 68 wide: the crabs of the south platform (monstermaker squid_fodder, which only exist when the run came down the shaft) wake at about
+  # 250 units and come along it one behind the other. Walk in 150 unit legs with the crowbar and swing at whatever reaches the player, crouched (a standing swing
+  # passes over a headcrab on the floor); the rounds are unrolled so a crab that does not come costs only its polls.
+  @hold f127 until x>=-2000 timeout=100
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @checkpoint cr1
   @probe
-  @fight near=330 kind=7 below=150 above=100 aimup=6 for=250 sleep=2 stance=300,0,0 reload=3 until="i32(LOGIC_PLAYER_POS[2]) != 0"
-  @face 1024 left
-  @checkpoint p2s
-  @hold f127 until x>=-1760 timeout=100
-  @checkpoint p3
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
+  @hold f127 until x>=-1850 timeout=100
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @checkpoint cr2
   @probe
-  @fight near=330 kind=7 below=150 above=100 aimup=6 for=250 sleep=2 stance=300,0,0 reload=3 until="i32(LOGIC_PLAYER_POS[2]) != 0"
-  @face 1024 left
-  @checkpoint p3s
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
+  @hold f127 until x>=-1700 timeout=100
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @checkpoint cr3
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
+  @hold f127 until x>=-1550 timeout=100
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @checkpoint cr4
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
+  @hold f127 until x>=-1400 timeout=100
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @checkpoint cr5
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
+  @hold f127 until x>=-1250 timeout=100
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @checkpoint cr6
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
   @hold f127 until x>=-1100 timeout=100
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @checkpoint cr7
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
+  @weapon glock
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
+  @fight near=330 kind=7 below=150 above=100 aimup=6 for=250 sleep=2 stance=300,0,0 reload=3 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint x1100
   @probe
   @hold f50 until x>=-1010 timeout=40
@@ -189,7 +226,7 @@ map c1a1d next x
   @checkpoint arrive-c1a1d
   @probe
   @assert expr="i32(LOGIC_PLAYER_POS[0]) >= 560 && i32(LOGIC_PLAYER_POS[0]) <= 660 && i32(LOGIC_PLAYER_POS[2]) >= -420 && i32(LOGIC_PLAYER_POS[2]) <= -330"
-  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 15"
   # The card tests/cards/c1a1d-arrival.mcd (stage-c1a1d resumes from it).
   @save
   @stop
