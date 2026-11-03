@@ -4307,6 +4307,9 @@ const PROP_RUNTIME_LOOT_SLOT: u8 = 4;
 // mutually disjoint by model class, so no PropRec or resident-state growth is
 // needed for the Hazard Course's inactive turrets and hidden hologram.
 const PROP_RUNTIME_TURRET_INACTIVE: u8 = 8;
+// A turret that has played its deploy clip (CBaseTurret m_iOn): it tracks and
+// fires. Shares the talk-response bit, which only scientists use.
+const PROP_RUNTIME_TURRET_DEPLOYED: u8 = 2;
 const PROP_RUNTIME_RENDER_HIDDEN: u8 = 16;
 // Cooker-synthesized default for an actor that normally arrives through a
 // landmark. It is active on fresh direct-map launches, but remains dormant on
@@ -10488,8 +10491,12 @@ unsafe fn logic_fire_targets(
                 PROP_AI_TIMER[pi] = 0;
             }
             if enable {
+                if inactive {
+                    turret_deploy(pi);
+                }
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_INACTIVE;
             } else {
+                PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_DEPLOYED;
                 PROP_DORMANT[pi] |= PROP_RUNTIME_TURRET_INACTIVE;
                 PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
                 PROP_STATE[pi] = PROP_STATE_IDLE;
@@ -19626,6 +19633,15 @@ unsafe fn tick_alien_attack(
     }
 }
 
+/// CBaseTurret::TurretUse and CSentry::TakeDamage: a switched-on turret plays
+/// its deploy clip, then needs a SearchThink and two ActiveThinks to fire.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn turret_deploy(pi: usize) {
+    PROP_DORMANT[pi] |= PROP_RUNTIME_TURRET_DEPLOYED;
+    prop_attack_cooldown_set(pi, turret_aim::use_to_shot_ticks(PROP_KIND[pi]));
+}
+
 /// The spinning turret's barrel winds down one tick per tick without a target.
 #[inline(never)]
 #[optimize(size)]
@@ -19814,6 +19830,7 @@ unsafe fn tick_shooter(
     };
     PROP_AI_TARGET[pi] = target;
     let pos = PROP_POS[pi];
+    let d2 = dist2_xz(pos, aim);
     // A turret's gun swings at a finite rate and shoots along its barrel
     // (turret.cpp ActiveThink); `aim_err` is the yaw error before this tick's
     // swing, which is what the shot uses. Walkers snap their facing.
@@ -19822,14 +19839,39 @@ unsafe fn tick_shooter(
         prop_face_point(pi, aim);
     } else {
         let want = yaw_from_vec(aim[0] - pos[0], aim[2] - pos[2]);
-        let cur = prop_yaw_value(PROP_YAW[pi]);
+        // A ceiling gun hangs from a pitch-180 model whose forward is the
+        // reverse of its yaw, and rests facing the mapper's yaw (the cooker
+        // added 180 to the stored one).
+        let flip = if prop_authored_tilt(m, pi) & 0xff == 0x80 {
+            2048
+        } else {
+            0
+        };
+        let cur = prop_yaw_value(PROP_YAW[pi]) ^ flip;
         aim_err = turret_aim::yaw_error(cur, want);
-        PROP_YAW[pi] = prop_with_yaw(
-            PROP_YAW[pi],
-            turn_toward(cur, want, turret_aim::turn_step(aim_err)),
-        );
+        // The gun holds still until its deploy clip is over (the spinning
+        // turret keeps tracking through its spin-up), then steps once per
+        // 0.1 s think toward a random point of the target's box.
+        let settling = if ty == turret_aim::SPINNING_KIND {
+            turret_aim::SPIN_UP_TICKS
+        } else {
+            turret_aim::THINK_TICKS
+        };
+        if PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_DEPLOYED != 0
+            && prop_attack_cooldown(pi) <= settling
+            && (SIM_NOW as usize).wrapping_add(pi) & 1 == 0
+        {
+            let goal = turret_aim::box_goal(
+                want,
+                turret_aim::box_offset(SIM_NOW, pi as u8),
+                isqrt_i32(d2),
+            );
+            PROP_YAW[pi] = prop_with_yaw(
+                PROP_YAW[pi],
+                turret_aim::swing(cur, goal, SIM_NOW & 2 != 0) ^ flip,
+            );
+        }
     }
-    let d2 = dist2_xz(pos, aim);
     #[cfg(feature = "interaction-probe")]
     if !can_move && SIM_NOW % 10 == 0 {
         reference_trace::probe_vals(
@@ -19857,13 +19899,23 @@ unsafe fn tick_shooter(
                 // of an instant hitscan the tick the enemy sees you.
                 prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(ATTACK_WINDUP));
             }
-        } else if ty == turret_aim::SPINNING_KIND {
-            // monster_turret spins its barrel up for 2.2 s before the first
-            // shot and keeps it spinning for 5 s after the target is gone.
-            if PROP_AI_TIMER[pi] == 0 {
-                prop_attack_cooldown_set(pi, turret_aim::SPIN_UP_TICKS);
+        } else {
+            // A cold turret deploys first (AutoSearchThink, Deploy, then the
+            // spin-up think); monster_turret then spins its barrel up for 2.2 s
+            // before the first shot and keeps it spinning for 5 s after the
+            // target is gone.
+            let mut wait = prop_attack_cooldown(pi);
+            if PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_DEPLOYED == 0 {
+                PROP_DORMANT[pi] |= PROP_RUNTIME_TURRET_DEPLOYED;
+                wait = wait.max(turret_aim::sight_to_shot_ticks(ty));
             }
-            PROP_AI_TIMER[pi] = turret_aim::SPIN_HOLD_TICKS;
+            if ty == turret_aim::SPINNING_KIND {
+                if PROP_AI_TIMER[pi] == 0 {
+                    wait += turret_aim::SPIN_UP_TICKS;
+                }
+                PROP_AI_TIMER[pi] = turret_aim::SPIN_HOLD_TICKS;
+            }
+            prop_attack_cooldown_set(pi, wait);
         }
         if matches!(ty, 10 | 11) {
             tick_alien_attack(pi, ty, pos, aim, d2, target, health, armor);
@@ -21382,6 +21434,7 @@ unsafe fn tick_props(
             } else if sentry_wake::due(PROP_HEALTH[pi], true, true, SIM_NOW, PROP_DEATH_START[pi]) {
                 PROP_AI_TIMER[pi] = 0;
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_INACTIVE;
+                turret_deploy(pi);
             }
         }
         if (PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE) != 0 {

@@ -1,0 +1,29 @@
+@journey name=hl-parity-c1a2-gun-deploy title="Half-Life c1a2 security gun: the miniturret waits for its deploy clip after it first sees the player, then hits a standing player about once in five ticks until he is dead (retail oracle ref/tur1..tur5)" prologue=load card_fixture=tests/cards/dev-c1a2-gunroom.mcd card_sha256=97afedf11a83de7ecd8f571e64e51257a63653da22b8615963343a3349e4b34b sync=poll max_ticks=30000
+# Retail (xash oracle, 100 HP, standing, c1a2 gun at (-208,-184,-361)): the first hit lands 42 to 49 ticks (2.1 to 2.5 s) after the gun first sees the player, then one 5 HP hit per
+# 5.6 ticks on average (20 hits in 86 to 129 ticks), no stand-down. The gun sees the room for x > -350. The card is a dev card (noclip flight from the segment start, 100 HP, west of
+# the gun's view); the player walks east into view and stands still. A poll is one 50 ms simulation tick, the same unit as the oracle's host_framerate 0.05 ticks.
+map c1a2 next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  60
+  @face 1024 right
+  @hold f127 until x>=-330 timeout=100
+  @checkpoint seen
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) == 100"
+  30
+  @checkpoint waiting
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) == 100"
+  45
+  @checkpoint first-hit
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) < 100"
+  20
+  @checkpoint under-fire
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) > 0 && i16(LOGIC_PLAYER_HEALTH) < 85"
+  120
+  @checkpoint dead
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) == 0"
+  @stop

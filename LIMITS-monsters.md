@@ -65,6 +65,15 @@ glides it to the target over the eight ticks of the leap animation: an actor has
 no velocity or gravity state, and adding one for the leap costs a field in every
 prop.
 
+## Turrets
+
+C-TUR01. The gun's pitch is not simulated. The retail barrel also swings in pitch,
+which delays the first hit on a target that is not level with it by about 6 ticks;
+the port adds that to the deploy delay and aims only in yaw, with the bullet's
+width set so a standing player is hit as often as in the retail oracle (one hit
+in 5.6 ticks, five runs). A turret that has deployed stays deployed: the original
+retracts a miniturret after 15 s without a target and redeploys on the next sight.
+
 ## Bosses and the controller
 
 BM02..BM06 (Gonarch). She fights while she waits at a node (for its delay or for

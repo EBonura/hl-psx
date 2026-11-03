@@ -1,0 +1,19 @@
+@journey name=hl-parity-c1a2-gun-crate title="Half-Life c1a2: a crouched player drops from the duct mouth onto the pushable crate *28 and walks off it, and is on the floor, alive, before the security gun's first hit" prologue=load card_fixture=tests/cards/c1a2-part2.mcd card_sha256=d74a1d065dd22d28b6aaef97fdcb2949c9bd557a8dc979bbd7e09f87b1dbca18 sync=poll max_ticks=30000
+# The old gun hit the moment it saw the player and killed him (50 HP in 18 ticks) on the crate; a dead player is frozen on every axis, which read as a crouch-hull bug on the crate.
+# With the retail 2 s deploy delay the crouched player rests on the crate at up -493 (retail -491.94), walks off its west edge and is on the floor with 40 or more of its 50 HP when the gun's first hit lands.
+map c1a2 next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  @hold f127 duck until x<=-120 timeout=60
+  @hold f127 duck until x<=-170 timeout=40
+  @checkpoint on-crate
+  @probe
+  @assert sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=between value=-497 value_hi=-489
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) == 50"
+  @hold f127 duck until x<=-215 timeout=40
+  @hold f127 until x<=-250 timeout=60
+  @checkpoint off-crate
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 40"
+  @assert sym=LOGIC_PLAYER_POS offset=4 size=4 signed=true op=between value=-545 value_hi=-535
+  @stop
