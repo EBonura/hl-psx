@@ -1,4 +1,4 @@
-@journey name=hl-stage-c1a2-part2 title="Half-Life c1a2 stage, part 2: from the part 1 card, the ceiling panel, the corridor crabs, the crate stack, the ladder, the ledge above it, the hatch and the duct, ending hidden behind the broken vent cover with an @save" prologue=load card_fixture=tests/cards/c1a2-part1.mcd card_sha256=1d29253bf461fe3c9b703fc9cafd8b73a2db50cfcdcc44b78c21a14ebbdcbea3 sync=poll max_ticks=40000
+@journey name=hl-stage-c1a2-part2 title="Half-Life c1a2 stage, part 2: from the part 1 card, the ceiling panel, the corridor crabs, the crate stack, the ladder, the ledge above it, the hatch and the duct, ending hidden behind the broken vent cover with an @save" prologue=load card_fixture=tests/cards/c1a2-part1.mcd card_sha256=773f16fa888822b9094ef6a4d223afab9268386f5fc307be410f40ea19b4c941 sync=poll max_ticks=40000
 # Part 2 of c1a2 (card tests/cards/c1a2-part1.mcd). The panel *2 breaks under the crouched player (pressure) or the crowbar; three ceiling crabs wake
 # at x ~475 (shoot them from the south side, the crate *4 blocks the line from y -790); the big crate *4 is pushed west, the small crate *29 east, the stack is
 # climbed with two running jumps; ladder *93 is climbed holding forward (view level) to its top (up -317, head against the ceiling); JUMP OFF it (held jump
@@ -170,6 +170,6 @@ map c1a2 next x
   @assert sym=ENT_ACTIVE offset=74 size=1 op=eq value=0
   @assert sym=ENT_ACTIVE offset=73 size=1 op=eq value=0
   @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -80 && i32(LOGIC_PLAYER_POS[0]) <= -50 && i32(LOGIC_PLAYER_POS[2]) >= -725 && i32(LOGIC_PLAYER_POS[2]) <= -695"
-  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 15"
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 40"
   @save
   @stop

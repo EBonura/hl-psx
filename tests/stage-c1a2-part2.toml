@@ -9,7 +9,7 @@ card_observe = true
 max_ticks = 40000
 [card_fixture]
 path = "tests/cards/c1a2-part1.mcd"
-sha256 = "1d29253bf461fe3c9b703fc9cafd8b73a2db50cfcdcc44b78c21a14ebbdcbea3"
+sha256 = "773f16fa888822b9094ef6a4d223afab9268386f5fc307be410f40ea19b4c941"
 
 # Bound to the build this journey was written against.
 [addr]
@@ -12998,7 +12998,7 @@ kind="expr"
 expr="i32(LOGIC_PLAYER_POS[0]) >= -80 && i32(LOGIC_PLAYER_POS[0]) <= -50 && i32(LOGIC_PLAYER_POS[2]) >= -725 && i32(LOGIC_PLAYER_POS[2]) <= -695"
 [[step.assert]]
 kind="expr"
-expr="i16(LOGIC_PLAYER_HEALTH) >= 15"
+expr="i16(LOGIC_PLAYER_HEALTH) >= 40"
 
 [[step]]
 label = "pause and open Save Game"
