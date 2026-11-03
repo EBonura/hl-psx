@@ -10492,7 +10492,7 @@ unsafe fn logic_fire_targets(
             }
             if enable {
                 if inactive {
-                    turret_deploy(pi);
+                    turret_deploy(pi, 0);
                 }
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_INACTIVE;
             } else {
@@ -19633,13 +19633,15 @@ unsafe fn tick_alien_attack(
     }
 }
 
-/// CBaseTurret::TurretUse and CSentry::TakeDamage: a switched-on turret plays
-/// its deploy clip, then needs a SearchThink and two ActiveThinks to fire.
+/// CBaseTurret::TurretUse and CSentry::TakeDamage (`extra` 0) or the first
+/// sight of a cold turret (`SIGHT_EXTRA_TICKS`): the turret plays its deploy
+/// clip, then needs a SearchThink and two ActiveThinks to fire.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn turret_deploy(pi: usize) {
+unsafe fn turret_deploy(pi: usize, extra: u8) {
     PROP_DORMANT[pi] |= PROP_RUNTIME_TURRET_DEPLOYED;
-    prop_attack_cooldown_set(pi, turret_aim::use_to_shot_ticks(PROP_KIND[pi]));
+    let wait = turret_aim::shot_ticks(PROP_KIND[pi], extra);
+    prop_attack_cooldown_set(pi, prop_attack_cooldown(pi).max(wait));
 }
 
 /// The spinning turret's barrel winds down one tick per tick without a target.
@@ -19904,18 +19906,18 @@ unsafe fn tick_shooter(
             // spin-up think); monster_turret then spins its barrel up for 2.2 s
             // before the first shot and keeps it spinning for 5 s after the
             // target is gone.
-            let mut wait = prop_attack_cooldown(pi);
             if PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_DEPLOYED == 0 {
-                PROP_DORMANT[pi] |= PROP_RUNTIME_TURRET_DEPLOYED;
-                wait = wait.max(turret_aim::sight_to_shot_ticks(ty));
+                turret_deploy(pi, turret_aim::SIGHT_EXTRA_TICKS);
             }
             if ty == turret_aim::SPINNING_KIND {
                 if PROP_AI_TIMER[pi] == 0 {
-                    wait += turret_aim::SPIN_UP_TICKS;
+                    prop_attack_cooldown_set(
+                        pi,
+                        prop_attack_cooldown(pi) + turret_aim::SPIN_UP_TICKS,
+                    );
                 }
                 PROP_AI_TIMER[pi] = turret_aim::SPIN_HOLD_TICKS;
             }
-            prop_attack_cooldown_set(pi, wait);
         }
         if matches!(ty, 10 | 11) {
             tick_alien_attack(pi, ty, pos, aim, d2, target, health, armor);
@@ -21434,7 +21436,7 @@ unsafe fn tick_props(
             } else if sentry_wake::due(PROP_HEALTH[pi], true, true, SIM_NOW, PROP_DEATH_START[pi]) {
                 PROP_AI_TIMER[pi] = 0;
                 PROP_DORMANT[pi] &= !PROP_RUNTIME_TURRET_INACTIVE;
-                turret_deploy(pi);
+                turret_deploy(pi, 0);
             }
         }
         if (PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE) != 0 {

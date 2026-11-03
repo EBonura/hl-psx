@@ -68,21 +68,19 @@ pub const fn deploy_ticks(kind: u8) -> u8 {
 /// spin-up ActiveThink and the firing one.
 pub const DEPLOYED_SHOT_TICKS: u8 = 8;
 
-/// Ticks from a Use (or a sentry's touch or damage) to the first shot.
-#[inline(always)]
-pub const fn use_to_shot_ticks(kind: u8) -> u8 {
-    deploy_ticks(kind) + DEPLOYED_SHOT_TICKS
-}
-
-/// Ticks from the first sight of a cold turret to its first shot:
-/// `use_to_shot_ticks` plus the 6 ticks of the 0.3 s nextthink, the 2.5 the
+/// Ticks a cold turret needs beyond `DEPLOYED_SHOT_TICKS` when it deploys on
+/// sight instead of on a Use: the 6 ticks of the 0.3 s nextthink, the 2.5 the
 /// target waits on average for the next AutoSearch (less the 1.5 the port's own
 /// target search adds), and the 6 ticks the retail gun needs to swing its
 /// pitch onto a target that is not level with it (the first hit came 9 ticks
 /// after the first shot against a target 18 degrees below a ceiling gun).
+pub const SIGHT_EXTRA_TICKS: u8 = 11;
+
+/// Ticks from the start of deployment to the first shot, `extra` being 0 for a
+/// Use (or a sentry's touch or damage) and `SIGHT_EXTRA_TICKS` for a sight.
 #[inline(always)]
-pub const fn sight_to_shot_ticks(kind: u8) -> u8 {
-    use_to_shot_ticks(kind) + 11
+pub const fn shot_ticks(kind: u8, extra: u8) -> u8 {
+    deploy_ticks(kind) + DEPLOYED_SHOT_TICKS + extra
 }
 
 /// Shortest angular distance between two yaws.
@@ -125,7 +123,7 @@ pub const fn swing(cur: u16, goal: u16, high: bool) -> u16 {
 }
 
 /// FBoxVisible stores a random point of the target's box as the aim point on
-/// every think: a lateral offset of -16..=16 units from the box centre for the
+/// every think: a lateral offset of -16..=15 units from the box centre for the
 /// think at `tick` of actor `pi`. A hash instead of a shared generator, so a
 /// turret does not shift the random stream the rest of the game draws from.
 #[inline(always)]
@@ -133,7 +131,7 @@ pub const fn box_offset(tick: u16, pi: u8) -> i32 {
     let mut h = (tick as u32).wrapping_mul(0x9E37_79B1) ^ (pi as u32).wrapping_mul(0x85EB_CA6B);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2C1B_3C6D);
-    ((h >> 16) % (2 * BOX_HALF_WIDTH as u32 + 1)) as i32 - BOX_HALF_WIDTH
+    ((h >> 16) & 31) as i32 - BOX_HALF_WIDTH
 }
 
 /// The yaw the barrel steers to: the bearing to the target's centre moved by
@@ -182,11 +180,11 @@ mod tests {
     fn a_cold_miniturret_waits_two_seconds_from_sight_to_first_hit() {
         // The oracle: 42 to 49 ticks from first sight to the first hit, of
         // which the first shot is 36 to 41 ticks after the sight.
-        let shot = sight_to_shot_ticks(22) as i32;
+        let shot = shot_ticks(22, SIGHT_EXTRA_TICKS) as i32;
         assert!((36..=41).contains(&shot), "{shot}");
-        assert_eq!(use_to_shot_ticks(22), 28);
-        assert!(sight_to_shot_ticks(20) < sight_to_shot_ticks(22));
-        assert!(sight_to_shot_ticks(22) < sight_to_shot_ticks(21));
+        assert_eq!(shot_ticks(22, 0), 28);
+        assert!(shot_ticks(20, 0) < shot_ticks(22, 0));
+        assert!(shot_ticks(22, 0) < shot_ticks(21, 0));
     }
 
     #[test]
@@ -212,7 +210,7 @@ mod tests {
             lo = lo.min(o);
             hi = hi.max(o);
         }
-        assert_eq!((lo, hi), (-BOX_HALF_WIDTH, BOX_HALF_WIDTH));
+        assert_eq!((lo, hi), (-BOX_HALF_WIDTH, BOX_HALF_WIDTH - 1));
         assert_eq!(box_goal(1000, 0, 500), 1000);
         assert_eq!(box_goal(1000, 16, 652), 1016);
         assert_eq!(box_goal(1, -16, 652), 4081); // wraps
