@@ -1,0 +1,199 @@
+@journey name=hl-stage-c1a1c-canal title="Half-Life c1a1c stage, lower canal: from the platform below the Lower Canal door, the crates, the swim west past the barnacles, the ladder, the first aid unit, the pocket door, the bullsquid and the crabs on the south platform, the second door and the corridor to the changelevel into c1a1d, ending with an @save at the real c1a1d arrival" prologue=load card_fixture=tests/cards/c1a1c-canal.mcd card_sha256=4ceb830bc673e36c6a706ffeb8e5370bb66ff19c5be58fbc9fe2a15afdc8e456 sync=poll max_ticks=120000
+# Walkthrough: Danny Cox, Half-Life walkthrough chapter 3 "Lower Canal to the Lift" (https://halflife.dannycox.me.uk/halfLife/walkthrough/03.html): jump into the canal and swim left as far as you can,
+# turn right, turn right again, climb the ladder, first aid unit, door, smash the boxes, door, the passage to the hanging box room (c1a1d).
+# Facts (positions are x, y, up as in LOGIC_PLAYER_POS; yaw 0 faces +y, 1024 +x, 2048 -y, 3072 -x):
+# - The platform (x -1156..-812, y 80) ends at the crates *61/*62 (power cell boxes: aim at them and swing the crowbar); past x -736 the player walks off into the canal.
+# - The swim: hold forward AND jump (jump held keeps the head out at the surface, up -3100; no air is lost). Lane y ~540, yaw 3052..3064 (west): the barnacles hang over y 263, 348,
+#   468, 608 at x -1976..-1808 and over (-1150,474) and (-576,520); a barnacle only hooks a hull within about 24 units of its x,y, so y 540 clears them all (a lane at y 468 died: first run).
+# - West of x -2688 trigger_push *27 drags the swimmer north (-y): turn north at x -2709 (yaw 4000+) and swim to y 840, then east on yaw 1075 to the ladder *96 (x -2536, y 879..907):
+#   `f127 l60 until up>=-3030` climbs it, then f127 east to the platform (-2477, 881, up -3004).
+# - The first aid unit *95 (-2340, 856) heals about 40 in all (23, then 17 more: it is empty after that).
+# - Door *3 (hinge -2526, 748) is a touch door in a 60 wide passage (x -2520..-2480, y 740..820) onto a ledge only 68 wide (y 668..736): walk through slowly (`f50 until y<=712`), a full speed run
+#   slides 40 units and falls into the canal, and the closing door sweeps anything standing in the passage north into the water.
+# - Pistol 5 + 13 rounds: reload to 17 inside the passage BEFORE opening the door. Two headcrabs wait in the water at the door, the bullsquid (40 health, spits for 10 from 700 units, swims along
+#   the canal) comes down the canal and is shot from the doorway (`@fight near=900 kind=7`). The platform crabs (4 fodder) are not fought: the ledge lane y ~700..705 east to x -1010 draws no bites,
+#   then a turn south and an @align on x -958..-946 (the door *42 at (-928, 905) is 48 wide) and the room and corridor to the changelevel *43.
+# - Real arrival in c1a1d is (612, -368, up -188) yaw 35, 40 units off the segment start stage-c1a1d used before.
+map c1a1c next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  @checkpoint resumed
+  @probe
+  @face 2048 right
+  @hold f127 until y<=-190 timeout=60
+  8
+  @checkpoint s190
+  @probe
+  @face 3072 right
+  @hold f127 until x<=-1140 timeout=80
+  8
+  @checkpoint w1140
+  @probe
+  @face 4000 right
+  @hold t29 until expr="i16(LOGIC_PLAYER_YAW) >= 4080 || i16(LOGIC_PLAYER_YAW) <= 20" timeout=20
+  @align s40 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-1158 hi=-1142 timeout=80
+  @hold f127 until y>=-100 timeout=80
+  8
+  @checkpoint n100
+  @probe
+  @hold f127 until y>=80 timeout=80
+  8
+  @checkpoint n80
+  @probe
+  @hold t60 until expr="i16(LOGIC_PLAYER_YAW) >= 990 && i16(LOGIC_PLAYER_YAW) <= 1060" timeout=60
+  @hold f127 until x>=-900 timeout=80
+  @checkpoint e900
+  @probe
+  @hold f60 until x>=-812 timeout=60
+  8
+  @checkpoint near
+  @probe
+  @aim at=-780,-3007,126 timeout=60
+  @checkpoint aimed
+  @probe
+  @weapon crowbar
+  100 attack
+  @checkpoint broke
+  @probe
+  @hold f127 until x>=-700 timeout=80
+  8
+  @checkpoint e700
+  @probe
+  @face 3072 left
+  @hold t29 until expr="i16(LOGIC_PLAYER_YAW) >= 3052" timeout=10
+  @checkpoint facew
+  @probe
+  @hold f127 jump until x<=-1000 timeout=100
+  @checkpoint w1000
+  @probe
+  @hold f127 jump until x<=-1500 timeout=200
+  @checkpoint w1500
+  @probe
+  @hold f127 jump until x<=-2000 timeout=200
+  @checkpoint w2000
+  @probe
+  @hold f127 jump until x<=-2500 timeout=200
+  @checkpoint w2500
+  @probe
+  @hold f127 jump until x<=-2700 timeout=200
+  @checkpoint w2700
+  @probe
+  @face 4000 right
+  @checkpoint facen
+  @probe
+  @hold f127 jump until y>=650 timeout=100
+  @checkpoint n650
+  @probe
+  @hold f127 jump until y>=830 timeout=100
+  @checkpoint n830
+  @probe
+  @face 1075 right
+  @checkpoint faceE
+  @probe
+  @hold f127 jump until x>=-2600 timeout=100
+  @checkpoint e2600
+  @probe
+  @hold f127 jump until x>=-2560 timeout=100
+  @checkpoint e2560
+  @probe
+  @hold f127 l60 until up>=-3030 timeout=80
+  @checkpoint climb
+  @probe
+  @hold f127 until x>=-2480 timeout=40
+  @checkpoint top
+  @probe
+  @level
+  @hold f127 until x>=-2400 timeout=60
+  8
+  @checkpoint chg
+  @probe
+  @aim at=-2340,-2975,856 timeout=60
+  @checkpoint aimedc
+  @probe
+  @hold use until expr="i16(LOGIC_PLAYER_HEALTH) >= 100" timeout=300
+  @checkpoint healed
+  @probe
+  @face 3072 left
+  @hold f127 until x<=-2440 timeout=40
+  @hold f40 until x<=-2494 timeout=40
+  8
+  @checkpoint doorx
+  @probe
+  @face 2048 left
+  @hold f127 until y<=840 timeout=40
+  @checkpoint d1
+  @probe
+  @hold f127 until y<=770 timeout=60
+  @checkpoint d2
+  @probe
+  @weapon glock
+  @hold reload until expr="i16(LOGIC_PLAYER_CLIP_AMMO) >= 17" timeout=100
+  @checkpoint reloaded
+  @probe
+  @hold f50 until y<=712 timeout=60
+  12
+  @checkpoint stopped
+  @probe
+  @hold s-127 until x>=-2430 timeout=30
+  @face 1024 left
+  @checkpoint door-clear
+  @probe
+  @fight near=250 kind=2 below=100 above=40 aimup=6 for=100 sleep=3 reload=3 reloadquiet=150 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @checkpoint crabs
+  @probe
+  @fight near=900 kind=7 below=150 above=100 aimup=6 for=300 sleep=2 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @checkpoint squid
+  @probe
+  @hold reload until expr="i16(LOGIC_PLAYER_CLIP_AMMO) >= 15 || i16(LOGIC_PLAYER_RESERVE_AMMO) == 0" timeout=100
+  @checkpoint reloaded2
+  @probe
+  @face 940 right
+  @hold f127 until x>=-2300 timeout=60
+  @face 1024 right
+  @hold f127 until x>=-1900 timeout=100
+  @checkpoint p2
+  @probe
+  @hold f127 until x>=-1760 timeout=100
+  @checkpoint p3
+  @probe
+  @hold f127 until x>=-1100 timeout=100
+  @checkpoint x1100
+  @probe
+  @hold f50 until x>=-1010 timeout=40
+  @face 60 left
+  @align s40 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-958 hi=-946 timeout=60 settle=6
+  @checkpoint aligned
+  @probe
+  @hold f127 until y>=840 timeout=60
+  @align s40 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-958 hi=-946 timeout=60 settle=6
+  @checkpoint aligned2
+  @probe
+  @hold f60 until y>=895 timeout=60
+  @checkpoint door1
+  @probe
+  @hold f127 until y>=950 timeout=60
+  @checkpoint door2
+  @probe
+  @face 3072 left
+  @hold f127 until x<=-1090 timeout=60
+  8
+  @checkpoint room-w
+  @probe
+  @face 60 left
+  @hold f127 until y>=1100 timeout=100
+  @checkpoint cor1
+  @probe
+  @hold f127 until y>=1250 timeout=100
+  @checkpoint cor2
+  @probe
+  @hold f127 until sym=WORLD_ARENA offset=4 size=4 op=eq value=2337 timeout=300
+map c1a1d next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  @checkpoint arrive-c1a1d
+  @probe
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= 560 && i32(LOGIC_PLAYER_POS[0]) <= 660 && i32(LOGIC_PLAYER_POS[2]) >= -420 && i32(LOGIC_PLAYER_POS[2]) <= -330"
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 60"
+  # The card tests/cards/c1a1d-arrival.mcd (stage-c1a1d resumes from it).
+  @save
+  @stop

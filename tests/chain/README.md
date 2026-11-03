@@ -200,7 +200,7 @@ with `stage.sh`-style tooling; the gate itself needs the real hash.
 Cards are bound to the save format of the build that wrote them. Regenerate them by running the stage that ends in
 `@save` again; do not hand-edit them.
 
-`stage-c1a1d.route` (`tests/stage-c1a1d.toml`) starts from the segment start and ends with an `@save` on the return to c1a1c: its card
+`stage-c1a1d.route` (`tests/stage-c1a1d.toml`) starts from the real arrival (card `tests/cards/c1a1d-arrival.mcd`, which `stage-c1a1c-canal` saves) and ends with an `@save` on the return to c1a1c: its card
 is `tests/cards/c1a1c-return.mcd`, which `stage-c1a1c-return.route` (`tests/stage-c1a1c-return.toml`, tapes in `tapes-stage-r`) loads. That
 stage walks from the c1a1d arrival to the elevator and rides it to c1a2 (26 checks, about 75 s emulated). Two things it needed that the
 next maps will too: a door with no targetname opens when the player walks into it (`use` does nothing, so a "locked looking" door in a
@@ -216,6 +216,8 @@ dark passage is probably a touch door), and a button is only used when the view 
 `stage-c1a2-part3.route` (`tests/stage-c1a2-part3.toml`, tapes in `tapes-stage-c1a2p3`) loads `tests/cards/c1a2-part2.mcd` and ends with an `@save` at the real c1a2a arrival (card `tests/cards/c1a2-part3.mcd`, 5,500 ticks, 104 checks, 20 health, identical card on the intro and no-intro disc). Steps: the crab that follows the player down the duct is shot facing east at once (it bites if the turn starts later), the drop out of the duct at x -224 (the security gun deploys 41 polls after first sight, retail 42 to 49: the route is behind x -350 before that), south round crate *5, the west corridor, five fodder headcrabs killed with the crowbar in `@fight until=` blocks (a 23 MB unrolled journey became 1.4 MB), the stairs and the changelevel (the last hold waits on the map id with a long timeout because the load stops the pad polls). The gun's lever *27 and the charger *142 are behind a crate row and are not used. The c1a2a arrival of this card is (-456, -288, up -508), not the dev card's (-498,-189).
 
 `stage-c1a1c-mid.route` (`tests/stage-c1a1c-mid.toml`, tapes in `tapes-stage-c1a1c-mid`) loads the same bridge card as `stage-c1a1c-vent`, repeats its legs under `sync=poll`, and goes on: the crouched crawl over the five floor bars, the floor cover *87 (a crouched swing from beside the plate aimed at its near edge; swinging straight down while standing on it does nothing), the drop, the Lower Canal door *46 (a touch door 48 wide: centre the hull on x -998..-986 first), the corridor, and a step west off its end that drops 304 units down the ladder shaft to the lower platform (13 health). It ends with an `@save` there: card `tests/cards/c1a1c-canal.mcd`, (-1032,-87,up -3004), 77 health, 5,173 ticks, 106 checks (the intro disc; the no-intro disc passes with a card that differs by 3 ticks). The ladder *45 was not mounted. The lower canal onward is not routed (header of the route lists the facts).
+
+`stage-c1a1c-canal.route` (`tests/stage-c1a1c-canal.toml`, tapes in `tapes-stage-c1a1c-canal`) loads `tests/cards/c1a1c-canal.mcd` and plays the rest of c1a1c's lower canal to the changelevel into c1a1d, ending with an `@save` at the real c1a1d arrival (card `tests/cards/c1a1d-arrival.mcd`, (612,-368,up -188), 90 health, 287 checks, green on the intro and no-intro discs and at boot wait 107): the platform and its two power cell crates, a swim west holding forward and jump on lane y 540 (the barnacles over y 263..608 at x -1976..-1808 hook any hull within about 24 units of their x,y, and a lane through y 468 died), the push current west of x -2688, the ladder *96, the first aid unit *95 (about 40 in all), the pocket door *3 (touch door onto a 68 wide ledge: slow, or the player slides off), the bullsquid shot from the doorway with a magazine reloaded to 17 beforehand, the ledge lane to the second door *42 (aligned on x -958..-946) and the corridor. Walkthrough: Danny Cox chapter 3, "Lower Canal to the Lift". The four fodder headcrabs on the south platform are not fought (the @fight guard spins on a crab behind a crate and spends the pistol); the north lane draws no bites.
 
 ## Planning legs: hlnav
 
@@ -249,8 +251,8 @@ and ends crawling into the vent. It runs in about 12 s. The card was written by 
 bridge approach (the gauntlet makes that route too large to commit until the gate has a loop step); when the save format
 or an earlier map changes, regenerate the card from the chain and rebuild the journey. Check it with `hlroute verify tests/chain/stage-c1a1c-vent.route . tests/stage-c1a1c-vent.toml --tape-dir tests/chain/tapes-stage --map MAP`.
 
-`stage-c1a1d.route` (`tests/stage-c1a1d.toml`, tapes in `tests/chain/tapes-stage-d`): c1a1d from the Debug page's segment start (the arrival
-of the lower canal) to the changelevel back to c1a1c: the sunken platforms, ladder to the lower catwalk, ladder to the upper catwalk (centre the
+`stage-c1a1d.route` (`tests/stage-c1a1d.toml`, tapes in `tests/chain/tapes-stage-d`): c1a1d from the real arrival (the arrival
+of the lower canal, 40 units off the Debug page's segment start) to the changelevel back to c1a1c: the sunken platforms, ladder to the lower catwalk, ladder to the upper catwalk (centre the
 hull on x 1498: the hole in the catwalk is the ladder's width), the crate hops (crate to crate, each a run-up and a jump from a dead band, the landing read from the player's
 position), the drop to the far floor, door, a ladder (step forward off its top, not back) and the last door. About 100 s emulated. It is a segment run (diagnostic start),
 so it does not prove a chain arrival; the chain version needs the lower-canal part of c1a1c in front of it.
