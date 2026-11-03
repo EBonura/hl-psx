@@ -1,4 +1,4 @@
-@journey name=hl-parity-c1a2-pressure-crate title="c1a2 duct end: a crouched player standing on the false ceiling panel breaks it by pressure alone, and a standing player pushes the 32-unit crate in the corridor" prologue=load card_fixture=tests/cards/c1a2-part1.mcd card_sha256=1d29253bf461fe3c9b703fc9cafd8b73a2db50cfcdcc44b78c21a14ebbdcbea3 max_ticks=30000
+@journey name=hl-parity-c1a2-pressure-crate title="c1a2 duct end: a crouched player standing on the false ceiling panel breaks it by pressure alone, and a standing player pushes the 32-unit crate in the corridor" prologue=load card_fixture=tests/cards/c1a2-part1.mcd card_sha256=773f16fa888822b9094ef6a4d223afab9268386f5fc307be410f40ea19b4c941 max_ticks=30000
 # Parity journey for two func_breakable / func_pushable rules. (1) A pressure panel (spawnflags 260, *2 over the corridor)
 # breaks 0.1 s after a player stands on it, with no crowbar swing (CBreakable::BreakTouch arms Die()); the port's generic
 # WAITING pass used to put the armed panel back to idle before the touch scan could shatter it. (2) The small crate *29
