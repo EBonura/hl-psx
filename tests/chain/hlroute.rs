@@ -1273,6 +1273,12 @@ fn compile(o: &Opts) -> Result<(), String> {
             t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 25\n");
             t.push_str("\n[[step]]\nlabel = \"wrap to Debug\"\npress = [\"up\"]\nhold = 8\nwait = 12\n");
             t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 25\n");
+            // `debug=fly`: switch Fly Mode on (the Debug page's first row) before the segment launch, so a
+            // development route can fly (noclip) to a changelevel and `@save` the arrival. For authoring only:
+            // the card it writes does not come from play and must never be used by a shipping chain.
+            if jv("debug").as_deref() == Some("fly") {
+                t.push_str("\n[[step]]\nlabel = \"debug: toggle Fly Mode\"\npress = [\"cross\"]\nhold = 8\nwait = 12\n");
+            }
             t.push_str("\n[[step]]\nlabel = \"select Segment select\"\npress = [\"up\"]\nhold = 8\nwait = 12\nrepeat = 2\n");
             t.push_str("\n[[step]]\npress = [\"cross\"]\nhold = 8\nwait = 25\n");
             if rows > 0 {

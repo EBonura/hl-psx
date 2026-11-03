@@ -1,0 +1,19 @@
+@journey name=dev-c1a2-arrive title="dev: fly from the c1a2 elevator to the exit, save at the c1a2a arrival" prologue=segment segment_row=18 debug=fly sync=poll max_ticks=30000
+# DEV ONLY: flies (noclip, Debug page Fly Mode) from the c1a2 elevator to the exit changelevel and saves at the c1a2a arrival. The card it writes (tests/cards/dev-c1a2a-arrival.mcd)
+# is the real changelevel arrival (landmark one, health 100, the segment loadout) but does not come from play: use it only to author c1a2a until the c1a2 gun room can be crossed in play, never in a chain.
+map c1a2 next c1a2a
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=200
+  30
+  @face 3243 right
+  @hold f127 until x<=-470 timeout=600
+  20
+  @face 3980 right
+  @hold f127 until y>=-200 timeout=200
+map c1a2a next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=200
+  60
+  @checkpoint arrival
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 90"
+  @save
+  @stop
