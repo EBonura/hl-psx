@@ -1,0 +1,131 @@
+@journey name=hl-stage-c1a1c-mid title="Half-Life c1a1c stage, middle: from the bridge approach save, the vent, the floor bars, the floor cover, the Lower Canal door and the shaft down to the lower canal platform, ending with an @save" prologue=load card_fixture=tests/cards/c1a1c-bridge.mcd card_sha256=8ba6c28d5d3ddee94ad6e8b7841c358ff67172df1a3e6c2a503c59cd7bb39b8c sync=poll max_ticks=120000
+# c1a1c middle: continues stage-c1a1c-vent (same card, same first legs; sync=poll). After the vent cover *86 the crouched crawl goes west over the five floor bars
+# (x -945..-1008: the parity fix 'crouch hulls of low brush entities'), south to y -341, and the floor cover *87 (ENT 66) breaks to a crouched swing from OFF the plate
+# aimed at its near edge (`@aim at=-1004,-2578,-372`; swinging straight down while standing on it does nothing). The drop lands at (-1004,-2700,-401) with no damage.
+# The Lower Canal door *46 is a touch door 48 wide (x -1016..-968): the hull has to be centred on x -998..-986 or the jamb holds it at y -321. North of it the corridor runs to
+# y ~8 over the shaft of ladder *45 (x -1012..-972, y -34..-30, z -3004..-2730); stepping west off the corridor at y -49 drops 304 units to the lower platform
+# (-1032,-87,-3004), 13 HP of fall damage, no ladder climb (the ladder was not mounted). Next: the platform (planner path to (-736,96): hlnav c1a1c hop -1032 -87 -3004 -736 96),
+# then swimming the canal (static plan bottoms out at z -3109.5), bullsquid (-750,854), ladder *96 (-2534,893), first aid *95, doors, hanging boxes, changelevel *43 (-1088,1268).
+# Resumes from the memory-card save the chain writes at the bridge approach (explore: savep, `@save` after yv5).
+# The map restarts fresh from the save, so the lift and the gauntlet are not played here.
+map c1a1c next x
+  @wait expr="i32(LOGIC_PLAYER_POS[2]) != 0" timeout=120
+  30
+  @checkpoint resumed
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -640 && i32(LOGIC_PLAYER_POS[0]) <= -520 && i32(LOGIC_PLAYER_POS[2]) >= -860 && i32(LOGIC_PLAYER_POS[2]) <= -780"
+  @face 3940 right
+  @hold f127 until y>=-708 timeout=40
+  8
+  @checkpoint bridge-stop
+  @assert expr="i32(LOGIC_PLAYER_POS[2]) >= -720 && i32(LOGIC_PLAYER_POS[2]) <= -600"
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 30"
+
+  @face 970 right
+  @hold f127 until x>=-420 timeout=40
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until x>=-240 timeout=40
+  4
+  @checkpoint pipe-ledge
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) >= -260 && i32(LOGIC_PLAYER_POS[2]) >= -2690 && i32(LOGIC_PLAYER_POS[2]) <= -2660 || i32(LOGIC_PLAYER_POS[1]) >= -2690"
+
+  @face 60 left
+  @hold f127 until y>=-500 timeout=60
+  8
+  @hold s127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold s127 until x>=-190 timeout=30
+  @hold f127 until y>=-345 timeout=60
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until y>=-270 timeout=40
+  6
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until y>=-228 timeout=40
+  @face 3100 left
+  @hold f127 until x<=-285 timeout=50
+  @hold s127 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 until x<=-450 timeout=40
+  @hold s60 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 until x<=-600 timeout=40
+  @hold s60 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 until x<=-686 timeout=40
+  @hold s60 until y>=-186 timeout=20
+  @hold s-60 until y<=-176 timeout=20
+  @hold f127 jump until sym=PLAYER_ON_GROUND size=1 op=eq value=0 timeout=20
+  @hold f127 until x<=-830 timeout=40
+  @checkpoint vent-box-top
+  @assert expr="i32(LOGIC_PLAYER_POS[1]) >= -2560"
+  @assert expr="i32(LOGIC_PLAYER_POS[0]) <= -800"
+
+  @face 4030 right
+  @hold f127 until y>=-150 timeout=20
+  @weapon crowbar
+  @checkpoint crowbar-drawn
+  @assert expr="u8(VM_LIVE_WM) == 4"
+
+  @hold s40 duck until x>=-818 timeout=60
+  10 duck
+  @hold s-30 duck until x<=-796 timeout=40
+  10 duck
+  # Brush entity 65 is BSP model *86, the vent cover (the cooked entity index is not the model number).
+  @swing ent=65 duck=true timeout=60
+  @hold f127 duck until y>=-76 timeout=40
+  @checkpoint in-vent
+  @assert expr="u8(ENT_ACTIVE[65]) == 0"
+  @assert expr="i32(LOGIC_PLAYER_POS[2]) >= -80"
+  @face 3072 left duck=true
+  @hold f127 duck until x<=-940 timeout=100
+  @checkpoint bars
+  @probe
+  @hold f127 duck until x<=-1004 timeout=100
+  @checkpoint vent-w
+  @probe
+  @face 2048 left duck=true
+  @checkpoint faceS2
+  @probe
+  @hold f127 duck until y<=-330 timeout=100
+  10 duck
+  @checkpoint p0
+  @probe
+  @aim at=-1004,-2578,-372 timeout=60
+  @checkpoint a0
+  @probe
+  20 attack duck
+  @checkpoint r0
+  @assert expr="u8(ENT_ACTIVE[66]) == 0"
+  @hold f60 duck until y<=-385 timeout=60
+  40 duck
+  @checkpoint dropped
+  @probe
+  @level
+  @checkpoint landed
+  @probe
+  @face 100 left
+  @hold t-30 until expr="i16(LOGIC_PLAYER_YAW) <= 29" timeout=20
+  @checkpoint facen
+  @probe
+  3 flash
+  @hold f127 until y>=-340 timeout=60
+  @align s40 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-998 hi=-986 timeout=60
+  @checkpoint centred
+  @probe
+  @hold f127 until y>=-330 timeout=60
+  @checkpoint near
+  @probe
+  @hold f127 until y>=-250 timeout=60
+  @checkpoint through
+  @probe
+  @hold f127 until y>=-90 timeout=80
+  8
+  @checkpoint n90
+  @probe
+  @hold s-127 until up<=-2760 timeout=60
+  60
+  @checkpoint down
+  @probe
+  @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 60"
+  @assert expr="i32(LOGIC_PLAYER_POS[1]) <= -2990 && i32(LOGIC_PLAYER_POS[0]) >= -1060 && i32(LOGIC_PLAYER_POS[0]) <= -1000 && i32(LOGIC_PLAYER_POS[2]) >= -130 && i32(LOGIC_PLAYER_POS[2]) <= -60"
+  @save
+  @stop
