@@ -10,16 +10,16 @@ max_ticks = 80000
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_CLIP_AMMO = 0x800cb260
-LOGIC_PLAYER_HEALTH = 0x800cae14
-LOGIC_PLAYER_PITCH = 0x801e8480
-LOGIC_PLAYER_POS = 0x801d3a88
-LOGIC_PLAYER_YAW = 0x801d3a94
-PLAYER_ON_GROUND = 0x801d3aa0
-PROP_HEALTH = 0x800da25c
-PROP_KIND = 0x800da97b
-SIM_NOW = 0x801eaad8
-WORLD_ARENA = 0x800e69c8
+LOGIC_PLAYER_CLIP_AMMO = 0x800caa90
+LOGIC_PLAYER_HEALTH = 0x800ca644
+LOGIC_PLAYER_PITCH = 0x801e7cb0
+LOGIC_PLAYER_POS = 0x801d32b8
+LOGIC_PLAYER_YAW = 0x801d32c4
+PLAYER_ON_GROUND = 0x801d32d0
+PROP_HEALTH = 0x800d9a8c
+PROP_KIND = 0x800da1ab
+SIM_NOW = 0x801ea308
+WORLD_ARENA = 0x800e61f8
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
@@ -2387,6 +2387,31 @@ sym="LOGIC_PLAYER_CLIP_AMMO"
 size=2
 op="ge"
 value=1
+
+[[step]]
+lstick = [188, 128]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=-978 }
+timeout = 360
+
+[[step]]
+lstick = [128, 168]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=-290 }
+timeout = 360
+
+[[step]]
+wait_until = { kind="ram", sym="PROP_HEALTH", offset=0, size=1, op="eq", value=0 }
+timeout = 2400
+
+[[step]]
+lstick = [128, 68]
+rstick = [128, 128]
+press = []
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=-250 }
+timeout = 360
 
 [[step]]
 lstick = [218, 128]

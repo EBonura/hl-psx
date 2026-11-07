@@ -288,6 +288,11 @@ map c1a1f next c1a1b
   @checkpoint c1a1f-glock
   @probe
   @assert sym=LOGIC_PLAYER_CLIP_AMMO size=2 op=ge value=1
+  # the crawl Barney's scripted sequence (slot 0 of c1a1f) starts when the player's hull touches trigger_once *86 (x -368..-264, y -1074..-962). The legs below only graze its edges (the glock stand is 1 to 8 units from its north face and the strafe line is 2 units inside its east face), so a few units of slide decided whether it fired. Walk into its middle clear of the Barney's mark (-291,-1016), wait for the sequence's SCRIPT_EVENT_DEAD (slot 0, health 0), and come back to the line the legs below start from.
+  @hold s60 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-978 timeout=60
+  @hold f-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-290 timeout=60
+  @wait sym=PROP_HEALTH offset=0 size=1 op=eq value=0 timeout=400
+  @hold f60 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-250 timeout=60
   @hold s90 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1070 timeout=60
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1112 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1056 timeout=40
