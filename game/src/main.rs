@@ -35172,7 +35172,9 @@ mod stackprobe {
 fn enable_cop2() {
     let mut status: u32;
     unsafe {
-        core::arch::asm!("mfc0 $8, $12", lateout("$8") status);
+        // The nop is the load delay: mfc0 returns its value one instruction late, and without it
+        // the `or` below reads whatever $8 held before (a stale value with SR.IsC set isolated the cache).
+        core::arch::asm!("mfc0 $8, $12", "nop", lateout("$8") status, options(nomem, nostack));
         status |= 0x4000_0000;
         core::arch::asm!(
             "mtc0 $8, $12",

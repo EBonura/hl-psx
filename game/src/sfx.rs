@@ -264,7 +264,7 @@ pub unsafe fn load_bank(wm: usize, pack: &[u8]) -> bool {
     // Whatever the old bank was playing is about to be overwritten.
     let voice = psx_spu::Voice::new(BANK_VOICE);
     voice.set_volume(psx_spu::Volume::SILENCE, psx_spu::Volume::SILENCE);
-    psx_spu::Voice::key_off(voice.mask());
+    psx_spu::Voice::release(voice.mask());
     BANK_LIVE = BANK_NONE;
     let ids = wa::BANK_IDS[wm];
     let (base, room) = BANK_REGION;
