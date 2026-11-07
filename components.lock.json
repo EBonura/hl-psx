@@ -3,7 +3,7 @@
   "components": {
     "sdk": {
       "repository": "EBonura/PSoXide",
-      "revision": "bfb46440549213cb7acaced016e0f277313e938f",
+      "revision": "31c3149b755790ad37fd4ead132c66cd2821c9f3",
       "paths": [
         "sdk",
         "crates",
@@ -12,12 +12,25 @@
         "tools/psoxide-pgo",
         "tools/psoxide-hazard",
         "tools/guest_symbol_gate.sh",
-        "tools/sdk-examples.mk"
+        "tools/sdk-examples.mk",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "engine",
+        "assets/audio",
+        "assets/textures",
+        "tools/psoxide-dev",
+        "tools/psoxide-hwtest",
+        "tools/psoxide-perf",
+        "tools/psoxide-size",
+        "tools/xtask",
+        "tools/build_guest_staged.sh",
+        "tools/engine-examples.mk"
       ]
     },
     "emulator": {
       "repository": "EBonura/PSoXide-emulator",
-      "revision": "bb788f5b6beb94e17f972d54c7f90fb6ab3f53e7",
+      "revision": "d31e70754d97d877a7ed5e692d6e5604442c4f4d",
       "paths": [
         "emu/crates/emulator-core",
         "emu/crates/frontend",
@@ -30,25 +43,6 @@
         "assets/branding/demo-disc-cover.png",
         "assets/branding/demo-disc-label.png",
         "assets/home"
-      ]
-    },
-    "editor": {
-      "repository": "EBonura/PSoXide-editor",
-      "revision": "52d6d2d1885e016772e305949bd6689964111b54",
-      "paths": [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "engine",
-        "editor/crates",
-        "editor/assets",
-        "editor/projects/default",
-        "emu/crates/frontend",
-        "tools/psoxide-dev",
-        "tools/psoxide-hwtest",
-        "tools/psoxide-perf",
-        "tools/psoxide-vmcook",
-        "assets"
       ]
     }
   }

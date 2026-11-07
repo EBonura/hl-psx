@@ -1403,27 +1403,79 @@ fn build_host_tools(repository: &Path) -> Result<HostBins> {
             .arg(&content_manifest),
         "build Rust content compiler",
     )?;
-    // Viewmodel post-pass (editor tools/psoxide-vmcook): exact-replay
+    // Viewmodel post-pass (PSoXide-emulator tools/psoxide-vmcook): exact-replay
     // visibility pruning and texture sizing, shared with the other GoldSrc port.
-    let psoxide_manifest = repository.join(".psoxide/Cargo.toml");
+    // It needs emulator-core and the emulator workspace, which cannot share
+    // `.psoxide/Cargo.toml` with the SDK workspace, so it is built from a checkout
+    // of the emulator revision the lock pins.
+    let vmcook_source = vmcook_source_dir(repository)?;
+    let vmcook_target = vmcook_target_dir(repository)?;
     run(
         Command::new(cargo())
             .current_dir(repository)
-            .args([
-                "build",
-                "--release",
-                "-p",
-                "psoxide-vmcook",
-                "--manifest-path",
-            ])
-            .arg(&psoxide_manifest),
+            .args(["build", "--release", "--locked", "--manifest-path"])
+            .arg(vmcook_source.join("tools/psoxide-vmcook/Cargo.toml"))
+            .arg("--target-dir")
+            .arg(&vmcook_target),
         "build viewmodel post-pass",
     )?;
     Ok(HostBins {
         bsp: executable(repository.join("host/hl-bsp/target/release/hl-bsp")),
         content: executable(repository.join("host/hl-content/target/release/hl-content")),
-        vmcook: executable(repository.join(".psoxide/target/release/psoxide-vmcook")),
+        vmcook: executable(vmcook_target.join("release/psoxide-vmcook")),
     })
+}
+
+/// The emulator revision components.lock.json pins.
+fn emulator_revision(repository: &Path) -> Result<String> {
+    let bytes = fs::read(repository.join("components.lock.json"))?;
+    let components: serde_json::Value = serde_json::from_slice(&bytes)?;
+    Ok(components["components"]["emulator"]["revision"]
+        .as_str()
+        .ok_or("components.lock.json has no emulator revision")?
+        .to_owned())
+}
+
+fn vmcook_target_dir(repository: &Path) -> Result<PathBuf> {
+    Ok(repository
+        .join("target/vmcook-build")
+        .join(emulator_revision(repository)?))
+}
+
+/// A checkout of PSoXide-emulator at the pinned revision (fetched once), where
+/// psoxide-vmcook and its workspace live.
+pub(crate) fn vmcook_source_dir(repository: &Path) -> Result<PathBuf> {
+    let revision = emulator_revision(repository)?;
+    let path = repository.join("target/vmcook-src").join(&revision);
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&path)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    if head.as_deref() != Some(revision.as_str()) {
+        fs::create_dir_all(&path)?;
+        for args in [
+            vec!["init", "--quiet"],
+            vec![
+                "fetch",
+                "--quiet",
+                "--depth",
+                "1",
+                "https://github.com/EBonura/PSoXide-emulator",
+                revision.as_str(),
+            ],
+            vec!["checkout", "--quiet", "--detach", revision.as_str()],
+        ] {
+            run(
+                Command::new("git").arg("-C").arg(&path).args(args),
+                "fetch the emulator revision for psoxide-vmcook",
+            )?;
+        }
+    }
+    Ok(path)
 }
 
 fn remove_matching(directory: &Path, prefix: &str, extensions: &[&str]) -> Result<()> {

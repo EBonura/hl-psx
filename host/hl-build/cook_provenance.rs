@@ -382,7 +382,7 @@ fn dependencies(repository: &Path, platform: &Path) -> Result<serde_json::Value>
     Ok(serde_json::json!({
         "bsp": dependency_graph(repository, &repository.join("host/hl-bsp/Cargo.toml"), "hl-bsp")?,
         "content": dependency_graph(repository, &repository.join("host/hl-content/Cargo.toml"), "hl-content")?,
-        "viewmodels": dependency_graph(repository, &platform.join("tools/psoxide-vmcook/Cargo.toml"), "psoxide-vmcook")?,
+        "viewmodels": dependency_graph(repository, &vmcook_source_dir(repository)?.join("tools/psoxide-vmcook/Cargo.toml"), "psoxide-vmcook")?,
     }))
 }
 
