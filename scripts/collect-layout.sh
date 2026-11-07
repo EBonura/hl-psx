@@ -27,26 +27,29 @@ frontend=${HLPSX_FRONTEND:?set HLPSX_FRONTEND to the retained emulator frontend}
 disc="$repo/dist/hl-psx.cue"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-[ $# -gt 0 ] || { echo "usage: collect-layout.sh MAP..." >&2; exit 2; }
+[ $# -gt 0 ] || { echo "usage: collect-layout.sh MAP[:from:to:name]..." >&2; exit 2; }
 [ -f "$repo/game/pgo/hl-psx.layout" ] && { echo "remove game/pgo/hl-psx.layout and pack first" >&2; exit 2; }
 
 count() {
-    p=$1
+    p=$1; from=${2:-2400}; to=${3:-3400}; name=${4:-$1}
     pulses=$("$repo/scripts/mapnav.sh" "$p")
     "$frontend" launch --path "$disc" --embedded-playtest --steps 40000000000 \
-        --pad-pulses "$pulses" --no-memcard --stop-at-poll 2430 --route-log "$work/loc$p.csv" >/dev/null 2>&1
-    start=$(awk -F, 'NR==1{for(i=1;i<=NF;i++){if($i=="route_tick")a=i;if($i=="port1_polls")b=i}} NR>1 && $b>=2400 {print $a; exit}' "$work/loc$p.csv")
+        --pad-pulses "$pulses" --no-memcard --stop-at-poll $((from+30)) --route-log "$work/loc$name.csv" >/dev/null 2>&1
+    start=$(awk -F, 'NR==1{for(i=1;i<=NF;i++){if($i=="route_tick")a=i;if($i=="port1_polls")b=i}} NR>1 && $b>='$from' {print $a; exit}' "$work/loc$name.csv")
     "$frontend" launch --path "$disc" --embedded-playtest --steps 40000000000 \
-        --pad-pulses "$pulses" --no-memcard --stop-at-poll 3400 \
-        --pc-log-words --pc-line-log "$work/words$p.csv" --pc-line-start-route-tick "$start" >/dev/null 2>&1
+        --pad-pulses "$pulses" --no-memcard --stop-at-poll $to \
+        --pc-log-words --pc-line-log "$work/words$name.csv" --pc-line-start-route-tick "$start" >/dev/null 2>&1
 }
-for p in "$@"; do
-    count "$p" &
+names=""
+for spec in "$@"; do
+    IFS=: read -r p from to name <<<"$spec"
+    count "$p" "${from:-2400}" "${to:-3400}" "${name:-$p}" &
+    names="$names ${name:-$p}"
     while [ "$(jobs -r | wc -l)" -ge "${LAYOUT_JOBS:-4}" ]; do sleep 5; done
 done
 wait
 words=""
-for p in "$@"; do words="$words $work/words$p.csv"; done
+for n in $names; do words="$words $work/words$n.csv"; done
 cd "$repo/.psoxide"
 # shellcheck disable=SC2086
 cargo run --release -q -p psoxide-pgo -- layout "$repo/.hlpsx/hl-psx.map" \

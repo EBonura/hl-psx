@@ -743,6 +743,7 @@ enum Action {
     Disc,
     Install,
     Pgo,
+    RungLink,
     Check,
 }
 
@@ -879,6 +880,10 @@ fn parse_args() -> Options {
         Some("pgo") => {
             args.next();
             Action::Pgo
+        }
+        Some("rung-link") => {
+            args.next();
+            Action::RungLink
         }
         Some("check") => {
             args.next();
@@ -2112,7 +2117,7 @@ enum GuestProfile<'a> {
     /// the same stack reserve.
     CollectElf(u32),
     /// Optimise with this LLVM sample profile, at this hot call-site
-    /// inlining threshold (see `PGO_HOT_CALLSITE_LADDER`).
+    /// inlining threshold (see `PGO_LADDER_FROM`).
     Use(&'a Path, u32),
     /// The same compile as `Use`, linked as an ELF (not an executable) so the
     /// stack analysis can read its code.
@@ -2169,12 +2174,22 @@ fn stack_is_safe(room: u32) -> bool {
     room >= STACK_DEEPEST_MEASURED + STACK_MARGIN
 }
 
-/// Hot call-site thresholds a profile-guided build tries in turn, highest (most
-/// inlining, fastest) first, until one links with a safe stack. Inlining moves `.text` by kilobytes on tiny
-/// profile changes: final-7's source left 5,500 B free at 1000, 17,788 B at
-/// 500 and 28,028 B at 250. With the ACK-paced pad driver and the analog request
-/// at boot, 250 left 14,428 B, so the ladder has one more rung.
-const PGO_HOT_CALLSITE_LADDER: [u32; 18] = [1000, 875, 750, 625, 500, 450, 400, 350, 250, 175, 125, 110, 100, 90, 80, 70, 60, 0];
+/// What `psoxide-pgo ladder` is told about hl-psx's hot call-site thresholds: the
+/// grid it searches (top, bottom, step), how many of the highest fitting thresholds
+/// it benches, and the script that benches one. Inlining moves `.text` by kilobytes
+/// on tiny profile changes, and speed is not monotone in the threshold, so the
+/// tool picks by bench among the highest that keep the RAM floor
+/// (`HLPSX_LADDER_CANDIDATES=1` takes the highest fit with no bench, for local runs).
+const PGO_LADDER_FROM: &str = "1000";
+const PGO_LADDER_TO: &str = "250";
+const PGO_LADDER_STEP: &str = "50";
+const PGO_LADDER_CANDIDATES: &str = "4";
+const PGO_LADDER_BENCH: &str = "scripts/pgo-rung-bench.sh";
+/// The ladder's per-rung table, committed beside the profile it was run on.
+const SHIPPED_LADDER: &str = "game/pgo/ladder.txt";
+/// The bench scores of the build the last `pgo` run shipped: the next run's baseline, so a
+/// rung more than 1% under it on any window is not picked.
+const SHIPPED_SCORES: &str = "game/pgo/bench-scores.txt";
 
 /// The sample-profile loader's hot call-site threshold for `-Zprofile-sample-use`
 /// builds (LLVM's default is 3000).
@@ -2614,8 +2629,9 @@ fn projection_stack_budget(scratchpad_rs: &Path) -> Result<usize> {
     Ok(SCRATCHPAD_BYTES - guard_end)
 }
 
-/// The ordinary build: the committed profile at the threshold it shipped at,
-/// stepping down only if source changes since then no longer link or leave a safe stack.
+/// The ordinary build: the committed profile at exactly the threshold it shipped at.
+/// A change that no longer links there, or leaves no safe stack, is an error: the
+/// profile is stale, and `cargo hl-build pgo` picks the rung again.
 fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) -> Result<PathBuf> {
     let profile = repository.join(SHIPPED_PROFILE);
     if !profile.is_file() {
@@ -2626,7 +2642,7 @@ fn compile_shipped(repository: &Path, psoxide: &Path, features: Option<&str>) ->
         .trim()
         .parse::<u32>()
         .map_err(|error| format!("{SHIPPED_THRESHOLD}: {error}"))?;
-    let linked = link_with_profile(repository, psoxide, features, &profile, threshold)?;
+    let linked = link_shipped(repository, psoxide, features, &profile, threshold)?;
     SHIPPED_THRESHOLD_USED.store(linked.threshold, Ordering::Relaxed);
     enforce_ram_budget(repository, features, linked.free)?;
     Ok(linked.exe)
@@ -2932,27 +2948,33 @@ fn profile_guided_pack(
         .collect();
     // A profile moves the code, so the shipped layout (bound to the code of an
     // earlier profile) cannot apply to these links, and a layout that does not
-    // bind now fails the build. With tape windows `pgo` collects a layout below;
-    // with scripts only, collect it afterwards (scripts/collect-layout.sh) and pack.
+    // bind now fails the build. The bench of each ladder candidate collects a layout for
+    // its own link (scripts/pgo-rung-bench.sh); with tape windows `pgo` collects one below.
     LAYOUT_ENABLED.store(false, Ordering::Relaxed);
-    let trial = link_with_profile(
-        repository,
-        psoxide,
-        features,
-        &profile,
-        PGO_HOT_CALLSITE_LADDER[0],
-    )?;
-    let threshold = trial.threshold;
+    // The ladder reads the profile (and the hooks the threshold) from where every
+    // ordinary build does.
+    fs::create_dir_all(repository.join("game/pgo"))?;
+    fs::copy(&profile, repository.join(SHIPPED_PROFILE))?;
+    let threshold = pick_threshold(repository, psoxide)?;
+    let _ = fs::remove_file(repository.join(SHIPPED_LAYOUT));
+    let trial = link_rung(repository, psoxide, features, &profile, threshold)?;
     let mut shipped = trial.free;
     let mut exe = trial.exe;
+    let picked_layout = repository
+        .join(format!(".hlpsx/ladder/rung-{threshold}"))
+        .join("hl-psx.layout");
     if !windows.is_empty() {
         let layout_cue = pack_disc_into(repository, psoxide, &exe, &work.join("layout"), false)?;
         collect_layout(repository, psoxide, &layout_cue, &windows, &work, &exe)?;
+    } else if picked_layout.is_file() {
+        fs::copy(&picked_layout, repository.join(SHIPPED_LAYOUT))?;
+    }
+    if repository.join(SHIPPED_LAYOUT).is_file() {
         LAYOUT_ENABLED.store(true, Ordering::Relaxed);
-        // The link that ships: the rung the ladder chose, with the layout
-        // applied. Not a second ladder: stepping to another rung would leave
-        // the layout (bound to this rung's code) unapplied, and the ladder
-        // measured this rung's free RAM, so the two must agree.
+        // The link that ships: the picked rung with the layout applied. Not a
+        // second ladder: another rung would leave the layout (bound to this rung's
+        // code) unapplied, and the ladder measured this rung's free RAM, so the two
+        // must agree.
         let ordered = link_rung(repository, psoxide, features, &profile, threshold)?;
         check_free_matches(
             "shipping link with the I-cache layout applied",
@@ -3126,18 +3148,6 @@ fn link_rung(
     })
 }
 
-/// Every rung's outcome, for the ladder's report and its errors.
-fn describe_rungs(tried: &[(u32, Option<u32>)]) -> String {
-    tried
-        .iter()
-        .map(|(threshold, free)| match free {
-            Some(free) => format!("{threshold}: {free} B free"),
-            None => format!("{threshold}: did not link"),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// The free RAM of the link that ships must be exactly the figure the ladder
 /// printed for its rung. Both come from the same check on the same code, so a
 /// difference means the ladder's trial was not the shipping link (another
@@ -3155,71 +3165,96 @@ fn check_free_matches(what: &str, threshold: u32, ladder: u32, shipped: u32) -> 
     .into())
 }
 
-/// Link with `profile`, stepping inlining down the ladder from `first` to the
-/// first (highest, so fastest) rung that links, leaves a safe stack (see
-/// `stack_is_safe`) and, for a shipping build, keeps the committed free-RAM
-/// floor (`game/ram-budget`: the allowance the unmerged lanes are promised, so
-/// raising it trades inlining for headroom). Every rung's free RAM is printed. A threshold that inlines past the RAM
-/// region fails to link; step down from that too. A real compile error fails
-/// every threshold and is reported with the ladder.
-///
-/// The returned image is the trial link itself: the first rung that passes is
-/// the last one made, so its map is the one on disk.
-fn link_with_profile(
+/// Link `profile` at exactly `threshold`, as the ordinary build does, and fail unless the
+/// stack has room (see `stack_is_safe`). The RAM floor is `enforce_ram_budget`'s.
+fn link_shipped(
     repository: &Path,
     psoxide: &Path,
     features: Option<&str>,
     profile: &Path,
-    first: u32,
+    threshold: u32,
 ) -> Result<Linked> {
     let (_, gap) = sdk_stack_geometry(&fs::read_to_string(psoxide.join("sdk/psoxide.ld"))?)?;
     let reserve = stack_gate::committed_reserve(repository)?;
-    let floor = if is_shipping_build(features) {
-        ram_floor(repository)?
-    } else {
-        0
-    };
-    let mut tried: Vec<(u32, Option<u32>)> = Vec::new();
-    let mut link_error = None;
-    for threshold in PGO_HOT_CALLSITE_LADDER
-        .into_iter()
-        .filter(|threshold| *threshold <= first)
-    {
-        match link_rung(repository, psoxide, features, profile, threshold) {
-            Ok(linked) => {
-                tried.push((threshold, Some(linked.free)));
-                let room = stack_room(linked.free, reserve, gap);
-                if stack_is_safe(room) && linked.free < floor {
-                    println!(
-                        "PGO threshold {threshold} links with {} B free, under the {floor} B floor; stepping down",
-                        linked.free
-                    );
-                } else if stack_is_safe(room) {
-                    println!(
-                        "PGO variant: hot-callsite-threshold={threshold}, {} B of RAM free, \
-                         {room} B of stack room below the initial SP (needs {}; tried {})",
-                        linked.free,
-                        STACK_DEEPEST_MEASURED + STACK_MARGIN,
-                        describe_rungs(&tried)
-                    );
-                    return Ok(linked);
-                }
-            }
-            Err(error) => {
-                println!("PGO threshold {threshold} did not build ({error}); stepping down");
-                tried.push((threshold, None));
-                link_error = Some(error);
-            }
-        }
+    let linked = link_rung(repository, psoxide, features, profile, threshold).map_err(|error| {
+        format!(
+            "the profile no longer links at hot-callsite-threshold={threshold} ({error}); it is \
+             stale for this code, run `cargo hl-build pgo`"
+        )
+    })?;
+    let room = stack_room(linked.free, reserve, gap);
+    if !stack_is_safe(room) {
+        return Err(format!(
+            "hot-callsite-threshold={threshold} leaves {room} B of stack room below the initial SP \
+             (needs {}); the profile is stale for this code, run `cargo hl-build pgo`",
+            STACK_DEEPEST_MEASURED + STACK_MARGIN
+        )
+        .into());
     }
-    Err(format!(
-        "no hot-callsite threshold from {first} down {PGO_HOT_CALLSITE_LADDER:?} links with \
-         {} B of stack room below the initial SP ({}){}",
-        STACK_DEEPEST_MEASURED + STACK_MARGIN,
-        describe_rungs(&tried),
-        link_error.map_or_else(String::new, |error| format!("; last link error: {error}"))
-    )
-    .into())
+    Ok(linked)
+}
+
+/// `rung-link`: the link hook of `psoxide-pgo ladder`. Links the shipped profile at
+/// `$PSOXIDE_PGO_THRESHOLD` with no layout, prints `free N`, and fails when the link or its
+/// stack does not hold. The floor is the ladder's.
+fn rung_link(repository: &Path, psoxide: &Path, features: Option<&str>) -> Result<()> {
+    let threshold: u32 = env::var("PSOXIDE_PGO_THRESHOLD")
+        .map_err(|_| "rung-link is run by `psoxide-pgo ladder` (PSOXIDE_PGO_THRESHOLD)")?
+        .parse()?;
+    LAYOUT_ENABLED.store(false, Ordering::Relaxed);
+    let linked = link_shipped(
+        repository,
+        psoxide,
+        features,
+        &repository.join(SHIPPED_PROFILE),
+        threshold,
+    )?;
+    println!("free {}", linked.free);
+    // Neighbouring thresholds often link the same image; the ladder benches each image once.
+    println!("code {:x}", Sha256::digest(fs::read(&linked.exe)?));
+    Ok(())
+}
+
+/// Run `psoxide-pgo ladder` on the profile in `SHIPPED_PROFILE` and return the threshold it
+/// picked. The per-rung table goes to `SHIPPED_LADDER` and the pick's scores to
+/// `SHIPPED_SCORES`; the pick's layout (collected by the
+/// bench) is left in `.hlpsx/ladder/rung-N/`.
+fn pick_threshold(repository: &Path, psoxide: &Path) -> Result<u32> {
+    let floor = ram_floor(repository)?;
+    let candidates = env::var("HLPSX_LADDER_CANDIDATES").unwrap_or_else(|_| PGO_LADDER_CANDIDATES.into());
+    let work = repository.join(".hlpsx/ladder");
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work)?;
+    let mut command = Command::new(cargo());
+    command
+        .current_dir(psoxide)
+        .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "ladder"])
+        .args(["--ram-floor", &floor.to_string()])
+        .args(["--from", PGO_LADDER_FROM, "--to", PGO_LADDER_TO])
+        .args(["--step", PGO_LADDER_STEP, "--candidates", &candidates])
+        .arg("--work")
+        .arg(&work)
+        .arg("--out")
+        .arg(repository.join(SHIPPED_LADDER))
+        .arg("--link")
+        .arg(format!("{} rung-link", env::current_exe()?.display()));
+    let baseline = repository.join(SHIPPED_SCORES);
+    if baseline.is_file() {
+        command.arg("--baseline").arg(&baseline);
+    }
+    if candidates != "1" {
+        command.arg("--bench").arg(repository.join(PGO_LADDER_BENCH));
+    }
+    run(&mut command, "pick the hot call-site threshold (psoxide-pgo ladder)")?;
+    let scores = work.join("scores.txt");
+    if scores.is_file() {
+        fs::copy(&scores, repository.join(SHIPPED_SCORES))?;
+    }
+    let record = fs::read_to_string(work.join("shipped-variant.txt"))?;
+    record
+        .lines()
+        .find_map(|line| line.strip_prefix("threshold ")?.trim().parse().ok())
+        .ok_or_else(|| "the ladder wrote no threshold".into())
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -3505,6 +3540,9 @@ fn main() -> Result<()> {
     } else {
         options.features.as_deref()
     };
+    if options.action == Action::RungLink {
+        return rung_link(&repository, &psoxide, features);
+    }
     if options.action == Action::Pgo {
         let cue = profile_guided_pack(
             &repository,
@@ -3613,15 +3651,6 @@ mod tests {
         // A smaller reserve (a collect-style link) is judged on what it leaves.
         assert!(!stack_is_safe(stack_room(100, 0x4000, gap)));
         assert!(stack_is_safe(stack_room(9_000, 0x4000, gap)));
-    }
-
-    #[test]
-    fn rung_report_names_every_rung() {
-        let tried = [(1000, None), (500, Some(8_016)), (125, Some(18_256))];
-        assert_eq!(
-            describe_rungs(&tried),
-            "1000: did not link, 500: 8016 B free, 125: 18256 B free"
-        );
     }
 
     #[test]

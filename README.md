@@ -190,17 +190,23 @@ in the retained emulator, which counts every instruction the game executes;
 the second is compiled around those counts. On the chapter-two recording it
 is 6% faster than `pack`, and 4% faster on a route the recording never
 visits. It takes about four minutes. It also writes the profile and the
-inlining threshold it linked at to `game/pgo/`. There is no free-RAM floor:
-the game uses whatever RAM its link leaves. The threshold is the highest rung
-of the inlining ladder (most inlining, fastest) that links and leaves a safe
-stack, meaning at least 24,580 B between `.bss` and the initial stack pointer
-(the deepest stack the shipping link can reach, 19,664 B by `cargo hl-build
-stack`, plus a 25% margin; `game/stack-reserve`, 25 KiB, alone covers it). The
-build prints every
-rung's free RAM. The free RAM `pgo` prints for the rung it ships is measured on
-the link that ships, and the build stops with both figures if the shipped link
-leaves a different amount. Plain builds apply the same rule from the committed
-threshold down.
+inlining threshold it linked at to `game/pgo/`. The threshold comes from the SDK's
+`psoxide-pgo ladder`: it finds the highest thresholds on a 50-unit grid (1000 down to
+250) whose link keeps `game/ram-budget`'s floor and leaves a safe stack, meaning at
+least 24,580 B between `.bss` and the initial stack pointer (the deepest stack the
+shipping link can reach, 19,664 B by `cargo hl-build stack`, plus a 25% margin;
+`game/stack-reserve`, 25 KiB, alone covers it), then benches the four highest
+distinct images with `scripts/pgo-rung-bench.sh` (an I-cache layout collected on each,
+then c0a0, c4a3 and the Hazard Course chain) and ships the best by geometric mean,
+ties going to more free RAM. A candidate more than 1% under the scores in
+`game/pgo/bench-scores.txt` (the build being replaced) on any window is not eligible.
+The per-rung table goes to `game/pgo/ladder.txt`; quote it in the commit message.
+`HLPSX_LADDER_CANDIDATES=1` takes the highest fit with no bench, for quick local runs
+(the full ladder costs about four layout collections and benches). The free RAM
+`pgo` prints for the rung it ships is measured on the link that ships, and the build
+stops with both figures if the shipped link leaves a different amount. Plain builds
+link at exactly the committed threshold and fail, naming the stale profile, if that
+no longer links with a safe stack.
 The profiling build
 itself links with a smaller stack reserve than the shipped one (it only runs
 on the tapes), shrinking it by whatever its link overflows RAM by, down to the
@@ -245,7 +251,7 @@ HLPSX_COLLECT_MAPS=0,6,7,9,10,20,94 cargo hl-build pgo \
 750/1000 of the samples outside the CD and loader code, `HLPSX_PGO_COVERAGE` to
 change it): everything it does not name stays small, and the unpruned profile
 grew `.text` by 47 KB for +19..29% frame rate where this one costs about 1 KB
-for +7..16%. The inlining ladder stops at the first rung that keeps
+for +7..16%. The ladder never picks a rung under
 `game/ram-budget`'s floor, so raising the floor reserves RAM for unmerged work and
 buys back less inlining.
 
