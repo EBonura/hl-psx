@@ -403,14 +403,13 @@ const fn tex_anim_identity() -> [u8; TEX_ANIM_MAX] {
 }
 
 static mut TEX_ANIM_REMAP: [[u8; TEX_ANIM_MAX]; 2] = [tex_anim_identity(); 2];
-static mut TEX_ANIM_SELECT: u8 = 0;
 
 /// Select which frame-state row the triangle decoders resolve through. Set
 /// alongside EMIT_BLEND by the entity walkers (frame-toggled func_walls,
 /// pressed buttons); the world always draws with frame-state 0.
 #[inline(always)]
 pub fn tex_anim_select(alt_frame: bool) {
-    unsafe { TEX_ANIM_SELECT = alt_frame as u8 };
+    unsafe { hot!(tex_anim_select) = alt_frame as u8 };
 }
 
 /// Reset both rows to identity (per-map, textures change meaning on load).
@@ -418,7 +417,7 @@ pub fn tex_anim_reset() {
     let identity = tex_anim_identity();
     unsafe {
         TEX_ANIM_REMAP = [identity; 2];
-        TEX_ANIM_SELECT = 0;
+        hot!(tex_anim_select) = 0;
     }
 }
 
@@ -441,7 +440,7 @@ pub fn tex_anim_set(id: usize, frame0: u8, frame1: u8) -> bool {
 pub fn tex_anim_display(tex: usize) -> usize {
     unsafe {
         *(*core::ptr::addr_of!(TEX_ANIM_REMAP))
-            .get_unchecked(TEX_ANIM_SELECT as usize)
+            .get_unchecked(hot!(tex_anim_select) as usize)
             .get_unchecked(tex & (TEX_ANIM_MAX - 1)) as usize
     }
 }
