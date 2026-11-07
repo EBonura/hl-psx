@@ -35982,6 +35982,246 @@ unsafe fn init_room_logic(
     }
 }
 
+/// Scratchpad home of the PVS walk's `PvsWalkCtx`: above the patch walker's
+/// `QuadCtx`, which stays live across every emit call the walk makes.
+const PVS_WALK_CTX_SCRATCH_OFFSET: usize =
+    (QUAD_CTX_SCRATCH_OFFSET + core::mem::size_of::<QuadCtx>()).next_multiple_of(4);
+const _: () = assert!(
+    PVS_WALK_CTX_SCRATCH_OFFSET + core::mem::size_of::<PvsWalkCtx>() <= scratchpad::SIZE
+);
+
+/// 256 world units per depth band of the overflow walk (`play`'s `DEPTH_BAND_SHIFT`).
+const PVS_DEPTH_BAND_SHIFT: u32 = 8;
+
+/// What every entry of the PVS face walk shares. Inside `play` the walk's
+/// loop kept these in a 6 KB frame and reloaded six of them from it, plus the
+/// far plane, for each of the ~1,000 entries a frame visits (each reload a RAM
+/// stall on a CPU with no data cache). Built once per frame on the scratchpad,
+/// the walk's own functions carry only their counters and read the rest at
+/// scratchpad speed.
+#[repr(C)]
+struct PvsWalkCtx {
+    packets: *mut PrimitivePacketArena<'static>,
+    m: *const Map,
+    np: *mut usize,
+    nq: *mut usize,
+    counts: *mut WorldCounters,
+    visibility: *const CameraVisibility<'static>,
+    /// `far_view()` at the start of the walk; nothing changes it until the sky pass.
+    far: i32,
+    nbands: i32,
+    proj_token: u16,
+    seal_hide: bool,
+}
+
+/// One entry of the PVS face walk: a cached record (`e < MAX_PVS_FACE_RECS`)
+/// or a face past the record cache. `link_walk` is the per-group link walk,
+/// which skips sealed faces and, with several bands, entries outside `band`;
+/// the bucketed slice walk has both resolved at scatter time.
+#[inline(always)]
+unsafe fn emit_pvs_entry(
+    cx: *const PvsWalkCtx,
+    link_walk: bool,
+    e: usize,
+    band: i32,
+    opaque_stream_ready: &mut bool,
+) {
+    let cx = unsafe { &*cx };
+    let m = unsafe { &*cx.m };
+    let packets = unsafe { &mut *cx.packets };
+    let np = unsafe { &mut *cx.np };
+    let nq = unsafe { &mut *cx.nq };
+    let counts = unsafe { &mut *cx.counts };
+    let proj_token = cx.proj_token;
+    let face = unsafe { PVS_FACE_INDEX.0[e] } as usize;
+    // A closed door's far side is never drawn. Test it before loading the
+    // 14-byte record: behind a closed door most listed faces stop here.
+    if link_walk && cx.seal_hide && unsafe { PVS_FACE_MARK[face >> 5] } & (1 << (face & 31)) != 0 {
+        return;
+    }
+    if e < MAX_PVS_FACE_RECS {
+        let rec = unsafe { PVS_FACE_REC.0[e] };
+        if link_walk && cx.nbands > 1 && rec.band() as i32 != band {
+            return;
+        }
+        let visible = !WORLD_BOUNDS_CULL || {
+            let v = scene::transform_vertex_scheduled(Vec3I16::new(
+                rec.center[0],
+                rec.center[1],
+                rec.center[2],
+            ));
+            visibility_logic::sphere_in_camera_frustum(
+                [v.x, v.y, v.z],
+                rec.radius as i32,
+                render::NEAR_Z,
+                cx.far,
+            )
+        };
+        if !visible {
+            return;
+        }
+        if !WORLD_OPAQUE_STREAM_FAST || rec.special() {
+            unsafe { set_emit_cached_face(m, face, rec) };
+            *opaque_stream_ready = false;
+        } else if !*opaque_stream_ready {
+            unsafe { reset_emit_policy() };
+            *opaque_stream_ready = true;
+        }
+        if rec.is_patch() {
+            #[cfg(feature = "order-trace")]
+            order_trace::set_cur_face(face, m.face_bounds(face).1);
+            unsafe {
+                emit_world_face_patches(
+                    packets,
+                    m,
+                    rec.tex as usize,
+                    rec.first as usize,
+                    rec.count(),
+                    rec.refined_topology(),
+                    proj_token,
+                    np,
+                    nq,
+                    counts,
+                )
+            };
+        } else if rec.is_loop() {
+            unsafe {
+                emit_world_face_loop(
+                    packets,
+                    m,
+                    rec.tex as usize,
+                    rec.first as usize,
+                    rec.count(),
+                    face,
+                    proj_token,
+                    np,
+                    nq,
+                    counts,
+                )
+            };
+        } else {
+            unsafe {
+                emit_world_face_tris(
+                    packets,
+                    m,
+                    rec.first as usize,
+                    rec.count(),
+                    rec.refined_topology(),
+                    face,
+                    proj_token,
+                    np,
+                    nq,
+                    counts,
+                )
+            };
+        }
+    } else {
+        let visibility = unsafe { &*cx.visibility };
+        let (bc, be) = m.face_bounds(face);
+        if link_walk {
+            let depth = (dot12(visibility.rot.m[2], bc) + visibility.base_t[2]).max(0);
+            if (depth >> PVS_DEPTH_BAND_SHIFT).min(cx.nbands - 1) != band {
+                return;
+            }
+        }
+        if WORLD_BOUNDS_CULL && !visibility.sphere(bc, be) {
+            return;
+        }
+        let (first, cnt) = m.face_tris(face);
+        if !WORLD_OPAQUE_STREAM_FAST || face_needs_generic_emit(m, face) {
+            unsafe { set_emit_face(m, face, 0) };
+            *opaque_stream_ready = false;
+        } else if !*opaque_stream_ready {
+            unsafe { reset_emit_policy() };
+            *opaque_stream_ready = true;
+        }
+        if m.face_is_patch(face) {
+            #[cfg(feature = "order-trace")]
+            order_trace::set_cur_face(face, m.face_bounds(face).1);
+            unsafe {
+                emit_world_face_patches(
+                    packets,
+                    m,
+                    m.face_tex(face),
+                    first,
+                    cnt,
+                    m.face_refined_topology(face),
+                    proj_token,
+                    np,
+                    nq,
+                    counts,
+                )
+            };
+        } else if m.face_is_loop(face) {
+            unsafe {
+                emit_world_face_loop(
+                    packets,
+                    m,
+                    m.face_tex(face),
+                    first,
+                    cnt,
+                    face,
+                    proj_token,
+                    np,
+                    nq,
+                    counts,
+                )
+            };
+        } else {
+            unsafe {
+                emit_world_face_tris(
+                    packets,
+                    m,
+                    first,
+                    cnt,
+                    m.face_refined_topology(face),
+                    face,
+                    proj_token,
+                    np,
+                    nq,
+                    counts,
+                )
+            };
+        }
+    }
+}
+
+/// Emit one run of the PVS face walk and return the updated opaque-stream
+/// state. With `link_walk` it follows the visible group's link list from
+/// entry `first` (`end` unused), keeping the entries of `band`; otherwise it
+/// takes the bucketed slice `PVS_BAND_ORDER[first..end]` (already near-to-far,
+/// sealed faces left out). One body serves both, so the per-entry code exists
+/// once.
+#[inline(never)]
+unsafe fn emit_pvs_walk(
+    cx: *const PvsWalkCtx,
+    link_walk: bool,
+    first: usize,
+    end: usize,
+    band: i32,
+    mut opaque_stream_ready: bool,
+) -> bool {
+    let mut cur = first;
+    loop {
+        let e;
+        if link_walk {
+            if cur == PVS_LINK_END as usize {
+                break;
+            }
+            e = cur;
+            cur = unsafe { PVS_FACE_NEXT.0[e] } as usize;
+        } else {
+            if cur >= end {
+                break;
+            }
+            e = unsafe { PVS_BAND_ORDER[cur] } as usize;
+            cur += 1;
+        }
+        unsafe { emit_pvs_entry(cx, link_walk, e, band, &mut opaque_stream_ready) };
+    }
+    opaque_stream_ready
+}
+
 fn play(
     fb: &mut DoubleBuffer,
     launch: RoomLaunch,
@@ -39834,7 +40074,7 @@ fn play(
                 // farthest faces drop -- the wall in front of you always draws,
                 // never a black hole up close. Normal views run a single pass.
                 const N_DEPTH_BANDS: i32 = 8;
-                const DEPTH_BAND_SHIFT: u32 = 8; // 256 world units per band
+                const DEPTH_BAND_SHIFT: u32 = PVS_DEPTH_BAND_SHIFT; // 256 world units per band
                                                  // Band only when the arena would overflow; otherwise one pass (the
                                                  // common case, no cost). On overflow use just enough bands to span
                                                  // FAR_VIEW -- no empty re-walks past the view distance, and if a band
@@ -39983,280 +40223,52 @@ fn play(
                 telemetry::stage_end(telemetry::stage::ROOM_CELL_SELECT);
                 telemetry::stage_begin(telemetry::stage::ROOM_PROJECT);
 
+                // Everything the entries share goes to the scratchpad once (see
+                // `PvsWalkCtx`); the walk itself runs out of line, in functions
+                // whose frames hold only their counters.
+                let walk = scratchpad::ptr_at::<PvsWalkCtx>(PVS_WALK_CTX_SCRATCH_OFFSET);
+                walk.write(PvsWalkCtx {
+                    packets: (&mut packets as *mut PrimitivePacketArena<'_>).cast(),
+                    m: &m,
+                    np: &mut np,
+                    nq: &mut nq,
+                    counts: &mut room_counts,
+                    visibility: (&visibility as *const CameraVisibility<'_>).cast(),
+                    far: far_view(),
+                    nbands,
+                    proj_token,
+                    seal_hide,
+                });
                 let mut band = 0;
                 while band < nbands {
-                    for gi in 0..PVS_GROUP_COUNT {
-                        if bucketed {
-                            break; // bucketed path below handles multi-band
-                        }
-                        if !scratch_bit(group_vis, gi) {
-                            continue;
-                        }
-                        let group = PVS_GROUP_ACTIVE[gi] as usize;
-                        let mut entry = PVS_GROUP_FIRST[group];
-                        while entry != PVS_LINK_END {
-                            let e = entry as usize;
-                            entry = PVS_FACE_NEXT.0[e];
-                            if e < MAX_PVS_FACE_RECS {
-                                let face = PVS_FACE_INDEX.0[e] as usize;
-                                // A closed door's far side is never drawn. Test
-                                // it before loading the 14-byte record: behind a
-                                // closed door most listed faces stop here.
-                                if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
-                                    continue;
-                                }
-                                let rec = PVS_FACE_REC.0[e];
-                                if nbands > 1 && rec.band() as i32 != band {
-                                    continue;
-                                }
-
-                                if !WORLD_BOUNDS_CULL
-                                    || visibility.world_sphere_gte(rec.center, rec.radius as i32)
-                                {
-                                    if !WORLD_OPAQUE_STREAM_FAST || rec.special() {
-                                        set_emit_cached_face(&m, face, rec);
-                                        opaque_stream_ready = false;
-                                    } else if !opaque_stream_ready {
-                                        reset_emit_policy();
-                                        opaque_stream_ready = true;
-                                    }
-                                    if rec.is_patch() {
-                                        #[cfg(feature = "order-trace")]
-                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
-                                        emit_world_face_patches(
-                                            &mut packets,
-                                            &m,
-                                            rec.tex as usize,
-                                            rec.first as usize,
-                                            rec.count(),
-                                            rec.refined_topology(),
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else if rec.is_loop() {
-                                        emit_world_face_loop(
-                                            &mut packets,
-                                            &m,
-                                            rec.tex as usize,
-                                            rec.first as usize,
-                                            rec.count(),
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else {
-                                        emit_world_face_tris(
-                                            &mut packets,
-                                            &m,
-                                            rec.first as usize,
-                                            rec.count(),
-                                            rec.refined_topology(),
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    }
-                                }
-                            } else {
-                                let face = PVS_FACE_INDEX.0[e] as usize;
-                                // Past the record cache: same closed-door test as above.
-                                if seal_hide && PVS_FACE_MARK[face >> 5] & (1 << (face & 31)) != 0 {
-                                    continue;
-                                }
-                                let (bc, be) = m.face_bounds(face);
-                                let depth = (dot12(rot.m[2], bc) + base_t[2]).max(0);
-                                if (depth >> DEPTH_BAND_SHIFT).min(nbands - 1) != band {
-                                    continue;
-                                }
-                                if !WORLD_BOUNDS_CULL || visibility.sphere(bc, be) {
-                                    let (first, cnt) = m.face_tris(face);
-                                    if !WORLD_OPAQUE_STREAM_FAST
-                                        || face_needs_generic_emit(&m, face)
-                                    {
-                                        set_emit_face(&m, face, 0);
-                                        opaque_stream_ready = false;
-                                    } else if !opaque_stream_ready {
-                                        reset_emit_policy();
-                                        opaque_stream_ready = true;
-                                    }
-                                    if m.face_is_patch(face) {
-                                        #[cfg(feature = "order-trace")]
-                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
-                                        emit_world_face_patches(
-                                            &mut packets,
-                                            &m,
-                                            m.face_tex(face),
-                                            first,
-                                            cnt,
-                                            m.face_refined_topology(face),
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else if m.face_is_loop(face) {
-                                        emit_world_face_loop(
-                                            &mut packets,
-                                            &m,
-                                            m.face_tex(face),
-                                            first,
-                                            cnt,
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else {
-                                        emit_world_face_tris(
-                                            &mut packets,
-                                            &m,
-                                            first,
-                                            cnt,
-                                            m.face_refined_topology(face),
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
                     if bucketed {
                         // Bucketed multi-band path: one contiguous slice per
                         // band (scattered near-to-far by the pre-pass).
                         let b = band as usize;
                         let start = PVS_BAND_START[b * PVS_BAND_KINDS] as usize;
                         let end = PVS_BAND_START[(b + 1) * PVS_BAND_KINDS] as usize;
-                        let mut k = start;
-                        while k < end.min(PVS_BAND_CAP) {
-                            let e = PVS_BAND_ORDER[k] as usize;
-                            k += 1;
-                            if e < MAX_PVS_FACE_RECS {
-                                let rec = PVS_FACE_REC.0[e];
-                                let face = PVS_FACE_INDEX.0[e] as usize;
-
-                                if !WORLD_BOUNDS_CULL
-                                    || visibility.world_sphere_gte(rec.center, rec.radius as i32)
-                                {
-                                    if !WORLD_OPAQUE_STREAM_FAST || rec.special() {
-                                        set_emit_cached_face(&m, face, rec);
-                                        opaque_stream_ready = false;
-                                    } else if !opaque_stream_ready {
-                                        reset_emit_policy();
-                                        opaque_stream_ready = true;
-                                    }
-                                    if rec.is_patch() {
-                                        #[cfg(feature = "order-trace")]
-                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
-                                        emit_world_face_patches(
-                                            &mut packets,
-                                            &m,
-                                            rec.tex as usize,
-                                            rec.first as usize,
-                                            rec.count(),
-                                            rec.refined_topology(),
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else if rec.is_loop() {
-                                        emit_world_face_loop(
-                                            &mut packets,
-                                            &m,
-                                            rec.tex as usize,
-                                            rec.first as usize,
-                                            rec.count(),
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else {
-                                        emit_world_face_tris(
-                                            &mut packets,
-                                            &m,
-                                            rec.first as usize,
-                                            rec.count(),
-                                            rec.refined_topology(),
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    }
-                                }
-                            } else {
-                                let face = PVS_FACE_INDEX.0[e] as usize;
-
-                                let (bc, be) = m.face_bounds(face);
-                                if !WORLD_BOUNDS_CULL || visibility.sphere(bc, be) {
-                                    let (first, cnt) = m.face_tris(face);
-                                    if !WORLD_OPAQUE_STREAM_FAST
-                                        || face_needs_generic_emit(&m, face)
-                                    {
-                                        set_emit_face(&m, face, 0);
-                                        opaque_stream_ready = false;
-                                    } else if !opaque_stream_ready {
-                                        reset_emit_policy();
-                                        opaque_stream_ready = true;
-                                    }
-                                    if m.face_is_patch(face) {
-                                        #[cfg(feature = "order-trace")]
-                                        order_trace::set_cur_face(face, m.face_bounds(face).1);
-                                        emit_world_face_patches(
-                                            &mut packets,
-                                            &m,
-                                            m.face_tex(face),
-                                            first,
-                                            cnt,
-                                            m.face_refined_topology(face),
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else if m.face_is_loop(face) {
-                                        emit_world_face_loop(
-                                            &mut packets,
-                                            &m,
-                                            m.face_tex(face),
-                                            first,
-                                            cnt,
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    } else {
-                                        emit_world_face_tris(
-                                            &mut packets,
-                                            &m,
-                                            first,
-                                            cnt,
-                                            m.face_refined_topology(face),
-                                            face,
-                                            proj_token,
-                                            &mut np,
-                                            &mut nq,
-                                            &mut room_counts,
-                                        );
-                                    }
-                                }
+                        opaque_stream_ready = emit_pvs_walk(
+                            walk,
+                            false,
+                            start,
+                            end.min(PVS_BAND_CAP),
+                            0,
+                            opaque_stream_ready,
+                        );
+                    } else {
+                        for gi in 0..PVS_GROUP_COUNT {
+                            if !scratch_bit(group_vis, gi) {
+                                continue;
                             }
+                            let group = PVS_GROUP_ACTIVE[gi] as usize;
+                            opaque_stream_ready = emit_pvs_walk(
+                                walk,
+                                true,
+                                PVS_GROUP_FIRST[group] as usize,
+                                0,
+                                band,
+                                opaque_stream_ready,
+                            );
                         }
                     }
                     band += 1;
