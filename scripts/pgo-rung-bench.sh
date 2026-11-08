@@ -4,8 +4,8 @@
 # rates as `score NAME VALUE` lines, higher is better.
 #
 # Needs PSOXIDE_PGO_THRESHOLD (set by the ladder), HL_DIR, HLPSX_FRONTEND, and the gate next to
-# the frontend (or GATE). Leaves game/pgo/hot-callsite-threshold at the threshold it benched and
-# game/pgo/hl-psx.layout collected for it; the pick is rebuilt by the caller afterwards.
+# the frontend (or GATE). Leaves game/pgo/ as it found it; the layout collected for this rung
+# is kept in .hlpsx/ladder/rung-N/hl-psx.layout for the caller to install if the rung is picked.
 #
 # Windows (polls after the first map load of the play-order map, intro disc):
 #   c0a0   map 0, polls +139..+1139;   c4a3  map 94, the same;
@@ -20,11 +20,23 @@ host=$repo/host/hl-build/target/release/hl-psx-build
 work=$repo/.hlpsx/ladder/rung-$threshold
 rm -rf "$work"; mkdir -p "$work"
 
+# The shipped threshold and layout are put back when the bench ends, so a ladder run leaves
+# the tree as it found it; the layout collected for this rung is kept in $work.
+saved=$work/saved
+mkdir -p "$saved"
+cp game/pgo/hot-callsite-threshold "$saved/"
+[ -f game/pgo/hl-psx.layout ] && cp game/pgo/hl-psx.layout "$saved/"
+restore() {
+    cp "$saved/hot-callsite-threshold" game/pgo/hot-callsite-threshold
+    if [ -f "$saved/hl-psx.layout" ]; then cp "$saved/hl-psx.layout" game/pgo/hl-psx.layout; else rm -f game/pgo/hl-psx.layout; fi
+}
+trap restore EXIT
 echo "$threshold" > game/pgo/hot-callsite-threshold
 rm -f game/pgo/hl-psx.layout
 # stdout stays clean for the score lines: the build logs go to files.
 "$host" pack --no-intro --half-life "$HL_DIR" > "$work/pack1.log" 2>&1
 scripts/collect-layout.sh 0 6 11 12 18 20 23 56 60 88 94 0:760:1760:0b 94:1030:2030:94b > "$work/collect.log" 2>&1
+cp game/pgo/hl-psx.layout "$work/hl-psx.layout"
 "$host" pack --half-life "$HL_DIR" > "$work/pack2.log" 2>&1
 grep -h "PGO shipped\|RAM budget" "$work/pack2.log" >&2 || true
 
