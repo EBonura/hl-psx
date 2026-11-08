@@ -43,3 +43,24 @@ array the core reads by reference (the returned tuple was decoded onto the
 stack and copied again, sixteen RAM accesses per patch), and the core's
 projection-cache store inline (the near-band correction out of line; inlined
 at every projection site the store cost 2.5 KB).
+
+## Round result: steps 1b and 2 are negatives (2026-11-08)
+
+Baseline is main 9dfb60d8 at rung 300 (c0a0 13.891, c4a3 19.184, chain
+18.481, chainlate 19.605 flips/s). The full ladder (four candidates, floor
+2,048 B free) on the combined branch (patch-corner decode into the core's
+array, inline projection-cache store, no 32-byte struct copies on the clip
+and split paths) gave, against that baseline:
+
+    rung  free_B  c0a0            c4a3            chain           chainlate
+     950   2128   14.372 (+3.46%) 19.027 (-0.82%) 18.441 (-0.22%) 19.321 (-1.45%)
+     650   3136   14.202 (+2.24%) 18.849 (-1.75%) 18.925 (+2.40%) 20.445 (+4.28%)
+     450   5920   14.110 (+1.58%) 19.099 (-0.44%) 18.609 (+0.69%) 19.820 (+1.10%)
+     350   7440   14.202 (+2.24%) 19.033 (-0.79%) 18.709 (+1.23%) 19.899 (+1.50%)
+
+No rung is at or above the baseline on all four windows: c4a3 is below it at
+every rung (-0.4% to -1.8%), and the tool's rule makes a candidate more than
+1% under on any metric ineligible. The gains on c0a0 and the late chain
+window depend on the rung (the profile moves inlining), and the never-slower
+rule forbids shipping a build that is slower on c4a3. Nothing was landed. The
+code stays on perf/fable-1b and perf/fable-2 for the record.
