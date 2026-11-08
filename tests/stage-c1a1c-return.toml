@@ -54,25 +54,30 @@ wait = 60
 # ---- c1a1c -> x ----
 [[step]]
 label = "c1a1c loads"
+sync = "poll"
 wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 7305 }
 timeout = 9000
 
 [[step]]
 label = "c1a1c first simulation tick"
+sync = "poll"
 wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
 timeout = 9000
 
 [[step]]
+sync = "poll"
 wait_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) != 0" }
 timeout = 720
 
 [[step]]
 label = "c1a1c controller tape 0"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-00.pxtape"
 tape_rebase = true
 timeout = 1320
 
 [[step]]
+sync = "poll"
 checkpoint = "resumed"
 golden = false
 [[step.assert]]
@@ -88,6 +93,7 @@ expr="i32(LOGIC_PLAYER_POS[0]) >= -1040 && i32(LOGIC_PLAYER_POS[0]) <= -980 && i
 
 [[step]]
 label = "c1a1c controller tape 1"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-01.pxtape"
 tape_rebase = true
 timeout = 1212
@@ -96,6 +102,7 @@ timeout = 1212
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3162 }
 timeout = 3600
 
@@ -103,6 +110,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -110,6 +118,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3072 }
 timeout = 3600
 
@@ -117,6 +126,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -124,11 +134,13 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -1085" }
 timeout = 360
 
 [[step]]
 label = "c1a1c controller tape 2"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-02.pxtape"
 tape_rebase = true
 timeout = 1232
@@ -137,6 +149,7 @@ timeout = 1232
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1958 }
 timeout = 3600
 
@@ -144,6 +157,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=2048 }
 timeout = 3600
 
@@ -151,6 +165,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=2107 }
 timeout = 3600
 
@@ -158,6 +173,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=2048 }
 timeout = 3600
 
@@ -165,11 +181,13 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 1140" }
 timeout = 600
 
 [[step]]
 label = "c1a1c controller tape 3"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-03.pxtape"
 tape_rebase = true
 timeout = 1300
@@ -178,11 +196,13 @@ timeout = 1300
 lstick = [128, 168]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1080 }
 timeout = 240
 
 [[step]]
 label = "c1a1c controller tape 4"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-04.pxtape"
 tape_rebase = true
 timeout = 1300
@@ -191,11 +211,13 @@ timeout = 1300
 lstick = [128, 88]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=1096 }
 timeout = 240
 
 [[step]]
 label = "c1a1c controller tape 5"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-05.pxtape"
 tape_rebase = true
 timeout = 1300
@@ -204,16 +226,19 @@ timeout = 1300
 lstick = [128, 168]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="ge", value=1080 }
 timeout = 240
 
 [[step]]
 label = "c1a1c controller tape 6"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-06.pxtape"
 tape_rebase = true
 timeout = 1300
 
 [[step]]
+sync = "poll"
 checkpoint = "south-passage"
 golden = false
 [[step.assert]]
@@ -228,6 +253,7 @@ expr="i32(LOGIC_PLAYER_POS[0]) >= -1110 && i32(LOGIC_PLAYER_POS[0]) <= -1056 && 
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3162 }
 timeout = 3600
 
@@ -235,6 +261,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -242,6 +269,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3072 }
 timeout = 3600
 
@@ -249,6 +277,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -256,10 +285,12 @@ timeout = 3600
 lstick = [128, 68]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -1180" }
 timeout = 480
 
 [[step]]
+sync = "poll"
 checkpoint = "through-door"
 golden = false
 [[step.assert]]
@@ -274,6 +305,7 @@ expr="i32(LOGIC_PLAYER_POS[0]) >= -1300 && i32(LOGIC_PLAYER_POS[0]) <= -1160"
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3915 }
 timeout = 3600
 
@@ -281,6 +313,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=4005 }
 timeout = 3600
 
@@ -288,6 +321,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=4064 }
 timeout = 3600
 
@@ -295,6 +329,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=4005 }
 timeout = 3600
 
@@ -302,16 +337,19 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= 1540" }
 timeout = 600
 
 [[step]]
 label = "c1a1c controller tape 7"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-07.pxtape"
 tape_rebase = true
 timeout = 1240
 
 [[step]]
+sync = "poll"
 checkpoint = "cross-corridor"
 golden = false
 [[step.assert]]
@@ -326,6 +364,7 @@ expr="i32(LOGIC_PLAYER_POS[0]) >= -1300 && i32(LOGIC_PLAYER_POS[0]) <= -1160 && 
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3162 }
 timeout = 3600
 
@@ -333,6 +372,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -340,6 +380,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3072 }
 timeout = 3600
 
@@ -347,6 +388,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -354,11 +396,13 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -1400" }
 timeout = 600
 
 [[step]]
 label = "c1a1c controller tape 8"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-08.pxtape"
 tape_rebase = true
 timeout = 1248
@@ -367,6 +411,7 @@ timeout = 1248
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1958 }
 timeout = 3600
 
@@ -374,6 +419,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=2048 }
 timeout = 3600
 
@@ -381,6 +427,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=2107 }
 timeout = 3600
 
@@ -388,6 +435,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=2048 }
 timeout = 3600
 
@@ -395,6 +443,7 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 1500" }
 timeout = 360
 
@@ -402,11 +451,13 @@ timeout = 360
 lstick = [128, 68]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 1478" }
 timeout = 360
 
 [[step]]
 label = "c1a1c controller tape 9"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-09.pxtape"
 tape_rebase = true
 timeout = 1260
@@ -415,6 +466,7 @@ timeout = 1260
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= 3 * max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -422,6 +474,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e >= 0 - 3 * max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -429,6 +482,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -436,6 +490,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e >= 0 - max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -443,6 +498,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -450,6 +506,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 1]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - 3 * tol)" }
 timeout = 900
 
@@ -457,6 +514,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 255]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep <= 3 * tol)" }
 timeout = 900
 
@@ -464,6 +522,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
@@ -471,6 +530,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 182]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep <= tol)" }
 timeout = 900
 
@@ -478,6 +538,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
@@ -485,6 +546,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -492,6 +554,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e >= 0 - max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -499,6 +562,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -506,6 +570,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
@@ -513,6 +578,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 182]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep <= tol)" }
 timeout = 900
 
@@ -520,10 +586,12 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1424 - i32(LOGIC_PLAYER_POS[0]), dy = 1453 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
 [[step]]
+sync = "poll"
 checkpoint = "call-button"
 golden = false
 [[step.assert]]
@@ -536,6 +604,7 @@ expr="i32(LOGIC_PLAYER_POS[0]) >= -1500 && i32(LOGIC_PLAYER_POS[0]) <= -1400 && 
 
 [[step]]
 label = "c1a1c controller tape 10"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-10.pxtape"
 tape_rebase = true
 timeout = 1280
@@ -544,6 +613,7 @@ timeout = 1280
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1958 }
 timeout = 3600
 
@@ -551,6 +621,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=2048 }
 timeout = 3600
 
@@ -558,6 +629,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=2107 }
 timeout = 3600
 
@@ -565,6 +637,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=2048 }
 timeout = 3600
 
@@ -572,16 +645,19 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 1390" }
 timeout = 600
 
 [[step]]
 label = "c1a1c controller tape 11"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-11.pxtape"
 tape_rebase = true
 timeout = 1240
 
 [[step]]
+sync = "poll"
 checkpoint = "in-elevator"
 golden = false
 [[step.assert]]
@@ -596,6 +672,7 @@ expr="i32(LOGIC_PLAYER_POS[0]) >= -1560 && i32(LOGIC_PLAYER_POS[0]) <= -1470 && 
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3162 }
 timeout = 3600
 
@@ -603,6 +680,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -610,6 +688,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3072 }
 timeout = 3600
 
@@ -617,6 +696,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -624,11 +704,13 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -1585" }
 timeout = 360
 
 [[step]]
 label = "c1a1c controller tape 12"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-12.pxtape"
 tape_rebase = true
 timeout = 1240
@@ -637,6 +719,7 @@ timeout = 1240
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3915 }
 timeout = 3600
 
@@ -644,6 +727,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=4005 }
 timeout = 3600
 
@@ -651,6 +735,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=4064 }
 timeout = 3600
 
@@ -658,6 +743,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=4005 }
 timeout = 3600
 
@@ -665,11 +751,13 @@ timeout = 3600
 lstick = [128, 68]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= 1408" }
 timeout = 360
 
 [[step]]
 label = "c1a1c controller tape 13"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-13.pxtape"
 tape_rebase = true
 timeout = 1240
@@ -678,6 +766,7 @@ timeout = 1240
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= 3 * max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -685,6 +774,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e >= 0 - 3 * max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -692,6 +782,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -699,6 +790,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e >= 0 - max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -706,6 +798,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -713,6 +806,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 1]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - 3 * tol)" }
 timeout = 900
 
@@ -720,6 +814,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 255]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep <= 3 * tol)" }
 timeout = 900
 
@@ -727,6 +822,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
@@ -734,6 +830,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 182]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep <= tol)" }
 timeout = 900
 
@@ -741,6 +838,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
@@ -748,6 +846,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -755,6 +854,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e >= 0 - max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -762,6 +862,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let yaw = u16(LOGIC_PLAYER_YAW), sn = (let h = (yaw) & 2047 in (let p = h * (2048 - h) in ((((yaw) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), cs = (let h = ((yaw + 1024) & 4095) & 2047 in (let p = h * (2048 - h) in (((((yaw + 1024) & 4095) & 2048) != 0) ? 0 - 65536 * p / (20971520 - 4 * p) : 65536 * p / (20971520 - 4 * p)))), dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), e = dx * cs - dy * sn, d = dx * sn + dy * cs in (d > 0 && e <= max(4 * 4096, d / 20))" }
 timeout = 900
 
@@ -769,6 +870,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
@@ -776,6 +878,7 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 182]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep <= tol)" }
 timeout = 900
 
@@ -783,10 +886,12 @@ timeout = 900
 lstick = [128, 128]
 rstick = [128, 74]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="let dx = -1597 - i32(LOGIC_PLAYER_POS[0]), dy = 1431 - i32(LOGIC_PLAYER_POS[2]), hd = max(max(abs(dx), abs(dy)) + 3 * min(abs(dx), abs(dy)) / 8, 16), dz = -2688 + 0 - (i32(LOGIC_PLAYER_POS[1]) + i32(LOGIC_PLAYER_VIEW_HEIGHT)), ep = i16(LOGIC_PLAYER_PITCH) - (let r = abs(dz), u = min(r, hd) * 1024 / max(r, hd), at = u * 1024 / (1024 + ((287 * u * u) >> 20)) in ((dz < 0 ? 0 - 1 : 1) * (((r > hd ? 1608 - at : at)) * 652 >> 10))), tol = max(4 * 652 / hd, 40) in (ep >= 0 - tol)" }
 timeout = 900
 
 [[step]]
+sync = "poll"
 checkpoint = "inner-button"
 golden = false
 [[step.assert]]
@@ -799,21 +904,25 @@ expr="i32(LOGIC_PLAYER_POS[0]) >= -1640 && i32(LOGIC_PLAYER_POS[0]) <= -1580 && 
 
 [[step]]
 label = "c1a1c controller tape 14"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-14.pxtape"
 tape_rebase = true
 timeout = 1240
 
 [[step]]
+sync = "poll"
 wait_until = { kind="ram", sym="WORLD_ARENA", offset=4, size=4, op="ne", value=7305 }
 timeout = 1200
 
 [[step]]
 label = "c1a1c controller tape 15"
+sync = "poll"
 tape = "tests/chain/tapes-stage-r/c1a1c-15.pxtape"
 tape_rebase = true
 timeout = 1440
 
 [[step]]
+sync = "poll"
 checkpoint = "c1a2"
 golden = false
 [[step.assert]]

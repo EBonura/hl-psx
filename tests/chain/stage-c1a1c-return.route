@@ -1,4 +1,4 @@
-@journey name=hl-stage-c1a1c-return title="Half-Life c1a1c stage: resume at the arrival from c1a1d, walk to the elevator (the touch door in the south passage, the call button, the inner button) and take it to c1a2" prologue=load card_fixture=tests/cards/c1a1c-return.mcd card_sha256=3fd1b3a413df99e3c5bfc90ae8c6f810e76b112da3744c6a10c290bb33eb12e4 max_ticks=40000
+@journey name=hl-stage-c1a1c-return title="Half-Life c1a1c stage: resume at the arrival from c1a1d, walk to the elevator (the touch door in the south passage, the call button, the inner button) and take it to c1a2" prologue=load card_fixture=tests/cards/c1a1c-return.mcd card_sha256=3fd1b3a413df99e3c5bfc90ae8c6f810e76b112da3744c6a10c290bb33eb12e4 max_ticks=40000 sync=poll
 # Resumes from the memory-card save that stage-c1a1d writes on its return to c1a1c (a Manual save at the arrival, (-1012,1435)).
 # Route (static world): west along the east-west corridor to x -1100, south down the strip to the door *108 (touch door, no
 # targetname: it opens when the player walks into it, `use` does nothing), through it into the hall x -1310..-1160, north to the

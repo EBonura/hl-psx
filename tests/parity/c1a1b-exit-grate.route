@@ -1,4 +1,4 @@
-@journey name=hl-parity-exit-grate title="Half-Life c1a1b: the exit grate (func_train floor_grate2) lifts 7 and slides north 57 when the swimmer reaches the trigger_once under it, on the reference timeline (fire, lift in 5 ticks, open in about 45)" prologue=segment segment_row=15 max_ticks=80000
+@journey name=hl-parity-exit-grate title="Half-Life c1a1b: the exit grate (func_train floor_grate2) lifts 7 and slides north 57 when the swimmer reaches the trigger_once under it, on the reference timeline (fire, lift in 5 ticks, open in about 45)" prologue=segment segment_row=15 max_ticks=80000 sync=poll
 
 # Closed-loop legs from the c1a1b explore route (hl-chain c9). The doorway leg after the aira button is yaw sensitive:
 # green on the library disc 5d453e4d, it can stall at x -261 on a rebuilt disc whose face band lands 29 yaw units off.
@@ -23,17 +23,32 @@ map c1a1b next x
   10
   @checkpoint faced
   @probe
-  3 use
+  @hold use until sym=ENT_PHASE offset=152 size=4 signed=true op=ge value=1 timeout=40
   10
   @face 1018 right
   10
   @hold f110 s63 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-323 timeout=51
+  @hold f-60 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-298 timeout=40
+  20
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-180 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-156 timeout=40
-  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=-194 hi=-180 timeout=100
+  # the doorway is y -198..-176 for the hull origin: one south hold from the north side, crouched (a standing s38 hold slides 18 units, a crouched one a few)
+  # dead band on y -194..-180 with the slide settled before each read (a single crouched hold ended on y -200 on the crab builds)
+  25 duck
+  @hold s38 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-182 timeout=80
+  25 duck
+  @hold s-38 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-191 timeout=80
+  25 duck
+  @hold s38 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-184 timeout=80
+  25 duck
+  @hold s-38 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-191 timeout=80
+  25 duck
+  # the aira doors cycle: start through the slot only when the door is nearly open (the slab shoves a player in it, and stops a standing one)
+  @wait expr="i32(ENT_PHASE[38]) < 400" timeout=200
+  4
   @checkpoint door
   @probe
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-215 timeout=400
+  @hold f127 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=-215 timeout=400
   @checkpoint passed
   @probe
   @hold f59 s112 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-217 timeout=45
@@ -292,10 +307,7 @@ map c1a1b next x
   @checkpoint f84
   @probe
   # houndeyes 6 (adjacent, idle) and 1 (comes from the south east): turn, aim down, shoot until PROP_HEALTH reads 0
-  @face 1251 right
-  4 l-127
-  2
-  @hold attack until sym=PROP_HEALTH offset=6 size=1 op=eq value=0 timeout=40
+  @kill prop=6 aimup=12 rounds=8
   @checkpoint killed-6
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
@@ -305,11 +317,8 @@ map c1a1b next x
   @assert sym=PROP_HEALTH offset=1 size=1 op=between value=0 value_hi=255
   @assert sym=PROP_HEALTH offset=6 size=1 op=between value=0 value_hi=255
   @assert sym=PROP_HEALTH offset=12 size=1 op=between value=0 value_hi=255
-  @face 1548 right
-  2
-  @hold attack until sym=PROP_HEALTH offset=1 size=1 op=eq value=0 timeout=60
-  @hold l127 until sym=LOGIC_PLAYER_PITCH size=2 signed=true op=ge value=-8 timeout=20
-  @hold l-127 until sym=LOGIC_PLAYER_PITCH size=2 signed=true op=le value=8 timeout=20
+  @kill prop=1 aimup=12 rounds=10
+  @level
   @face 1018 left
   10
   @checkpoint killed-1
@@ -345,7 +354,8 @@ map c1a1b next x
   @assert sym=PROP_HEALTH offset=12 size=1 op=between value=0 value_hi=255
   @face 3072 right
   10
-  @hold use until sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100 timeout=400
+  # the unit holds 40 (LOGIC_COUNTER[40], the first aid unit *44): full health or an empty unit ends the charge
+  @hold use until expr="u16(LOGIC_PLAYER_HEALTH) >= 100 || i16(LOGIC_COUNTER[40]) == 0" timeout=400
   @checkpoint charged
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
@@ -509,7 +519,10 @@ map c1a1b next x
   @assert sym=PROP_HEALTH offset=1 size=1 op=between value=0 value_hi=255
   @assert sym=PROP_HEALTH offset=6 size=1 op=between value=0 value_hi=255
   @assert sym=PROP_HEALTH offset=12 size=1 op=between value=0 value_hi=255
-  @hold attack until sym=PROP_HEALTH offset=12 size=1 op=eq value=0 timeout=200
+  @kill prop=12 aimup=36 rounds=12
+  @level
+  @face 1018 left
+  10
   @checkpoint slave-dead
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
@@ -583,12 +596,24 @@ map c1a1b next x
   @checkpoint hend
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
-  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=1553 hi=1563 timeout=160
+  # the rim: at y -691 the hull already overhangs the 44x48 hole (x 1536..1580, y -736..-688) and slides in off centre. Align x from the north, then go south into it
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-672 timeout=40
+  10
+  25
+  @hold f-29 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1556 timeout=60
+  25
+  @hold f29 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1551 timeout=60
+  25
+  @hold f-29 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1556 timeout=60
+  25
+  @hold f29 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1551 timeout=60
+  25
+
   10
   @checkpoint aligned
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
-  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-705 timeout=40
+  @hold s45 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-708 timeout=60
   30
   @hold f1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=4 op=le value=-380 timeout=30
   30
@@ -599,143 +624,82 @@ map c1a1b next x
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1574 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1602 timeout=40
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-802 timeout=45
-  @checkpoint c3
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1570 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1598 timeout=40
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-848 timeout=45
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1565 timeout=40
-  @checkpoint c7
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1593 timeout=40
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-894 timeout=45
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1561 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1589 timeout=40
-  @checkpoint c11
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-940 timeout=45
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1542 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1598 timeout=40
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-986 timeout=45
-  @checkpoint c15
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1538 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1594 timeout=40
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1032 timeout=45
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1533 timeout=40
-  @checkpoint c19
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1589 timeout=40
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1078 timeout=45
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1529 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1585 timeout=40
-  @checkpoint c23
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f-13 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1124 timeout=45
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1524 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1580 timeout=40
   @hold f96 s84 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1591 timeout=47
-  @checkpoint c27
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1206 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1150 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1635 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1206 timeout=40
-  @checkpoint c31
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1150 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1682 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1207 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1151 timeout=40
-  @checkpoint c35
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1729 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1207 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1151 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1776 timeout=45
-  @checkpoint c39
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1194 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1166 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1823 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1194 timeout=40
-  @checkpoint c43
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1166 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1870 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1194 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1166 timeout=40
-  @checkpoint c47
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1917 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1195 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1167 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1963 timeout=45
-  @checkpoint c51
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1195 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1167 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2010 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1196 timeout=40
-  @checkpoint c55
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1168 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2057 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1196 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1168 timeout=40
-  @checkpoint c59
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2104 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1196 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1168 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2151 timeout=45
-  @checkpoint c63
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1197 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1169 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2198 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1197 timeout=40
-  @checkpoint c67
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1169 timeout=40
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2245 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1198 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1170 timeout=40
-  @checkpoint c71
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold f127 s1 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2292 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1198 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1170 timeout=40
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2332 timeout=45
-  @checkpoint c75
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1212 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1156 timeout=40
-  @hold f73 s-104 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1174 timeout=43
-  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2346 timeout=40
-  @checkpoint c79
-  @probe
-  @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
-  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=2370 timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1130 timeout=80
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2352 timeout=60
   @checkpoint cend
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
@@ -747,7 +711,7 @@ map c1a1b next x
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @assert sym=PLAYER_WATER_LEVEL size=1 op=between value=0 value_hi=3
   @assert sym=LOGIC_PLAYER_YAW size=2 op=between value=0 value_hi=4095
-  @align f40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=2380 hi=2396 timeout=120
+  @align f40+duck sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=2382 hi=2392 timeout=120
   10
   @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=-1166 hi=-1156 timeout=120
   10
@@ -802,27 +766,37 @@ map c1a1b next x
   @assert sym=PLAYER_WATER_LEVEL size=1 op=between value=0 value_hi=3
   @assert sym=LOGIC_PLAYER_YAW size=2 op=between value=0 value_hi=4095
   @assert sym=LOGIC_PLAYER_PITCH size=2 signed=true op=between value=-4096 value_hi=4095
-  @align s40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=1888 hi=1900 timeout=150
+  # the climb through the grate hole (x 1872..1920, y -900..-852, hull 32): hull centre x 1890..1902, y -884..-874 (water is quick to stop, every poll here is air: the player drowns from about s4 on). Level first (f is forward only with the view level), then tip the view all the way up so the climb does not drift north
+  6
+  @hold s-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1903 timeout=40
+  8
+  @hold s40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=1894 timeout=40
+  8
+  @hold f40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-888 timeout=40
+  8
+  @hold f-40 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-878 timeout=40
   10
-  @hold l127 until sym=LOGIC_PLAYER_PITCH size=2 signed=true op=ge value=900 timeout=40
+  @checkpoint s4b
+  @probe
+  @hold l127 until sym=LOGIC_PLAYER_PITCH size=2 signed=true op=ge value=1000 timeout=40
   @checkpoint s5
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @assert sym=PLAYER_WATER_LEVEL size=1 op=between value=0 value_hi=3
   @assert sym=LOGIC_PLAYER_YAW size=2 op=between value=0 value_hi=4095
   @assert sym=LOGIC_PLAYER_PITCH size=2 signed=true op=between value=-4096 value_hi=4095
-  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=4 op=ge value=-297 timeout=40
+  # the exit grate is a func_train with dmg 500 (floor_grate2, TRAIN_OFF slot 2: words 6..8 = x, up, y). Touching its trigger starts it (up 7, then 57 north to y -819); a player rising into it meanwhile is blocked and dies. Rise only until it starts, hold off until it has slid clear of the hole (y -900..-852), then climb out
+  @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=4 op=ge value=-365 timeout=60
   @checkpoint grate-armed
-  @probe
   @assert sym=TRAIN_OFF offset=14 size=2 signed=true op=between value=-260 value_hi=-250
   @assert sym=TRAIN_OFF offset=16 size=2 signed=true op=between value=-880 value_hi=-870
   # The trigger_once under the grate fires as the hull top reaches z -262; the train lifts 7 and slides to y -819 at 32 u/s.
-  @wait sym=TRAIN_OFF offset=14 size=2 signed=true op=eq value=-247 timeout=40
+  # Rise only until the train starts (a swimmer rising into it meanwhile is blocked and dies), then wait for it on the train's own words.
+  @hold f30 until expr="i16(TRAIN_OFF[7]) >= -253 || i32(LOGIC_PLAYER_POS[1]) >= -299" timeout=60
+  @wait sym=TRAIN_OFF offset=14 size=2 signed=true op=eq value=-247 timeout=60
   @checkpoint grate-lifted
-  @probe
-  @wait sym=TRAIN_OFF offset=16 size=2 signed=true op=ge value=-819 timeout=80
+  @wait sym=TRAIN_OFF offset=16 size=2 signed=true op=ge value=-819 timeout=300
   @checkpoint grate-open
-  @probe
   @assert sym=TRAIN_OFF offset=14 size=2 signed=true op=eq value=-247
   @assert sym=TRAIN_OFF offset=16 size=2 signed=true op=between value=-819 value_hi=-819
   @stop

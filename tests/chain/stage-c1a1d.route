@@ -21,9 +21,8 @@ map c1a1d next x
   @face 2048 right
   @hold f127 until y<=-300 timeout=80
   @hold f-60 until y>=-304 timeout=30
-  @hold s127 until x<=1150 timeout=20
-  @hold s-40 until x>=1146 timeout=40
-  @hold s40 until x<=1160 timeout=40
+  # the strafe leaves the player sliding ~50 units: settle onto the ladder band x 1146..1160 on RAM, never on a count
+  @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=1146 hi=1160 timeout=100 settle=30
   @hold f30 until y<=-312 timeout=20
   8
   @checkpoint c1

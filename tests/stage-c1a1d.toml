@@ -379,28 +379,56 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -304" }
 timeout = 180
 
 [[step]]
-lstick = [255, 128]
-rstick = [128, 128]
-press = []
+label = "c1a1d controller tape 1"
 sync = "poll"
-hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= 1150" }
-timeout = 120
+tape = "tests/chain/tapes-stage-d/c1a1d-01.pxtape"
+tape_rebase = true
+timeout = 1320
 
 [[step]]
 lstick = [88, 128]
 rstick = [128, 128]
 press = []
 sync = "poll"
-hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= 1146" }
-timeout = 240
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=1146 }
+timeout = 600
+
+[[step]]
+label = "c1a1d controller tape 2"
+sync = "poll"
+tape = "tests/chain/tapes-stage-d/c1a1d-02.pxtape"
+tape_rebase = true
+timeout = 1320
 
 [[step]]
 lstick = [168, 128]
 rstick = [128, 128]
 press = []
 sync = "poll"
-hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= 1160" }
-timeout = 240
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=1160 }
+timeout = 600
+
+[[step]]
+label = "c1a1d controller tape 3"
+sync = "poll"
+tape = "tests/chain/tapes-stage-d/c1a1d-03.pxtape"
+tape_rebase = true
+timeout = 1320
+
+[[step]]
+lstick = [88, 128]
+rstick = [128, 128]
+press = []
+sync = "poll"
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=1146 }
+timeout = 600
+
+[[step]]
+label = "c1a1d controller tape 4"
+sync = "poll"
+tape = "tests/chain/tapes-stage-d/c1a1d-04.pxtape"
+tape_rebase = true
+timeout = 1320
 
 [[step]]
 lstick = [128, 98]
@@ -411,9 +439,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= -312" }
 timeout = 120
 
 [[step]]
-label = "c1a1d controller tape 1"
+label = "c1a1d controller tape 5"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-01.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-05.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -646,9 +674,9 @@ hold_until = { kind="expr", expr="i16(LOGIC_PLAYER_PITCH) >= 0 - 48" }
 timeout = 900
 
 [[step]]
-label = "c1a1d controller tape 2"
+label = "c1a1d controller tape 6"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-02.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-06.pxtape"
 tape_rebase = true
 timeout = 1240
 
@@ -835,9 +863,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= 1500" }
 timeout = 180
 
 [[step]]
-label = "c1a1d controller tape 3"
+label = "c1a1d controller tape 7"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-03.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-07.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -850,9 +878,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= 1493" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 4"
+label = "c1a1d controller tape 8"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-04.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-08.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -865,9 +893,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= 1499" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 5"
+label = "c1a1d controller tape 9"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-05.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-09.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -880,9 +908,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= -424" }
 timeout = 180
 
 [[step]]
-label = "c1a1d controller tape 6"
+label = "c1a1d controller tape 10"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-06.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-10.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -1383,9 +1411,9 @@ value=0
 value_hi=65535
 
 [[step]]
-label = "c1a1d controller tape 7"
+label = "c1a1d controller tape 11"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-07.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-11.pxtape"
 tape_rebase = true
 timeout = 1240
 
@@ -1433,9 +1461,9 @@ value=0
 value_hi=65535
 
 [[step]]
-label = "c1a1d controller tape 8"
+label = "c1a1d controller tape 12"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-08.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-12.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1448,9 +1476,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 9"
+label = "c1a1d controller tape 13"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-09.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-13.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1463,9 +1491,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 10"
+label = "c1a1d controller tape 14"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-10.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-14.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1478,9 +1506,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 11"
+label = "c1a1d controller tape 15"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-11.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-15.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1536,9 +1564,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 200" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 12"
+label = "c1a1d controller tape 16"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-12.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-16.pxtape"
 tape_rebase = true
 timeout = 1240
 
@@ -1599,9 +1627,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[1]) <= 44" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 13"
+label = "c1a1d controller tape 17"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-13.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-17.pxtape"
 tape_rebase = true
 timeout = 1260
 
@@ -1681,9 +1709,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=41 }
 timeout = 3600
 
 [[step]]
-label = "c1a1d controller tape 14"
+label = "c1a1d controller tape 18"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-14.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-18.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1696,9 +1724,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 15"
+label = "c1a1d controller tape 19"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-15.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-19.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1711,9 +1739,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 16"
+label = "c1a1d controller tape 20"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-16.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-20.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1726,9 +1754,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 17"
+label = "c1a1d controller tape 21"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-17.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-21.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1741,9 +1769,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 346" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 18"
+label = "c1a1d controller tape 22"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-18.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-22.pxtape"
 tape_rebase = true
 timeout = 1240
 
@@ -1831,9 +1859,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[1]) <= -70" }
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 19"
+label = "c1a1d controller tape 23"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-19.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-23.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1846,9 +1874,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 20"
+label = "c1a1d controller tape 24"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-20.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-24.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1861,9 +1889,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 21"
+label = "c1a1d controller tape 25"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-21.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-25.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1876,9 +1904,9 @@ hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", offset=0, size=4, signed=true
 timeout = 360
 
 [[step]]
-label = "c1a1d controller tape 22"
+label = "c1a1d controller tape 26"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-22.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-26.pxtape"
 tape_rebase = true
 timeout = 1300
 
@@ -1942,9 +1970,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[1]) <= -150" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 23"
+label = "c1a1d controller tape 27"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-23.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-27.pxtape"
 tape_rebase = true
 timeout = 1240
 
@@ -2347,9 +2375,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= 1148" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 24"
+label = "c1a1d controller tape 28"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-24.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-28.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -2362,9 +2390,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= 896" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 25"
+label = "c1a1d controller tape 29"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-25.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-29.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -2412,9 +2440,9 @@ value=0
 value_hi=65535
 
 [[step]]
-label = "c1a1d controller tape 26"
+label = "c1a1d controller tape 30"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-26.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-30.pxtape"
 tape_rebase = true
 timeout = 1400
 
@@ -2801,9 +2829,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 1030" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 27"
+label = "c1a1d controller tape 31"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-27.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-31.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -3044,9 +3072,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= 985" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 28"
+label = "c1a1d controller tape 32"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-28.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-32.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -3353,9 +3381,9 @@ hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= 1262" }
 timeout = 240
 
 [[step]]
-label = "c1a1d controller tape 29"
+label = "c1a1d controller tape 33"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-29.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-33.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -3403,9 +3431,9 @@ value=0
 value_hi=65535
 
 [[step]]
-label = "c1a1d controller tape 30"
+label = "c1a1d controller tape 34"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-30.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-34.pxtape"
 tape_rebase = true
 timeout = 1400
 
@@ -3704,9 +3732,9 @@ wait_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) != 0" }
 timeout = 720
 
 [[step]]
-label = "c1a1d controller tape 31"
+label = "c1a1d controller tape 35"
 sync = "poll"
-tape = "tests/chain/tapes-stage-d/c1a1d-31.pxtape"
+tape = "tests/chain/tapes-stage-d/c1a1d-35.pxtape"
 tape_rebase = true
 timeout = 1320
 

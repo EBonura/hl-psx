@@ -77,13 +77,7 @@ wait = 100
 repeat = 4
 
 [[step]]
-label = "turn to face the wall"
-rstick = [255, 128]
-press = []
-hold = 40
-wait = 2
-
-[[step]]
+label = "no turn: the arrival view looks down the room, so the bolt is in flight for many ticks and its own sound stays the last one asked for"
 rstick = [128, 128]
 press = []
 wait = 20
@@ -127,6 +121,7 @@ wait = 0
 # LAST_CORE, so the shot's own sound is waited for first.
 [[step]]
 label = "the sound asked for is core id 4"
+sync = "poll"
 wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 4 }
 timeout = 300
 
