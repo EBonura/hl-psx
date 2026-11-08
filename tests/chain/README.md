@@ -267,3 +267,13 @@ of the lower canal, 40 units off the Debug page's segment start) to the changele
 hull on x 1498: the hole in the catwalk is the ladder's width), the crate hops (crate to crate, each a run-up and a jump from a dead band, the landing read from the player's
 position), the drop to the far floor, door, a ladder (step forward off its top, not back) and the last door. About 100 s emulated. It is a segment run (diagnostic start),
 so it does not prove a chain arrival; the chain version needs the lower-canal part of c1a1c in front of it.
+
+## Build-independence rules (11-08, hl-journeys)
+
+A journey must give the same answer on a faster or slower build. What broke the rung 300 disc, and the rule each case gives:
+- A transient (the last sound asked for, a one-poll flag) is read with `sync = "poll"`, and the shot is fired so the transient lasts several polls (crossbow: down the arrival view, not at a wall a pace away).
+- A leg that ends on a position leaves a slide; the next leg reads RAM again (`@align ... settle=N`), never a dead band that is already satisfied.
+- A door, charger or lift is waited on its own words (`ENT_PHASE`, `LOGIC_COUNTER`, `TRAIN_OFF`), a fight is `@kill`/`@fight`, never an open-loop aim.
+- Every route sets `sync=poll`; after a load, wait a few polls before a checkpoint that judges the picture (the first frames are black).
+- Fights with random outcomes (the c1a1c ledge crabs) are asserted for survival only.
+Still frame-timed: `chain-hazard` (it is the ladder's chain bench window; re-baseline `game/pgo/bench-scores.txt` before converting it), the 40-frame turn in the `weapons-*` journeys, and the plain frame waits on menus in `hud-*`, `skill-*`, `settings-persist`, `save-repin`, `pause-overlay`, `intro*`.

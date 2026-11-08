@@ -3,13 +3,13 @@ threshold  free_B  fits  c0a0  c4a3  chain  chainlate  geomean  worst
      1000     448  under floor  -  -  -  -  -  -
       800    1712  under floor  -  -  -  -  -  -
       700    1712  under floor  -  -  -  -  -  -
-      650    2816  yes  14.009  18.652  18.486  19.684  0.9920  0.9723 (c4a3)
+      650    2816  yes  14.009 (+0.88%)  18.652 (-1.11%)  18.486 (+0.25%)  19.684 (-0.23%)  0.9920  0.9723 (c4a3)
       600    2816  yes  -  -  -  -  -  -  same code as 650
       550    2816  yes  -  -  -  -  -  -  same code as 650
       500    2816  yes  -  -  -  -  -  -  same code as 650
-      450    5584  yes  13.887  18.861  18.440  19.729  0.9925  0.9832 (c4a3)
+      450    5584  yes  13.887 (+0.00%)  18.861 (+0.00%)  18.440 (+0.00%)  19.729 (+0.00%)  0.9925  0.9832 (c4a3)
       400    5584  yes  -  -  -  -  -  -  same code as 450
-      350    6528  yes  13.840  18.658  18.470  19.763  0.9899  0.9726 (c4a3)
-      300    7152  yes  13.891  19.184  18.481  19.605  0.9958  0.9916 (c0a0)  <- chosen
+      350    6528  yes  13.840 (-0.34%)  18.658 (-1.08%)  18.470 (+0.16%)  19.763 (+0.17%)  0.9899  0.9726 (c4a3)
+      300    7152  yes  13.891 (+0.03%)  19.184 (+1.71%)  18.481 (+0.22%)  19.605 (-0.63%)  0.9958  0.9916 (c0a0)  <- chosen
+(percentages are against the baseline; a candidate more than 1% under it on any metric is not eligible)
 chosen threshold 300
-shipped threshold 450: 300 won this bench but moves three position-hold journeys (chain-new-game, parity-c1a1b-exit-grate, weapons-crossbow); re-author them before taking it
