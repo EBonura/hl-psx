@@ -27325,11 +27325,35 @@ unsafe fn project_vert_fixed(m: &Map, i: usize) -> Projected {
     fix_projected_vertex(v, project_vertex_scheduled(v))
 }
 
+/// Store one freshly projected vertex in the per-frame cache.
 #[inline(never)]
 unsafe fn cache_projected_vert(i: usize, frame: u16, v: Vec3I16, projected: Projected) {
-    scratch_set(i, fix_projected_vertex(v, projected));
+    cache_projected_vert_inline(i, frame, v, projected);
+}
+
+/// `cache_projected_vert` for the quad core, which stores most of a frame's
+/// world vertices: as a call it streamed its whole body (the software near-band
+/// correction included) through the I-cache per vertex. Only the correction,
+/// needed for the 16..80 depth band, stays out of line. The other callers keep
+/// the call: inlined at every projection site it cost 2.5 KB of code.
+#[inline(always)]
+unsafe fn cache_projected_vert_inline(i: usize, frame: u16, v: Vec3I16, projected: Projected) {
+    let z = projected.sz as i32;
+    let projected = if z >= NEAR as i32 && z < render::projection_h() / 2 {
+        fix_projected_vertex_near(v, projected)
+    } else {
+        projected
+    };
+    scratch_set(i, projected);
     VERT_FRAME[i] = frame as u8;
     note_room_projected(1);
+}
+
+/// `fix_projected_vertex` for a vertex already known to sit in the near band.
+#[cold]
+#[inline(never)]
+unsafe fn fix_projected_vertex_near(v: Vec3I16, p: Projected) -> Projected {
+    fix_projected_vertex(v, p)
 }
 
 /// Project vertex `i` into the cache once per frame (base view matrix).
@@ -27402,6 +27426,65 @@ unsafe fn proj_quad_verts(m: &Map, indices: [usize; 4], frame: u16) {
         let i3 = missing[3];
         let v3 = m.vert(i3);
         cache_projected_vert(i3, frame, v3, project_vertex_scheduled(v3));
+    }
+}
+
+/// `proj_quad_verts` for the quad core: the cache store is inline (see
+/// `cache_projected_vert_inline`); everywhere else the store stays a call.
+#[inline(always)]
+unsafe fn proj_quad_verts_core(m: &Map, indices: [usize; 4], frame: u16) {
+    let mut missing = [0usize; 4];
+    let mut count = 0usize;
+    let mut corner = 0usize;
+    while corner < 4 {
+        let index = indices[corner];
+        if VERT_FRAME[index] != frame as u8 {
+            let mut duplicate = false;
+            let mut seen = 0usize;
+            while seen < count {
+                if missing[seen] == index {
+                    duplicate = true;
+                    break;
+                }
+                seen += 1;
+            }
+            if !duplicate {
+                missing[count] = index;
+                count += 1;
+            }
+        }
+        corner += 1;
+    }
+
+    if count == 0 {
+        return;
+    }
+    let i0 = missing[0];
+    let v0 = m.vert(i0);
+    if count == 1 {
+        cache_projected_vert_inline(i0, frame, v0, project_vertex_scheduled(v0));
+        return;
+    }
+
+    // Feed the second vertex twice for a two-corner miss. The first two RTPT
+    // results remain the same as two RTPS operations, and keeping one shared
+    // RTPT call avoids cloning its register schedule in the executable.
+    let (i1, v1) = (missing[1], m.vert(missing[1]));
+    let (i2, v2) = if count >= 3 {
+        (missing[2], m.vert(missing[2]))
+    } else {
+        (i1, v1)
+    };
+    let projected = project_triangle_scheduled(v0, v1, v2);
+    cache_projected_vert_inline(i0, frame, v0, projected[0]);
+    cache_projected_vert_inline(i1, frame, v1, projected[1]);
+    if count >= 3 {
+        cache_projected_vert_inline(i2, frame, v2, projected[2]);
+    }
+    if count == 4 {
+        let i3 = missing[3];
+        let v3 = m.vert(i3);
+        cache_projected_vert_inline(i3, frame, v3, project_vertex_scheduled(v3));
     }
 }
 
@@ -28785,7 +28868,7 @@ unsafe fn try_emit_quad_corners(
         affine_previous_level,
         native_patch,
     };
-    try_emit_quad_ctx(&cx, corners, blocked_edges, patch_state)
+    try_emit_quad_ctx(&cx, &corners, blocked_edges, patch_state)
 }
 
 /// What every quad of one face shares. The patch walker emits a face's quads
@@ -28821,7 +28904,7 @@ const _: () = assert!(
 #[inline(never)]
 unsafe fn try_emit_quad_ctx(
     cx: *const QuadCtx,
-    corners: [map::PackedLoopVert; 4],
+    corners: &[map::PackedLoopVert; 4],
     blocked_edges: u8,
     patch_state: usize,
 ) -> bool {
@@ -28852,7 +28935,7 @@ unsafe fn try_emit_quad_ctx(
     if !slot.valid {
         return true;
     }
-    proj_quad_verts(m, [a, b, c, d], frame);
+    proj_quad_verts_core(m, [a, b, c, d], frame);
     let (pa, pb, pc, pd) = (
         scratch_get(a),
         scratch_get(b),
@@ -28963,7 +29046,7 @@ unsafe fn try_emit_quad_ctx(
             packets,
             m,
             tex,
-            corners,
+            *corners,
             frame,
             np,
             false,
@@ -29065,7 +29148,7 @@ unsafe fn try_emit_quad_ctx(
                 packets,
                 m,
                 tex,
-                corners,
+                *corners,
                 frame,
                 np,
                 false,
@@ -32588,9 +32671,10 @@ unsafe fn emit_world_face_patches(
         affine_previous_level: 0,
         native_patch: true,
     });
+    let mut corners = [map::PackedLoopVert { idx: 0, uv: 0, rgb: 0 }; 4];
     let mut patch = 0;
     while patch < count {
-        let (corners, is_triangle, blocked_edges) = m.patch_corners_meta(base, patch);
+        let (is_triangle, blocked_edges) = m.patch_corners_meta(base, patch, &mut corners);
         #[cfg(feature = "seam-census")]
         {
             SEAM_CENSUS_TINT = SEAM_CENSUS_PATCH_QUAD;
@@ -32600,13 +32684,13 @@ unsafe fn emit_world_face_patches(
             {
                 SEAM_CENSUS_TINT = SEAM_CENSUS_PATCH_TRI;
             }
-            emit_patch_triangle(cx, corners, counts);
+            emit_patch_triangle(cx, &corners, counts);
             patch += 1;
             continue;
         }
         WORLD_QUAD_NEEDS_SOFT_SPLIT = false;
         WORLD_QUAD_DEPTH_SPLIT = false;
-        if try_emit_quad_ctx(cx, corners, blocked_edges, base + patch * 4) {
+        if try_emit_quad_ctx(cx, &corners, blocked_edges, base + patch * 4) {
             counts.note_emitted(2);
             patch += 1;
             continue;
@@ -32615,7 +32699,7 @@ unsafe fn emit_world_face_patches(
         {
             SEAM_CENSUS_TINT = SEAM_CENSUS_PATCH_FALLBACK;
         }
-        emit_patch_fallback(cx, corners, counts);
+        emit_patch_fallback(cx, &corners, counts);
         patch += 1;
     }
     EMIT_POLICY = saved_policy;
@@ -32625,7 +32709,7 @@ unsafe fn emit_world_face_patches(
 #[inline(never)]
 unsafe fn emit_patch_triangle(
     cx: *const QuadCtx,
-    corners: [map::PackedLoopVert; 4],
+    corners: &[map::PackedLoopVert; 4],
     counts: &mut WorldCounters,
 ) {
     let QuadCtx {
@@ -32656,7 +32740,7 @@ unsafe fn emit_patch_triangle(
 #[inline(never)]
 unsafe fn emit_patch_fallback(
     cx: *const QuadCtx,
-    corners: [map::PackedLoopVert; 4],
+    corners: &[map::PackedLoopVert; 4],
     counts: &mut WorldCounters,
 ) {
     let QuadCtx {
@@ -32677,7 +32761,7 @@ unsafe fn emit_patch_fallback(
             packets,
             m,
             tex,
-            corners,
+            *corners,
             frame,
             np,
             false,
@@ -32689,7 +32773,7 @@ unsafe fn emit_patch_fallback(
     }
     if WORLD_DEPTH_SPLIT_PX_Q3 != 0
         && WORLD_QUAD_DEPTH_SPLIT
-        && emit_depth_split_quad(packets, m, tex, corners, frame, nq)
+        && emit_depth_split_quad(packets, m, tex, *corners, frame, nq)
     {
         counts.note_emitted(2);
         return;

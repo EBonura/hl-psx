@@ -2434,7 +2434,14 @@ impl Map {
     /// those bits, then reread one word for the triangle marker and all four
     /// words for the blocked-edge mask.
     #[inline]
-    pub fn patch_corners_meta(&self, base: usize, patch: usize) -> ([PackedLoopVert; 4], bool, u8) {
+    /// Decode one patch record's four corners into `out` and return whether the
+    /// record is a triangle and its blocked-edge bits. An out parameter, not a
+    /// returned tuple: the walker hands the same four words to the quad core by
+    /// reference, and a returned array was decoded onto the stack and then copied
+    /// again for that call, sixteen RAM accesses per patch on a CPU with no data
+    /// cache.
+    #[inline(always)]
+    pub fn patch_corners_meta(&self, base: usize, patch: usize, out: &mut [PackedLoopVert; 4]) -> (bool, u8) {
         let first = base + patch * 4;
         if Self::dynamic_loop_active() {
             // `loop_vert_static` masks the topology bits out of the decoded
@@ -2445,7 +2452,8 @@ impl Map {
             let f3 = (self.loop_vert_idx(first + 3) >> 14) as u8;
             let triangle = f3 & 2 != 0;
             let blocked_edges = (f0 & 1) | ((f1 & 1) << 1) | ((f3 & 1) << 2) | ((f2 & 1) << 3);
-            return (self.loop_corners4(first), triangle, blocked_edges);
+            *out = self.loop_corners4(first);
+            return (triangle, blocked_edges);
         }
         // Static geometry: the R3000 has no data cache, so every load is a RAM
         // stall. Read each corner's index/uv word once and take the topology
@@ -2461,23 +2469,27 @@ impl Map {
                 .cast::<u32>()
                 .read_unaligned();
             let palette = core::ptr::addr_of!(LIGHT_PAL_RGB).cast::<u32>();
-            let corner = |i: usize| {
+            let mut flags = 0u32;
+            let mut i = 0;
+            while i < 4 {
                 let idx_uv = words.add(i).read();
-                PackedLoopVert {
+                out[i] = PackedLoopVert {
                     idx: idx_uv as u16 & 0x3fff,
                     uv: (idx_uv >> 16) as u16,
                     rgb: *palette.add(((lights >> (8 * i)) & 0xff) as usize),
-                }
-            };
-            let flags = |i: usize| (words.add(i).read() as u16 >> 14) as u8;
-            let (f0, f1, f2, f3) = (flags(0), flags(1), flags(2), flags(3));
+                };
+                flags |= ((idx_uv >> 14) & 3) << (2 * i);
+                i += 1;
+            }
+            let (f0, f1, f2, f3) = (
+                (flags & 3) as u8,
+                ((flags >> 2) & 3) as u8,
+                ((flags >> 4) & 3) as u8,
+                ((flags >> 6) & 3) as u8,
+            );
             let triangle = f3 & 2 != 0;
             let blocked_edges = (f0 & 1) | ((f1 & 1) << 1) | ((f3 & 1) << 2) | ((f2 & 1) << 3);
-            (
-                [corner(0), corner(1), corner(2), corner(3)],
-                triangle,
-                blocked_edges,
-            )
+            (triangle, blocked_edges)
         }
     }
 
