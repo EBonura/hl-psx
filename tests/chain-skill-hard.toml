@@ -47,15 +47,25 @@ wait = 24
 # ---- c0a0 -> c0a0a ----
 [[step]]
 label = "c0a0 loads"
+sync = "poll"
 wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 6050 }
 timeout = 9000
 
 [[step]]
 label = "c0a0 first simulation tick"
+sync = "poll"
 wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
 timeout = 9000
 
 [[step]]
+label = "c0a0 controller tape 0"
+sync = "poll"
+tape = "tests/chain/tapes/c0a0-00.pxtape"
+tape_rebase = true
+timeout = 2000
+
+[[step]]
+sync = "poll"
 checkpoint = "arrive-c0a0"
 golden = false
 [[step.assert]]
@@ -73,15 +83,18 @@ value=2
 # ---- c0a0a -> c0a0b ----
 [[step]]
 label = "c0a0a loads"
+sync = "poll"
 wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 6127 }
 timeout = 9000
 
 [[step]]
 label = "c0a0a first simulation tick"
+sync = "poll"
 wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
 timeout = 9000
 
 [[step]]
+sync = "poll"
 checkpoint = "arrive-c0a0a"
 golden = false
 [[step.assert]]
@@ -99,15 +112,18 @@ value=2
 # ---- c0a0b -> c0a0c ----
 [[step]]
 label = "c0a0b loads"
+sync = "poll"
 wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 6296 }
 timeout = 9000
 
 [[step]]
 label = "c0a0b first simulation tick"
+sync = "poll"
 wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
 timeout = 9000
 
 [[step]]
+sync = "poll"
 checkpoint = "arrive-c0a0b"
 golden = false
 [[step.assert]]
@@ -125,15 +141,18 @@ value=2
 # ---- c0a0c -> c0a0d ----
 [[step]]
 label = "c0a0c loads"
+sync = "poll"
 wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 7222 }
 timeout = 9000
 
 [[step]]
 label = "c0a0c first simulation tick"
+sync = "poll"
 wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
 timeout = 9000
 
 [[step]]
+sync = "poll"
 checkpoint = "arrive-c0a0c"
 golden = false
 [[step.assert]]

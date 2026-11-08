@@ -83,6 +83,7 @@ hold = 30
 wait = 0
 
 [[step]]
+sync = "poll"
 wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 51 }
 timeout = 300
 

@@ -1,5 +1,7 @@
-@journey name=hl-parity-c1a1c-vent-bars title="c1a1c vent: a crouched player crawls over the five floor-grate bars (crouch hulls of low brush entities)" prologue=load card_fixture=tests/cards/bp-f1.mcd card_sha256=2862e710927fd200c0205d14949032f005a788cf6c3ae2b6f8b3a967b0dc5fc4 max_ticks=80000
+@journey name=hl-parity-c1a1c-vent-bars title="c1a1c vent: a crouched player crawls over the five floor-grate bars (crouch hulls of low brush entities)" prologue=load card_fixture=tests/cards/bp-f1.mcd card_sha256=2862e710927fd200c0205d14949032f005a788cf6c3ae2b6f8b3a967b0dc5fc4 max_ticks=80000 sync=poll
 map c1a1c next x
+  # the first frames after the load are black: let the picture come up before judging it
+  30
   @checkpoint resumed
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) + 1000"

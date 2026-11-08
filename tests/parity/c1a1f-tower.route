@@ -1,4 +1,4 @@
-@journey name=hl-parity-tower title="Half-Life c1a1f: the tipping CPU tower (func_door_rotating cpu_tip_over, dmg 5000) crushes the headcrab beneath it, as in the GoldSrc reference" prologue=segment segment_row=14 max_ticks=80000
+@journey name=hl-parity-tower title="Half-Life c1a1f: the tipping CPU tower (func_door_rotating cpu_tip_over, dmg 5000) crushes the headcrab beneath it, as in the GoldSrc reference" prologue=segment segment_row=14 max_ticks=80000 sync=poll
 
 map c1a1f
   100

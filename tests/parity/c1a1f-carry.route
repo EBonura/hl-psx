@@ -1,4 +1,4 @@
-@journey name=hl-parity-c1a1f-carry title="Half-Life c1a1f to c1a1b: the crawl Barney and the sliding zombie die in their scripted sequences (SCRIPT_EVENT_DEAD) and cross the changelevel as corpses, as in the reference (edicts 344 and 345, health 0); the player arrives with his health and nothing attacks him for 100 ticks (the port carried them alive: the zombie clawed him three times for 20 each)" prologue=segment segment_row=14 max_ticks=80000
+@journey name=hl-parity-c1a1f-carry title="Half-Life c1a1f to c1a1b: the crawl Barney and the sliding zombie die in their scripted sequences (SCRIPT_EVENT_DEAD) and cross the changelevel as corpses, as in the reference (edicts 344 and 345, health 0); the player arrives with his health and nothing attacks him for 100 ticks (the port carried them alive: the zombie clawed him three times for 20 each)" prologue=segment segment_row=14 max_ticks=80000 sync=poll
 
 map c1a1f next c1a1b
   100

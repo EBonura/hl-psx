@@ -152,6 +152,7 @@ wait = 40
 
 [[step]]
 label = "the sound asked for is core id 84"
+sync = "poll"
 wait_until = { kind = "ram", sym = "LAST_CORE", size = 1, op = "eq", value = 84 }
 timeout = 300
 

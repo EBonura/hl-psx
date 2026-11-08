@@ -1,8 +1,9 @@
 @journey name=hl-parity-exit-grate title="Half-Life c1a1b: the exit grate (func_train floor_grate2) lifts 7 and slides north 57 when the swimmer reaches the trigger_once under it, on the reference timeline (fire, lift in 5 ticks, open in about 45)" prologue=segment segment_row=15 max_ticks=80000 sync=poll
 
-# Closed-loop legs from the c1a1b explore route (hl-chain c9). The doorway leg after the aira button is yaw sensitive:
-# green on the library disc 5d453e4d, it can stall at x -261 on a rebuilt disc whose face band lands 29 yaw units off.
-# Not part of the gate set; the grate itself needs no fix (it opens on the reference timeline).
+# The c1a1b legs are the chain's (tests/chain/inbound-anomalous.route), so a fix there is a fix here: sync=poll (the
+# legs run on the pad polls, the same tick counts on any build), the aira doorway crossed on the door's own phase
+# (ENT_PHASE[38]) and crouched, the houndeyes and the slave killed with @kill, the first aid unit used until full
+# or empty. Green on the library disc 575bd763 and on the rung 300 disc f7b25ef11cf3.
 map c1a1b next x
   100
   @face 1018 left

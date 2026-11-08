@@ -1,7 +1,10 @@
-@journey name=hl-parity-c1a1b-grate-rise title="Half-Life c1a1b: a swimmer rising at full speed under the exit grate (floor_grate2, a 4 unit func_train with dmg 500) is stopped by it while it lifts and slides away, and rises out unhurt, as in the reference (ref/rise.out: held about 30 ticks under it with health intact); the port let the lip step walk him through it and the blocked-train damage killed him" prologue=segment segment_row=15 max_ticks=80000
+@journey name=hl-parity-c1a1b-grate-rise title="Half-Life c1a1b: a swimmer rising at full speed under the exit grate (floor_grate2, a 4 unit func_train with dmg 500) is stopped by it while it lifts and slides away, and rises out unhurt, as in the reference (ref/rise.out: held about 30 ticks under it with health intact); the port let the lip step walk him through it and the blocked-train damage killed him" prologue=segment segment_row=15 max_ticks=80000 sync=poll
 
-# TIMING FRAGILE: the first wait (107 polls) is tuned on the build this journey landed with (intro disc 5979c41be044). A rebuilt disc shifts the doorway, rim and valve legs of this c1a1b block (the same fragility as c1a1b-exit-grate.route and hl-chain's c1a1b legs): when it goes red before the checkpoint `under`, vary that wait (the run takes 25 s, explore/tunegr.sh in the lane tried 100..110) before suspecting the swim code. The checks that matter are `under`, `held` and `out`.
-# 11-01 r6i (layout r6): red on that disc for every first wait 98..124 (step 669 stops at the rim x 1530 for waits 99,100,105,107,116,117,122; waits 111,115,123 run to the end with HP 20 under the 40 floor of `under`/`held`). Not in the gate set; re-tune with explore/tunegr.sh or make the rim leg read the door and the swimmer's HP.
+# The c1a1b legs are the chain's (tests/chain/inbound-anomalous.route), so a fix there is a fix here: sync=poll (the
+# legs run on the pad polls, the same tick counts on any build), the aira doorway crossed on the door's own phase
+# (ENT_PHASE[38]) and crouched, the houndeyes and the slave killed with @kill, the first aid unit used until full
+# or empty. Green on the library disc 575bd763 and on the rung 300 disc f7b25ef11cf3.
+# The checks that matter are `under`, `held` and `out`.
 
 map c1a1b next x
   107
@@ -592,6 +595,7 @@ map c1a1b next x
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   # the rim: at y -691 the hull already overhangs the 44x48 hole (x 1536..1580, y -736..-688) and slides in off centre. Align x from the north, then go south into it
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-672 timeout=40
   10
   25
   @hold f-29 duck until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=1556 timeout=60
@@ -692,9 +696,8 @@ map c1a1b next x
   @hold f127 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2332 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1212 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-1156 timeout=40
-  @hold f73 s-104 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1174 timeout=43
-  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2346 timeout=40
-  @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=2370 timeout=40
+  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-1130 timeout=80
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=2352 timeout=60
   @checkpoint cend
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
@@ -706,7 +709,7 @@ map c1a1b next x
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=0 value_hi=100
   @assert sym=PLAYER_WATER_LEVEL size=1 op=between value=0 value_hi=3
   @assert sym=LOGIC_PLAYER_YAW size=2 op=between value=0 value_hi=4095
-  @align f40+duck sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=2374 hi=2392 timeout=120
+  @align f40+duck sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=2382 hi=2392 timeout=120
   10
   @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=-1166 hi=-1156 timeout=120
   10

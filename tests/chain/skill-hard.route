@@ -1,6 +1,8 @@
-@journey name=hl-chain-skill-hard title="Half-Life New Game on Hard: three changelevels of the tram ride keep Hard" prologue=new_game skill=hard max_ticks=20000
+@journey name=hl-chain-skill-hard title="Half-Life New Game on Hard: three changelevels of the tram ride keep Hard" prologue=new_game skill=hard max_ticks=20000 sync=poll
 
 map c0a0 next c0a0a
+  # the first frames after the load are the black title card: let the picture come up before judging it
+  200
   @checkpoint arrive-c0a0
   @assert sym=SKILL size=1 op=eq value=2
   900

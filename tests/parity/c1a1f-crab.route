@@ -1,4 +1,4 @@
-@journey name=hl-parity-crab title="Half-Life c1a1f: the headcrab at (-436,80) that wakes as the player leaves the vent crawl walks at the reference speed (5.02 units per 0.1 s: about 150 units in 60 ticks, the port had 3.0 per move)" prologue=segment segment_row=14 max_ticks=80000
+@journey name=hl-parity-crab title="Half-Life c1a1f: the headcrab at (-436,80) that wakes as the player leaves the vent crawl walks at the reference speed (5.02 units per 0.1 s: about 150 units in 60 ticks, the port had 3.0 per move)" prologue=segment segment_row=14 max_ticks=80000 sync=poll
 
 map c1a1f
   100

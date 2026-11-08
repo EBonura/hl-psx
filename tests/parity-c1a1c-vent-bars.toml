@@ -56,15 +56,25 @@ wait = 60
 # ---- c1a1c -> x ----
 [[step]]
 label = "c1a1c loads"
+sync = "poll"
 wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 7305 }
 timeout = 9000
 
 [[step]]
 label = "c1a1c first simulation tick"
+sync = "poll"
 wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "lt", value = 64 }
 timeout = 9000
 
 [[step]]
+label = "c1a1c controller tape 0"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-00.pxtape"
+tape_rebase = true
+timeout = 1320
+
+[[step]]
+sync = "poll"
 checkpoint = "resumed"
 golden = false
 [[step.assert]]
@@ -122,6 +132,7 @@ expr="u16(LOGIC_PLAYER_YAW) + 100000"
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3850 }
 timeout = 3600
 
@@ -129,6 +140,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3940 }
 timeout = 3600
 
@@ -136,6 +148,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3999 }
 timeout = 3600
 
@@ -143,6 +156,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3940 }
 timeout = 3600
 
@@ -150,16 +164,19 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -708" }
 timeout = 240
 
 [[step]]
-label = "c1a1c controller tape 0"
-tape = "tests/parity/tapes-vent/c1a1c-00.pxtape"
+label = "c1a1c controller tape 1"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-01.pxtape"
 tape_rebase = true
 timeout = 1232
 
 [[step]]
+sync = "poll"
 checkpoint = "stopped"
 golden = false
 [[step.assert]]
@@ -208,6 +225,7 @@ expr="i16(LOGIC_PLAYER_HEALTH) + 1000"
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=880 }
 timeout = 3600
 
@@ -215,6 +233,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=970 }
 timeout = 3600
 
@@ -222,6 +241,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=1029 }
 timeout = 3600
 
@@ -229,6 +249,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=970 }
 timeout = 3600
 
@@ -236,6 +257,7 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -420" }
 timeout = 240
 
@@ -243,6 +265,7 @@ timeout = 240
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["cross"]
+sync = "poll"
 hold_until = { kind="ram", sym="PLAYER_ON_GROUND", size=1, op="eq", value=0 }
 timeout = 120
 
@@ -250,16 +273,19 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -240" }
 timeout = 240
 
 [[step]]
-label = "c1a1c controller tape 1"
-tape = "tests/parity/tapes-vent/c1a1c-01.pxtape"
+label = "c1a1c controller tape 2"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-02.pxtape"
 tape_rebase = true
 timeout = 1216
 
 [[step]]
+sync = "poll"
 checkpoint = "land1"
 golden = false
 [[step.assert]]
@@ -308,6 +334,7 @@ expr="i16(LOGIC_PLAYER_HEALTH) + 1000"
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=150 }
 timeout = 3600
 
@@ -315,6 +342,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1 }
 timeout = 3600
 
@@ -322,6 +350,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=60 }
 timeout = 3600
 
@@ -329,6 +358,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1 }
 timeout = 3600
 
@@ -336,12 +366,14 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -500" }
 timeout = 360
 
 [[step]]
-label = "c1a1c controller tape 2"
-tape = "tests/parity/tapes-vent/c1a1c-02.pxtape"
+label = "c1a1c controller tape 3"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-03.pxtape"
 tape_rebase = true
 timeout = 1232
 
@@ -349,6 +381,7 @@ timeout = 1232
 lstick = [255, 128]
 rstick = [128, 128]
 press = ["cross"]
+sync = "poll"
 hold_until = { kind="ram", sym="PLAYER_ON_GROUND", size=1, op="eq", value=0 }
 timeout = 120
 
@@ -356,6 +389,7 @@ timeout = 120
 lstick = [255, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -190" }
 timeout = 180
 
@@ -363,6 +397,7 @@ timeout = 180
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -345" }
 timeout = 360
 
@@ -370,6 +405,7 @@ timeout = 360
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["cross"]
+sync = "poll"
 hold_until = { kind="ram", sym="PLAYER_ON_GROUND", size=1, op="eq", value=0 }
 timeout = 120
 
@@ -377,12 +413,14 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -270" }
 timeout = 240
 
 [[step]]
-label = "c1a1c controller tape 3"
-tape = "tests/parity/tapes-vent/c1a1c-03.pxtape"
+label = "c1a1c controller tape 4"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-04.pxtape"
 tape_rebase = true
 timeout = 1224
 
@@ -390,6 +428,7 @@ timeout = 1224
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["cross"]
+sync = "poll"
 hold_until = { kind="ram", sym="PLAYER_ON_GROUND", size=1, op="eq", value=0 }
 timeout = 120
 
@@ -397,6 +436,7 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -228" }
 timeout = 240
 
@@ -404,6 +444,7 @@ timeout = 240
 lstick = [128, 128]
 rstick = [42, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3190 }
 timeout = 3600
 
@@ -411,6 +452,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3041 }
 timeout = 3600
 
@@ -418,6 +460,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3100 }
 timeout = 3600
 
@@ -425,6 +468,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3041 }
 timeout = 3600
 
@@ -432,6 +476,7 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -285" }
 timeout = 300
 
@@ -439,6 +484,7 @@ timeout = 300
 lstick = [255, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -186" }
 timeout = 120
 
@@ -446,6 +492,7 @@ timeout = 120
 lstick = [68, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= -176" }
 timeout = 120
 
@@ -453,6 +500,7 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -450" }
 timeout = 240
 
@@ -460,6 +508,7 @@ timeout = 240
 lstick = [188, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -186" }
 timeout = 120
 
@@ -467,6 +516,7 @@ timeout = 120
 lstick = [68, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= -176" }
 timeout = 120
 
@@ -474,6 +524,7 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -600" }
 timeout = 240
 
@@ -481,6 +532,7 @@ timeout = 240
 lstick = [188, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -186" }
 timeout = 120
 
@@ -488,6 +540,7 @@ timeout = 120
 lstick = [68, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= -176" }
 timeout = 120
 
@@ -495,6 +548,7 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -686" }
 timeout = 240
 
@@ -502,6 +556,7 @@ timeout = 240
 lstick = [188, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -186" }
 timeout = 120
 
@@ -509,6 +564,7 @@ timeout = 120
 lstick = [68, 128]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) <= -176" }
 timeout = 120
 
@@ -516,6 +572,7 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["cross"]
+sync = "poll"
 hold_until = { kind="ram", sym="PLAYER_ON_GROUND", size=1, op="eq", value=0 }
 timeout = 120
 
@@ -523,10 +580,12 @@ timeout = 120
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -830" }
 timeout = 240
 
 [[step]]
+sync = "poll"
 checkpoint = "boxtop"
 golden = false
 [[step.assert]]
@@ -578,6 +637,7 @@ expr="u8(VM_LIVE_WM) + 100000"
 lstick = [128, 128]
 rstick = [214, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3940 }
 timeout = 3600
 
@@ -585,6 +645,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=4030 }
 timeout = 3600
 
@@ -592,6 +653,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=4089 }
 timeout = 3600
 
@@ -599,6 +661,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = []
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=4030 }
 timeout = 3600
 
@@ -606,6 +669,7 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -150" }
 timeout = 120
 
@@ -613,16 +677,19 @@ timeout = 120
 lstick = [128, 128]
 rstick = [128, 128]
 press = ["l1"]
+sync = "poll"
 hold_until = { kind="expr", expr="u8(VM_LIVE_WM) == 4" }
 timeout = 360
 
 [[step]]
-label = "c1a1c controller tape 4"
-tape = "tests/parity/tapes-vent/c1a1c-04.pxtape"
+label = "c1a1c controller tape 5"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-05.pxtape"
 tape_rebase = true
 timeout = 1256
 
 [[step]]
+sync = "poll"
 checkpoint = "armed"
 golden = false
 [[step.assert]]
@@ -674,12 +741,14 @@ expr="u8(VM_LIVE_WM) + 100000"
 lstick = [168, 128]
 rstick = [128, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) >= -818" }
 timeout = 360
 
 [[step]]
-label = "c1a1c controller tape 5"
-tape = "tests/parity/tapes-vent/c1a1c-05.pxtape"
+label = "c1a1c controller tape 6"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-06.pxtape"
 tape_rebase = true
 timeout = 1240
 
@@ -687,16 +756,19 @@ timeout = 1240
 lstick = [98, 128]
 rstick = [128, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -796" }
 timeout = 240
 
 [[step]]
-label = "c1a1c controller tape 6"
-tape = "tests/parity/tapes-vent/c1a1c-06.pxtape"
+label = "c1a1c controller tape 7"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-07.pxtape"
 tape_rebase = true
 timeout = 1240
 
 [[step]]
+sync = "poll"
 checkpoint = "scan_a"
 golden = false
 [[step.assert]]
@@ -778,10 +850,12 @@ expr="u8(ENT_ACTIVE[71]) + 100000"
 lstick = [128, 128]
 rstick = [128, 128]
 press = ["triangle", "r2"]
+sync = "poll"
 hold_until = { kind="expr", expr="u8(ENT_ACTIVE[65]) == 0" }
 timeout = 360
 
 [[step]]
+sync = "poll"
 checkpoint = "swung"
 golden = false
 [[step.assert]]
@@ -833,10 +907,12 @@ expr="u8(ENT_ACTIVE[65]) + 100000"
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[2]) >= -76" }
 timeout = 240
 
 [[step]]
+sync = "poll"
 checkpoint = "vent_n"
 golden = false
 [[step.assert]]
@@ -885,6 +961,7 @@ expr="i16(LOGIC_PLAYER_HEALTH) + 1000"
 lstick = [128, 128]
 rstick = [42, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3162 }
 timeout = 3600
 
@@ -892,6 +969,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -899,6 +977,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [74, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="le", value=3072 }
 timeout = 3600
 
@@ -906,6 +985,7 @@ timeout = 3600
 lstick = [128, 128]
 rstick = [182, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=3013 }
 timeout = 3600
 
@@ -913,16 +993,19 @@ timeout = 3600
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -940" }
 timeout = 600
 
 [[step]]
-label = "c1a1c controller tape 7"
-tape = "tests/parity/tapes-vent/c1a1c-07.pxtape"
+label = "c1a1c controller tape 8"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-08.pxtape"
 tape_rebase = true
 timeout = 1240
 
 [[step]]
+sync = "poll"
 checkpoint = "sb"
 golden = false
 [[step.assert]]
@@ -1865,12 +1948,14 @@ kind="expr"
 expr="u8(ENT_ACTIVE[299]) + 100000"
 
 [[step]]
-label = "c1a1c controller tape 8"
-tape = "tests/parity/tapes-vent/c1a1c-08.pxtape"
+label = "c1a1c controller tape 9"
+sync = "poll"
+tape = "tests/parity/tapes-vent/c1a1c-09.pxtape"
 tape_rebase = true
 timeout = 1332
 
 [[step]]
+sync = "poll"
 checkpoint = "sa"
 golden = false
 [[step.assert]]
@@ -2816,10 +2901,12 @@ expr="u8(ENT_ACTIVE[299]) + 100000"
 lstick = [128, 1]
 rstick = [128, 128]
 press = ["triangle"]
+sync = "poll"
 hold_until = { kind="expr", expr="i32(LOGIC_PLAYER_POS[0]) <= -1004" }
 timeout = 360
 
 [[step]]
+sync = "poll"
 checkpoint = "vent_w"
 golden = false
 [[step.assert]]
