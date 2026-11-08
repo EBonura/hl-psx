@@ -27728,6 +27728,20 @@ unsafe fn tram_cache_capture_quad(packet: *const QuadTexturedGouraud, otz: usize
     TRAM_QUAD_COUNT = i + 1;
 }
 
+/// Write a world vertex in view space, with its packed colour and texture word
+/// unpacked, into `out`, as the software clip paths consume it. One body that
+/// writes its eight words in place: as a closure returning the 32-byte struct
+/// every corner went through a memcpy call, and inlined at every corner it
+/// cost 700 B of code.
+#[inline(never)]
+unsafe fn cvert_view_into(out: *mut render::CVert, m: &Map, idx: usize, rgb_word: u32, uv_word: u16) {
+    let v = scene::transform_vertex_scheduled(m.vert(idx));
+    let c = unpack_rgb_word(rgb_word);
+    (*out).v = [v.x, v.y, v.z];
+    (*out).rgb = (c.0 as i32, c.1 as i32, c.2 as i32);
+    (*out).uv = uv_word_pair_i32(uv_word);
+}
+
 /// Emit triangle `t` from its three projected screen verts `p`. Fully visible
 /// triangles use the cached GTE result; near straddlers use software clipping.
 unsafe fn emit_projected(
@@ -27764,16 +27778,13 @@ unsafe fn emit_projected(
     }
 
     // View-space path (near-plane straddlers): rebuild, near-clip, emit.
-    let cvv = |idx: usize, k: usize| {
-        let v = scene::transform_vertex_scheduled(m.vert(idx));
-        let c = unpack_rgb_word(rgb[k]);
-        render::CVert {
-            v: [v.x, v.y, v.z],
-            rgb: (c.0 as i32, c.1 as i32, c.2 as i32),
-            uv: uv_word_pair_i32(tri.uv_words[k]),
-        }
-    };
-    let cv = [cvv(a, 0), cvv(b, 1), cvv(c, 2)];
+    let mut cv_slot = core::mem::MaybeUninit::<[render::CVert; 3]>::uninit();
+    let cvp = cv_slot.as_mut_ptr().cast::<render::CVert>();
+    cvert_view_into(cvp, m, a, rgb[0], tri.uv_words[0]);
+    cvert_view_into(cvp.add(1), m, b, rgb[1], tri.uv_words[1]);
+    cvert_view_into(cvp.add(2), m, c, rgb[2], tri.uv_words[2]);
+    // SAFETY: all three slots were just written.
+    let cv: &[render::CVert; 3] = &*cv_slot.as_ptr();
     let guard_clamped =
         |q: &Projected| q.sx <= -1023 || q.sx >= 1023 || q.sy <= -1023 || q.sy >= 1023;
     let hit_guard = guard_clamped(&pa) || guard_clamped(&pb) || guard_clamped(&pc);
@@ -27801,7 +27812,7 @@ unsafe fn emit_projected(
         {
             emit_cv_split_route(
                 packets,
-                [&cv[0], &cv[1], &cv[2]],
+                cv,
                 emit_packet_of(slot, tri.tex),
                 slot.backdrop,
                 np,
@@ -27809,7 +27820,7 @@ unsafe fn emit_projected(
         } else {
             emit_cv(
                 packets,
-                &cv,
+                cv,
                 emit_packet_of(slot, tri.tex),
                 slot.backdrop,
                 np,
@@ -27825,7 +27836,7 @@ unsafe fn emit_projected(
     {
         emit_cv_split_route(
             packets,
-            [&cv[0], &cv[1], &cv[2]],
+            cv,
             emit_packet_of(slot, tri.tex),
             slot.backdrop,
             np,
@@ -27835,7 +27846,7 @@ unsafe fn emit_projected(
 
     emit_cv_near_fan(
         packets,
-        &cv,
+        cv,
         emit_packet_of(slot, tri.tex),
         slot.backdrop,
         np,
@@ -28016,7 +28027,7 @@ unsafe fn emit_soft_quad_split(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     tex: usize,
-    corners: [map::PackedLoopVert; 4],
+    corners: &[map::PackedLoopVert; 4],
     frame: u16,
     np: &mut usize,
     fixed_grid: bool,
@@ -28070,16 +28081,15 @@ unsafe fn emit_soft_quad_split(
         emit_affine_quad_children(packets, q, emit_packet_of(slot, tex), np);
         return true;
     }
-    let corner_cv = |k: usize| -> render::CVert {
-        let v = scene::transform_vertex_scheduled(m.vert(idx[k]));
-        let c = unpack_rgb_word(words[k]);
-        render::CVert {
-            v: [v.x, v.y, v.z],
-            rgb: (c.0 as i32, c.1 as i32, c.2 as i32),
-            uv: uv_word_pair_i32(corners[order[k]].uv),
-        }
-    };
-    let q = [corner_cv(0), corner_cv(1), corner_cv(2), corner_cv(3)];
+    let mut q_slot = core::mem::MaybeUninit::<[render::CVert; 4]>::uninit();
+    let qp = q_slot.as_mut_ptr().cast::<render::CVert>();
+    let mut k = 0usize;
+    while k < 4 {
+        cvert_view_into(qp.add(k), m, idx[k], words[k], corners[order[k]].uv);
+        k += 1;
+    }
+    // SAFETY: all four slots were just written.
+    let q: &[render::CVert; 4] = &*q_slot.as_ptr();
     SOFT_SNAP_N = 0;
     let mut k = 0usize;
     while k < 4 {
@@ -28375,7 +28385,7 @@ unsafe fn emit_soft_leaf(
 #[inline(never)]
 unsafe fn emit_cv_split_route(
     packets: &mut PrimitivePacketArena<'_>,
-    cv: [&render::CVert; 3],
+    cv: &[render::CVert; 3],
     mat: TexturedGouraudPacketMaterial,
     texture_backdrop: bool,
     np: &mut usize,
@@ -28391,10 +28401,7 @@ unsafe fn emit_cv_split_route(
     let cached_scr = SOFT_CACHED_SCREEN;
     let cached_cv = SOFT_CACHED_CV;
     SOFT_CACHED_SCREEN = [None; 3];
-    let nc = render::near_clip(
-        &[*cv[0], *cv[1], *cv[2]],
-        &mut *core::ptr::addr_of_mut!(CLIP_CV),
-    );
+    let nc = render::near_clip(cv, &mut *core::ptr::addr_of_mut!(CLIP_CV));
     if nc < 3 {
         return;
     }
@@ -28461,11 +28468,11 @@ unsafe fn emit_cv_split_route(
             let over =
                 |q: &render::SVert| q.x <= -1023 || q.x >= 1023 || q.y <= -1023 || q.y >= 1023;
             if over(&proj[tri[0]]) || over(&proj[tri[1]]) || over(&proj[tri[2]]) {
-                let (v0, v1, v2) = (CLIP_CV[tri[0]], CLIP_CV[tri[1]], CLIP_CV[tri[2]]);
+                let (v0, v1, v2) = (&CLIP_CV[tri[0]], &CLIP_CV[tri[1]], &CLIP_CV[tri[2]]);
                 SOFT_CACHED_SCREEN = [None; 3];
                 emit_cv_clipped(
                     packets,
-                    [&v0, &v1, &v2],
+                    [v0, v1, v2],
                     mat,
                     texture_backdrop,
                     np,
@@ -28612,9 +28619,9 @@ unsafe fn emit_cv_clipped(
     }
     let before = *np;
     for k in 1..n - 1 {
-        let v0 = *clipped;
-        let v1 = *clipped.add(k);
-        let v2 = *clipped.add(k + 1);
+        let v0 = &*clipped;
+        let v1 = &*clipped.add(k);
+        let v2 = &*clipped.add(k + 1);
         let tri = [
             render::CVert {
                 v: [v0.x, v0.y, v0.z],
@@ -29046,7 +29053,7 @@ unsafe fn try_emit_quad_ctx(
             packets,
             m,
             tex,
-            *corners,
+            corners,
             frame,
             np,
             false,
@@ -29148,7 +29155,7 @@ unsafe fn try_emit_quad_ctx(
                 packets,
                 m,
                 tex,
-                *corners,
+                corners,
                 frame,
                 np,
                 false,
@@ -31851,7 +31858,7 @@ unsafe fn emit_submodel_face(
                     );
                     n / WORLD_CLASSIC_SEVERE_ERROR_TEXELS >= d.max(1)
                 })
-                && emit_soft_quad_split(packets, m, tex, corners, token, np, false, 48)
+                && emit_soft_quad_split(packets, m, tex, &corners, token, np, false, 48)
             {
                 SUBMODEL_OCCLUSION_EXTRAS -= 40;
                 return;
@@ -31913,7 +31920,7 @@ unsafe fn emit_submodel_face(
                             packets,
                             m,
                             t0.tex,
-                            corners,
+                            &corners,
                             token,
                             np,
                             true,
@@ -32182,7 +32189,7 @@ unsafe fn emit_world_face_loop(
                     packets,
                     m,
                     tex,
-                    [va, vk, vk1, vk2],
+                    &[va, vk, vk1, vk2],
                     frame,
                     np,
                     false,
@@ -32488,7 +32495,7 @@ unsafe fn emit_depth_split_quad(
     packets: &mut PrimitivePacketArena<'_>,
     m: &Map,
     tex: usize,
-    corners: [map::PackedLoopVert; 4],
+    corners: &[map::PackedLoopVert; 4],
     frame: u16,
     nq: &mut usize,
 ) -> bool {
@@ -32761,7 +32768,7 @@ unsafe fn emit_patch_fallback(
             packets,
             m,
             tex,
-            *corners,
+            corners,
             frame,
             np,
             false,
@@ -32773,7 +32780,7 @@ unsafe fn emit_patch_fallback(
     }
     if WORLD_DEPTH_SPLIT_PX_Q3 != 0
         && WORLD_QUAD_DEPTH_SPLIT
-        && emit_depth_split_quad(packets, m, tex, *corners, frame, nq)
+        && emit_depth_split_quad(packets, m, tex, corners, frame, nq)
     {
         counts.note_emitted(2);
         return;
