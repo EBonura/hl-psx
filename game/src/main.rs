@@ -36265,60 +36265,9 @@ fn play(
     draw_next_loading_screen(fb);
 
     diag_hex(0x0100, "WORLDT", texture_chunk_id, world_chunk_id);
-    let tex_load = load_streamed_chunk(texture_chunk_id, unsafe { map_buf() });
-    let tex_len = tex_load.map_or(0, |load| load.raw_len);
     let mut stream_bytes = 0u32;
     let mut stream_chunks = 0u32;
     let mut stream_sectors = 0u32;
-    if let Some(load) = tex_load {
-        account_streamed_chunk(
-            load,
-            &mut stream_chunks,
-            &mut stream_bytes,
-            &mut stream_sectors,
-        );
-    }
-    if tex_len == 0 {
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, 0);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, 0);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, 0);
-        telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
-        telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: WORLD.PAK texture stream failed");
-        telemetry::debug_log("hl-psx: WORLD.PAK texture stream failed");
-        end_loading();
-        return PlayExit::BackToMenu;
-    }
-    telemetry::debug_log("hl-psx: WORLD.PAK texture chunk loaded");
-
-    draw_next_loading_screen(fb);
-    let tex_bytes = unsafe { streamed_map_bytes(tex_len) };
-    telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
-    let (room_texs, tex_failed) = match unsafe {
-        vram::upload_tex_chunk_raw(
-            tex_bytes,
-            core::ptr::addr_of_mut!(TEX_SLOTS).cast::<TexSlot>(),
-            MAX_TEX_SLOTS,
-        )
-    } {
-        Some(v) => v,
-        None => {
-            telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
-            telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
-            telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
-            telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
-            telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
-            telemetry::task_end(telemetry::task::FIXED_UPDATE);
-            tty::println("hl-psx: WORLD.PAK texture chunk invalid");
-            telemetry::debug_log("hl-psx: WORLD.PAK texture chunk invalid");
-            end_loading();
-            return PlayExit::BackToMenu;
-        }
-    };
-    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
-    let model_tex_failed = 0usize;
-    let model_texs = 0usize;
-    draw_next_loading_screen(fb);
     // Real HUD sprite sheet -> free gameplay tpage. Streams from the pack
     // (MAP_BUF is free until the world chunk below); a failed read leaves the
     // stale VRAM copy from the previous map, which is the same sheet anyway.
@@ -36375,6 +36324,58 @@ fn play(
         }
     }
 
+    let tex_load = load_streamed_chunk(texture_chunk_id, unsafe { map_buf() });
+    let tex_len = tex_load.map_or(0, |load| load.raw_len);
+    if let Some(load) = tex_load {
+        account_streamed_chunk(
+            load,
+            &mut stream_chunks,
+            &mut stream_bytes,
+            &mut stream_sectors,
+        );
+    }
+    if tex_len == 0 {
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, 0);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, 0);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, 0);
+        telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
+        telemetry::task_end(telemetry::task::FIXED_UPDATE);
+        tty::println("hl-psx: WORLD.PAK texture stream failed");
+        telemetry::debug_log("hl-psx: WORLD.PAK texture stream failed");
+        end_loading();
+        return PlayExit::BackToMenu;
+    }
+    telemetry::debug_log("hl-psx: WORLD.PAK texture chunk loaded");
+
+    draw_next_loading_screen(fb);
+    let tex_bytes = unsafe { streamed_map_bytes(tex_len) };
+    telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
+    let (room_texs, tex_failed) = match unsafe {
+        vram::upload_tex_chunk_raw(
+            tex_bytes,
+            core::ptr::addr_of_mut!(TEX_SLOTS).cast::<TexSlot>(),
+            MAX_TEX_SLOTS,
+        )
+    } {
+        Some(v) => v,
+        None => {
+            telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_CHUNKS, stream_chunks);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_BYTES, stream_bytes);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
+            telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
+            telemetry::task_end(telemetry::task::FIXED_UPDATE);
+            tty::println("hl-psx: WORLD.PAK texture chunk invalid");
+            telemetry::debug_log("hl-psx: WORLD.PAK texture chunk invalid");
+            end_loading();
+            return PlayExit::BackToMenu;
+        }
+    };
+    telemetry::stage_end(telemetry::stage::VRAM_UPLOAD);
+    let model_tex_failed = 0usize;
+    let model_texs = 0usize;
+    draw_next_loading_screen(fb);
+
     // Per-map dialogue: stream this map's voice pack (chunk 3100 + room) into
     // the SPU region above the resident core SFX, replacing the previous map's
     // lines. MAP_BUF is still free here (the world loads below). A missing
@@ -36430,7 +36431,7 @@ fn play(
     {
         let en = unsafe {
             load_accounted_map_chunk(
-                sprite::EXPL_CHUNK_ID,
+                sprite::EXPL_ROOM_CHUNK_BASE + launch.room_id as u32,
                 &mut stream_chunks,
                 &mut stream_bytes,
                 &mut stream_sectors,
@@ -36448,7 +36449,7 @@ fn play(
     {
         let dn = unsafe {
             load_accounted_map_chunk(
-                sprite::DECAL_CHUNK_ID,
+                sprite::DECAL_ROOM_CHUNK_BASE + launch.room_id as u32,
                 &mut stream_chunks,
                 &mut stream_bytes,
                 &mut stream_sectors,

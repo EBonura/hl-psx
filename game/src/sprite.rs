@@ -48,7 +48,10 @@ static mut N_SPRITE_FRAMES: usize = 0;
 // every map into these dedicated slots (weapon blasts happen anywhere, not just
 // where env_explosion entities are placed). Separate from the per-map tables so
 // reset() never clears it; it re-appends to the atlas each map load.
-pub const EXPL_CHUNK_ID: u32 = 3002;
+/// Per-room copies of the resident explosion pack (staged from chunk 3002) and decals (3004), laid out
+/// inside each room's cluster so the load reads them without a seek (`pack_order.rs`).
+pub const EXPL_ROOM_CHUNK_BASE: u32 = 3500;
+pub const DECAL_ROOM_CHUNK_BASE: u32 = 3700;
 pub const MAX_EXPL_FRAMES: usize = 5;
 /// Frames of the whole resident pack: the explosion's five and the weapon sprites' nine.
 const RES_FRAMES: usize = MAX_EXPL_FRAMES + 9;
@@ -181,7 +184,6 @@ const WPN_SPRITES: usize = 6;
 // one CLUT holding every decal, loaded each map after the explosion. Each
 // decal is a (u, v, cell size, world half-size) record; the families follow
 // the SDK's random ranges (see `host/hl-content` build_decals).
-pub const DECAL_CHUNK_ID: u32 = 3004;
 pub const MAX_DECALS: usize = 32;
 pub const DECAL_SHOT: usize = 0;
 pub const DECAL_BLOOD: usize = 1;

@@ -1232,6 +1232,7 @@ fn stage_world_pack(repository: &Path) -> Result<PathBuf> {
         total.raw_sectors += stats.raw_sectors;
         total.stored_sectors += stats.stored_sectors;
     }
+    stage_room_copies(&staging)?;
     let saved = total.raw_sectors.saturating_sub(total.stored_sectors);
     let percent = if total.raw_sectors == 0 {
         0.0
@@ -1252,6 +1253,31 @@ fn stage_world_pack(repository: &Path) -> Result<PathBuf> {
     fs::write(&report_path, report)?;
     println!("WORLD.PAK compression report -> {}", report_path.display());
     Ok(staging)
+}
+
+/// The explosion pack (chunk 3002) and the decals (3004) every room load reads, copied once per room
+/// under `pack_order::{EXPL_ROOM_BASE, DECAL_ROOM_BASE} + room` so the copies can sit inside the room's
+/// cluster. The game reads them after the room's textures and sprites, where the single front copy
+/// cost a seek out and another back (`pack_order.rs`).
+fn stage_room_copies(staging: &Path) -> Result<()> {
+    let sprites = staging.join("sprites");
+    let mut rooms = Vec::new();
+    for entry in fs::read_dir(staging.join("rooms"))? {
+        let path = entry?.path();
+        let id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_prefix("room_"))
+            .and_then(|s| s.parse::<u32>().ok());
+        rooms.extend(id);
+    }
+    for (source, base) in [(3002u32, pack_order::EXPL_ROOM_BASE), (3004, pack_order::DECAL_ROOM_BASE)] {
+        let from = sprites.join(format!("chunk_{source}.psxa"));
+        for &room in &rooms {
+            fs::copy(&from, sprites.join(format!("chunk_{}.psxa", base + room)))?;
+        }
+    }
+    Ok(())
 }
 
 fn executable(path: PathBuf) -> PathBuf {

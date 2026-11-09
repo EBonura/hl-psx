@@ -39,6 +39,10 @@ const CARRY_BASE: u32 = 1500;
 /// Room chunk ids are `2 * room` (world) and `2 * room + 1` (textures).
 const VOICE_BASE: u32 = 3100;
 const SPRITE_BASE: u32 = 3300;
+/// Per-room copies of the explosion pack and the decals (staged by `stage_room_copies`); the game
+/// reads `base + room` (`sprite::EXPL_ROOM_CHUNK_BASE`, `DECAL_ROOM_CHUNK_BASE`).
+pub const EXPL_ROOM_BASE: u32 = 3500;
+pub const DECAL_ROOM_BASE: u32 = 3700;
 /// Common small chunks in the order the load reads them: HUD sheet, explosion
 /// sprite, decals, menu art.
 const HUD_FIRST: [u32; 4] = [3001, 3002, 3004, 3003];
@@ -173,6 +177,8 @@ pub fn layout(contents: &PackContents) -> Vec<u32> {
             2 * room + 1,
             VOICE_BASE + room,
             SPRITE_BASE + room,
+            EXPL_ROOM_BASE + room,
+            DECAL_ROOM_BASE + room,
             2 * room,
         ] {
             place(id, &mut order);
@@ -292,7 +298,7 @@ mod tests {
         // Two rooms, their voices and sprites, the common chunks, three model
         // types (scientist 0 tier 0, houndeye 6 tier 0, battery 4 tier 1) and a
         // variant of type 6.
-        ids.extend([0, 1, 2, 3, 3100, 3101, 3300, 3301]);
+        ids.extend([0, 1, 2, 3, 3100, 3101, 3300, 3301, 3500, 3501, 3700, 3701]);
         ids.extend([3000, 3001, 3002, 3003, 3004, 3050]);
         ids.extend(1000..1015);
         ids.extend([1300, 1100, 1306, 1304, 1500, 2106]);
@@ -327,7 +333,8 @@ mod tests {
         assert!(pos(1306) < pos(2106) && pos(2106) < pos(1300));
         // Per room: textures, voices, sprites, world.
         assert!(pos(1304) < pos(1));
-        assert!(pos(1) < pos(3100) && pos(3100) < pos(3300) && pos(3300) < pos(0));
+        assert!(pos(1) < pos(3100) && pos(3100) < pos(3300) && pos(3300) < pos(3500));
+        assert!(pos(3500) < pos(3700) && pos(3700) < pos(0));
         assert!(pos(0) < pos(3) && pos(3) < pos(3101));
     }
 
