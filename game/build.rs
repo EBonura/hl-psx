@@ -1220,6 +1220,7 @@ fn scan_pack_cache_budget(repo_root: &std::path::Path) -> usize {
         ("data/sprites", "chunk_"),
     ];
     let mut ids = HashSet::new();
+    let mut rooms = 0usize;
     for (relative, prefix) in inputs {
         let dir = repo_root.join(relative);
         println!("cargo:rerun-if-changed={}", dir.display());
@@ -1249,13 +1250,16 @@ fn scan_pack_cache_budget(repo_root: &std::path::Path) -> usize {
                 .parse::<u32>()
                 .unwrap_or_else(|_| panic!("invalid WORLD.PAK chunk filename: {}", path.display()));
             assert!(ids.insert(id), "duplicate WORLD.PAK chunk id {id}");
+            rooms += usize::from(prefix == "room_");
         }
     }
     if ids.is_empty() {
         FALLBACK_PACK_CACHE_ENTRIES
     } else {
+        // Every room also carries its own copy of the explosion pack and the decals
+        // (`host/hl-build` `stage_room_copies`); the pack table holds those entries too.
         // Keep 16 spare chunks, rounded to a stable cache-allocation step.
-        round_up(ids.len() + 16, 32)
+        round_up(ids.len() + 2 * rooms + 16, 32)
     }
 }
 
