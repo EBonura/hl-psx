@@ -1,4 +1,4 @@
-score c0a0 13.891
-score c4a3 19.184
-score chain 18.481
-score chainlate 19.605
+score c0a0 14.049
+score c4a3 19.033
+score chain 18.787
+score chainlate 20.172
