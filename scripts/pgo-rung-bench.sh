@@ -52,9 +52,13 @@ window() {
     nice -n 10 "$frontend" launch --path "$cue" --embedded-playtest --steps 4000000000 \
         --pad-pulses "$pulses" --route-log "$work/$name.csv" --route-watch-u32 "0x$watch" \
         --no-memcard --stop-at-poll 4600 > /dev/null 2>&1
-    fps=$(awk -F, 'NR==1{for(i=1;i<=NF;i++){if($i=="port1_polls")p=i;if($i=="display_start_changed")f=i;if($i=="bus_cycle_delta")c=i} w=NF; next}
+    fps=$(awk -F, -v name="$name" 'NR==1{for(i=1;i<=NF;i++){if($i=="port1_polls")p=i;if($i=="display_start_changed")f=i;if($i=="bus_cycle_delta")c=i} w=NF; next}
         {v=$w%256; if(v!=q){ if(v==1 && !n && $p>=100){n=1; a=$p} q=v } P[NR]=$p; F[NR]=$f; C[NR]=$c; N=NR}
-        END{ for(r=2;r<=N;r++) if(n && P[r]>=a+139 && P[r]<=a+1139){fl+=F[r];cy+=C[r]} printf "%.3f", fl*33868800/cy }' "$work/$name.csv")
+        END{ if(!n){printf "window %s: no anchor (the watched word never read 1 after poll 100)\n", name > "/dev/stderr"; exit 1}
+        for(r=2;r<=N;r++) if(P[r]>=a+139 && P[r]<=a+1139){fl+=F[r];cy+=C[r];rows++}
+        printf "window %s: anchor poll %d, polls %d..%d, %d rows\n", name, a, a+139, a+1139, rows > "/dev/stderr"
+        if(rows<900){printf "window %s: only %d rows, the run ended inside the window\n", name, rows > "/dev/stderr"; exit 1}
+        printf "%.3f", fl*33868800/cy }' "$work/$name.csv")
     echo "$name $fps" > "$work/$name.score"
 }
 window c0a0 0 &
