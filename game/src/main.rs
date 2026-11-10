@@ -36323,7 +36323,6 @@ fn play(
             unsafe { ACTIVE_SFX_CHUNK = wanted_sfx };
         }
     }
-
     let tex_load = load_streamed_chunk(texture_chunk_id, unsafe { map_buf() });
     let tex_len = tex_load.map_or(0, |load| load.raw_len);
     if let Some(load) = tex_load {
