@@ -1,0 +1,64 @@
+# This program's exceptions to the SDK's architecture gate (`psx-gate`, the SDK's
+# sdk/docs/GATE.md). A ratchet: nothing is added, an entry that no longer matches the tree
+# fails (delete it), a count only goes down. `remove` is a short tag: a workstream (W3),
+# `unscheduled` or `decision`.
+
+[[exception]]
+program = "hl-psx"
+kind = "cop0-asm"
+item = "game/src/main.rs"
+count = 2
+remove = "unscheduled"
+
+[[exception]]
+program = "hl-psx"
+kind = "deprecated-use"
+item = "game/src/main.rs"
+count = 11
+remove = "W2"
+
+[[exception]]
+program = "hl-psx"
+kind = "deprecated-use"
+item = "game/src/menu.rs"
+count = 4
+remove = "W2"
+
+[[exception]]
+program = "hl-psx"
+kind = "feature"
+item = "psx-math/asm-kernels"
+remove = "unscheduled"
+
+[[exception]]
+program = "hl-psx"
+kind = "register-literal"
+item = "game/src/main.rs"
+count = 2
+remove = "unscheduled"
+
+[[exception]]
+program = "hl-psx"
+kind = "register-literal"
+item = "game/src/sfx.rs"
+count = 5
+remove = "W4"
+
+[[exception]]
+program = "hl-intro"
+kind = "deprecated-use"
+item = "intro/src/main.rs"
+count = 2
+remove = "W2"
+
+[[exception]]
+program = "hl-psx"
+kind = "no-receipt"
+item = "-"
+remove = "W9"
+
+[[exception]]
+program = "hl-intro"
+kind = "no-receipt"
+item = "-"
+remove = "W9"

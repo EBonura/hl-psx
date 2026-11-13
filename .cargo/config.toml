@@ -4,3 +4,6 @@
 #   cargo hl-build --help
 [alias]
 hl-build = "run --release --manifest-path host/hl-build/Cargo.toml --"
+
+[env]
+PSX_GATE_FILE = { value = "psx-gate.toml", relative = true }
