@@ -2764,6 +2764,8 @@ fn pack_disc_into(
         .arg(&image)
         .args(["--volume", "HLPSX", "--world-pack-rooms-dir"])
         .arg(staged_pack.join("rooms"));
+    // The game and its intro carry no gate receipt yet: the exceptions file names them (sdk/docs/GATE.md, G3).
+    command.arg("--gate-file").arg(repository.join("psx-gate.toml"));
     for directory in ["modelpack", "sfx", "voices", "sprites"] {
         command
             .arg("--world-pack-extra-dir")
@@ -3229,6 +3231,9 @@ fn pick_threshold(repository: &Path, psoxide: &Path) -> Result<u32> {
     command
         .current_dir(psoxide)
         .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "ladder"])
+        // The architecture gate reads the program from this workspace (the SDK tool runs in .psoxide).
+        .arg("--crate")
+        .arg(repository)
         .args(["--ram-floor", &floor.to_string()])
         .args(["--from", PGO_LADDER_FROM, "--to", PGO_LADDER_TO])
         .args(["--step", PGO_LADDER_STEP, "--candidates", &candidates])
