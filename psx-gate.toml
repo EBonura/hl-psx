@@ -38,13 +38,6 @@ count = 2
 remove = "unscheduled"
 
 [[exception]]
-program = "hl-psx"
-kind = "register-literal"
-item = "game/src/sfx.rs"
-count = 5
-remove = "W4"
-
-[[exception]]
 program = "hl-intro"
 kind = "deprecated-use"
 item = "intro/src/main.rs"

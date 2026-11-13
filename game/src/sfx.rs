@@ -156,53 +156,53 @@ fn checked_room_bank(pack: &[u8], base: u32, limit: usize) -> u32 {
 
 /// Stop old effect writes before a map bank replaces any of their storage.
 unsafe fn mute_room_effect() {
-    use psx_hw::spu::{REVERB_VOL_LEFT, REVERB_VOL_RIGHT, SPUCNT};
-    let control = psx_io::read_u16(SPUCNT);
-    psx_io::write_u16(REVERB_VOL_LEFT, 0);
-    psx_io::write_u16(REVERB_VOL_RIGHT, 0);
-    psx_io::write_u16(0x1f801d98, 0);
-    psx_io::write_u16(0x1f801d9a, 0);
-    psx_io::write_u16(SPUCNT, control & !(1 << 7));
+    psx_spu::stop_reverb();
     ROOM_EFFECT_BYTES = 0;
 }
 
 /// Optional effects use only their exact, safe top-of-SPU workspace. Tight
 /// banks retain every authored sample and receive neutral output instead.
+///
+/// The room's registers and wet level come from `env_sound_audio::program`;
+/// the SDK's `Spu::start_reverb` runs the one register sequence every game
+/// shares (stop, clear the workspace, load the registers, route every voice,
+/// enable, wait for the SPU, then the wet level). It is a load-time call, not
+/// a per-frame one.
 #[cfg_attr(target_arch = "mips", optimize(size))]
 pub unsafe fn apply_room(room: u8) {
-    use psx_hw::spu::{REVERB_VOL_LEFT, REVERB_VOL_RIGHT, REVERB_WORK_BASE, SPUCNT};
+    use psx_spu::{ReverbArea, ReverbInput, ReverbPreset};
     if ROOM_APPLIED == room {
         return;
     }
     let program = crate::env_sound_audio::program(room).expect("unsupported room program");
     mute_room_effect();
-    let control = psx_io::read_u16(SPUCNT);
     if let Some(work) = crate::env_sound_audio::workspace(&program, ROOM_SAMPLE_END) {
-        #[repr(C, align(4))]
-        struct Zeros([u8; 256]);
-        static ZERO: Zeros = Zeros([0; 256]);
         let spu = (*core::ptr::addr_of_mut!(SPU))
             .as_mut()
             .expect("room effect before SPU init");
-        let mut offset = 0;
-        while offset < work.bytes {
-            let bytes = (work.bytes - offset).min(ZERO.0.len() as u32) as usize;
-            spu.upload_adpcm(psx_spu::SpuAddr::new(work.base + offset), &ZERO.0[..bytes]);
-            offset += bytes as u32;
-        }
-        psx_io::write_u16(REVERB_WORK_BASE, (work.base / 8) as u16);
-        for (index, value) in program.registers.iter().enumerate() {
-            psx_io::write_u16(0x1f801dc0 + index as u32 * 2, *value);
-        }
-        psx_io::write_u16(0x1f801d98, 0xffff);
-        psx_io::write_u16(0x1f801d9a, 0x00ff);
-        psx_io::write_u16(REVERB_VOL_LEFT, program.wet);
-        psx_io::write_u16(REVERB_VOL_RIGHT, program.wet);
-        psx_io::write_u16(SPUCNT, control | (1 << 7));
+        spu.start_reverb(
+            ReverbArea::new(work.base, work.bytes),
+            &ReverbPreset::new(program.registers, work.bytes),
+            ReverbInput::ALL_VOICES,
+            program.wet as i16,
+        );
         ROOM_EFFECT_BYTES = work.bytes;
     }
     ROOM_APPLIED = room;
 }
+
+// The effect lifecycle, for whoever reads this next:
+//
+// * `mute_room_effect` runs before any bank upload (`init_from_pack`,
+//   `load_dialogue`), because the workspace is the top of SPU RAM and a bank
+//   DMA over a live workspace becomes audible.
+// * `apply_room` runs when a map's room changes and once at map load; the
+//   same room twice is a no-op (`ROOM_APPLIED`).
+// * A bank that reaches the workspace gets no effect (neutral output), never
+//   a shortened bank.
+// * Nothing here writes a reverb register directly any more.
+//
+// The workspace layout itself is `env_sound_audio::workspace`.
 
 // ---- the held weapon's bank ----
 //
