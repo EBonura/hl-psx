@@ -2396,6 +2396,26 @@ impl Map {
         rd_u16(self.data, self.loopvert_o(first)) & 0x8000 != 0
     }
 
+    /// A native quad that was rejected before its decision on the last rank frame: bit 15 of its
+    /// second corner word (the cooker keeps corner one's flag bits clear). Hold frames decide such
+    /// a patch fresh instead of replaying its stored bit.
+    #[inline(always)]
+    pub unsafe fn patch_undecided(&self, first: usize) -> bool {
+        rd_u16(self.data, self.loopvert_o(first + 1)) & 0x8000 != 0
+    }
+
+    #[inline(always)]
+    pub unsafe fn set_patch_undecided(&self, first: usize, undecided: bool) {
+        let ptr = self
+            .data
+            .as_ptr()
+            .add(self.loopvert_o(first + 1))
+            .cast::<u16>()
+            .cast_mut();
+        let word = ptr.read_unaligned();
+        ptr.write_unaligned((word & 0x7fff) | ((undecided as u16) << 15));
+    }
+
     #[inline(always)]
     pub unsafe fn set_patch_subdiv_active(&self, first: usize, active: bool) {
         let ptr = self

@@ -28881,6 +28881,20 @@ unsafe fn try_emit_quad_ctx(
         WORLD_QUAD_NEEDS_SOFT_SPLIT = true;
         return false;
     }
+    // Wholly beyond one display edge: nothing to draw. Pad 2 covers the blocked-edge
+    // skirt and the patch underlay (one pixel each) plus midpoint rounding.
+    if !TRAM_CACHE_BUILDING
+        && !EMIT_POLICY.tram_grid()
+        && !affine_heatmap_active()
+        && off_display(&[pa, pb, pc, pd], 2)
+    {
+        // No decision is made for this patch. On a rank frame say so, so the hold frame that
+        // follows decides it fresh instead of replaying a bit from an older rank frame.
+        if WORLD_AFFINE_RANK_FRAME && patch_state != usize::MAX {
+            m.set_patch_undecided(patch_state, true);
+        }
+        return true;
+    }
     // GPU-oversized quads: signal the native-patch walker to SPLIT the cell
     // (keeping shared edges inside the patch machinery) rather than mixing
     // grid cells with the whole-face fallback fan, whose different tiling
@@ -30465,6 +30479,13 @@ unsafe fn emit_affine_quad_children(
     let mut child = 0usize;
     while child < children.len() {
         let c = children[child];
+        // A child wholly beyond one display edge covers no pixel.
+        if !TRAM_CACHE_BUILDING && child_off_display(&c) {
+            let _ = packets.reuse_packet::<QuadTexturedGouraud>();
+            *nq += 1;
+            child += 1;
+            continue;
+        }
         let otz = world_order_key(
             ordering::PrimitiveDepths::quad(
                 c[0].projected.sz as i32,
@@ -30722,7 +30743,7 @@ unsafe fn native_affine_patch_mask(
     blocked_edges: u8,
     patch_state: usize,
 ) -> u8 {
-    if !WORLD_AFFINE_RANK_FRAME && patch_state != usize::MAX {
+    if !WORLD_AFFINE_RANK_FRAME && patch_state != usize::MAX && !m.patch_undecided(patch_state) {
         if m.patch_subdiv_active(patch_state) {
             1
         } else {
@@ -30739,6 +30760,7 @@ unsafe fn native_affine_patch_mask(
         );
         if patch_state != usize::MAX {
             m.set_patch_subdiv_active(patch_state, mask != 0);
+            m.set_patch_undecided(patch_state, false);
         }
         mask
     }
@@ -30907,6 +30929,44 @@ fn flashlight_model_shade(base: u8, center: [i32; 3], eye: [i32; 3], rot: &Mat3I
     base.saturating_add(lift as u8)
 }
 
+/// Every vertex lies beyond the same edge of the 320x240 draw area by more
+/// than `pad` pixels, so the polygon (and anything drawn within `pad` pixels
+/// of its outline) covers no display pixel. Valid for fully-front vertices.
+#[inline(always)]
+fn off_display<const N: usize>(p: &[Projected; N], pad: i32) -> bool {
+    let (mut left, mut right, mut top, mut bottom) = (-1i32, -1i32, -1i32, -1i32);
+    let mut i = 0;
+    while i < N {
+        let (x, y) = (p[i].sx as i32, p[i].sy as i32);
+        left &= x + pad;
+        right &= 319 + pad - x;
+        top &= y + pad;
+        bottom &= 239 + pad - y;
+        i += 1;
+    }
+    (left | right | top | bottom) < 0
+}
+
+/// `off_display` for a refined child quad: all four corners in front of the
+/// camera and wholly beyond one display edge. The child is drawn exactly as
+/// its own four vertices, so no pad is needed.
+#[inline(always)]
+fn child_off_display(c: &[&AffineVertex; 4]) -> bool {
+    c[0].projected.sz >= NEAR
+        && c[1].projected.sz >= NEAR
+        && c[2].projected.sz >= NEAR
+        && c[3].projected.sz >= NEAR
+        && off_display(
+            &[
+                c[0].projected,
+                c[1].projected,
+                c[2].projected,
+                c[3].projected,
+            ],
+            0,
+        )
+}
+
 #[inline(always)]
 unsafe fn emit_proj_fast(
     packets: &mut PrimitivePacketArena<'_>,
@@ -30946,6 +31006,11 @@ unsafe fn emit_proj_fast(
         }
         let slot = &*tex_slot_ptr(tex);
         if !slot.valid {
+            return true;
+        }
+        // Wholly beyond one display edge and every vertex unclamped (a clamped triangle takes the
+        // soft path, which does not end here): nothing to draw.
+        if !TRAM_CACHE_BUILDING && off_display(&[pa, pb, pc], 0) && tri_fits_gpu(&pa, &pb, &pc) {
             return true;
         }
         let otz = world_order_key(
@@ -31406,6 +31471,11 @@ unsafe fn emit_proj_fast_tri(
         }
         let slot = &*tex_slot_ptr(tri.tex);
         if !slot.valid {
+            return true;
+        }
+        // Wholly beyond one display edge and every vertex unclamped (a clamped triangle takes the
+        // soft path, which does not end here): nothing to draw.
+        if !TRAM_CACHE_BUILDING && off_display(&[pa, pb, pc], 0) && tri_fits_gpu(&pa, &pb, &pc) {
             return true;
         }
         let otz = world_order_key(
