@@ -12,20 +12,6 @@ remove = "unscheduled"
 
 [[exception]]
 program = "hl-psx"
-kind = "deprecated-use"
-item = "game/src/main.rs"
-count = 11
-remove = "W2"
-
-[[exception]]
-program = "hl-psx"
-kind = "deprecated-use"
-item = "game/src/menu.rs"
-count = 4
-remove = "W2"
-
-[[exception]]
-program = "hl-psx"
 kind = "feature"
 item = "psx-math/asm-kernels"
 remove = "unscheduled"

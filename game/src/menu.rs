@@ -21,7 +21,8 @@ use psx_font::{
 use psx_gpu::display::DoubleBuffer;
 use psx_gpu::material::TextureMaterial;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
-use psx_pad::{button, poll_port1, PadTracker};
+use crate::pads;
+use psx_pad::{button, PadTracker};
 use psx_rt::interrupts;
 use psx_vram::{upload_bytes, upload_bytes_aligned, Clut, TextureDepth, TexturePage, VramRect};
 
@@ -390,7 +391,7 @@ pub fn intro(fb: &mut DoubleBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
     while frame < TOTAL {
         // Held, not edge-triggered, past a short grace: holding Start from
         // boot should walk out of the splash.
-        if frame > TITLE_SKIP_GRACE && any(poll_port1().buttons.bits()) {
+        if frame > TITLE_SKIP_GRACE && any(pads::poll().buttons.bits()) {
             break;
         }
 
@@ -870,7 +871,7 @@ fn play_menu_accept() {
 /// One pad poll folded into the tracker's active-high mask: when the pad is
 /// analog, left-stick deflection past a +-48 deadzone maps onto the d-pad bits.
 fn menu_buttons() -> u16 {
-    let pad = poll_port1();
+    let pad = pads::poll();
     let mut b = pad.buttons.bits();
     if pad.is_analog() {
         let (lx, ly) = pad.sticks.left_centered();
@@ -1265,7 +1266,7 @@ pub fn ending(fb: &mut DoubleBuffer, assets: &[u8]) {
         driver::with(|gpu| gpu.wait_idle());
         interrupts::wait_vblank();
         driver::with(|gpu| fb.swap(gpu));
-        let pad = poll_port1();
+        let pad = pads::poll();
         let any = pad.buttons.bits() != 0;
         if any && !prev_any && frame > 40 {
             unsafe { crate::sfx::play(crate::sfx::BUTTON) };
