@@ -1,16 +1,15 @@
 floor 2048 B, step 50, candidates 4
 threshold  free_B  fits  c0a0  c4a3  chain  chainlate  geomean  worst
-     1000    2224  yes  13.992 (+0.73%)  18.738 (-2.32%)  18.001 (-2.60%)  18.675 (-4.74%)  0.9657  0.9258 (chainlate)
-      950    3808  yes  14.049 (+1.14%)  19.033 (-0.79%)  18.787 (+1.66%)  20.172 (+2.89%)  1.0000  1.0000 (c0a0)  <- chosen
-      900    3808  yes  -  -  -  -  -  -  same code as 950
-      850    3808  yes  -  -  -  -  -  -  same code as 950
-      800    3808  yes  -  -  -  -  -  -  same code as 950
-      750    3808  yes  -  -  -  -  -  -  same code as 950
-      700    3808  yes  -  -  -  -  -  -  same code as 950
-      650    4800  yes  13.923 (+0.23%)  18.987 (-1.03%)  18.632 (+0.82%)  19.933 (+1.67%)  0.9921  0.9882 (chainlate)
-      600    4800  yes  -  -  -  -  -  -  same code as 650
-      550    4800  yes  -  -  -  -  -  -  same code as 650
-      500    4800  yes  -  -  -  -  -  -  same code as 650
-      450    7232  yes  13.838 (-0.38%)  18.921 (-1.37%)  18.307 (-0.94%)  19.377 (-1.16%)  0.9785  0.9606 (chainlate)
-(percentages are against the baseline; a candidate more than 1% under it on any metric is not eligible)
-chosen threshold 950
+     1000    2128  yes  14.433 (+2.73%)  19.139 (+0.56%)  18.714 (-0.39%)  18.981 (-5.90%)  0.9775  0.9577 (chainlate)
+      950    4032  yes  14.512 (+3.30%)  19.441 (+2.14%)  19.083 (+1.58%)  19.695 (-2.36%)  0.9966  0.9937 (chainlate)  <- chosen
+      900    4032  yes  -  -  -  -  -  -  same code as 950
+      850    4032  yes  -  -  -  -  -  -  same code as 950
+      800    4032  yes  -  -  -  -  -  -  same code as 950
+      750    4032  yes  -  -  -  -  -  -  same code as 950
+      700    4032  yes  -  -  -  -  -  -  same code as 950
+      650    4720  yes  14.499 (+3.20%)  19.230 (+1.04%)  18.832 (+0.24%)  19.083 (-5.40%)  0.9826  0.9628 (chainlate)
+      600    4720  yes  -  -  -  -  -  -  same code as 650
+      550    4720  yes  -  -  -  -  -  -  same code as 650
+      500    4720  yes  -  -  -  -  -  -  same code as 650
+      450    7904  yes  14.311 (+1.86%)  19.540 (+2.66%)  19.122 (+1.78%)  19.820 (-1.74%)  0.9965  0.9861 (c0a0)
+(percentages are against the previous baseline 14.049 / 19.033 / 18.787 / 20.172. Rung 950 is shipped by hand: the ladder refuses on chain late (-2.36%); Manny accepted that loss and the two changed frames (c0a0 3748 and 3172) on 11-10 and 11-13. These scores are the new baseline.)
