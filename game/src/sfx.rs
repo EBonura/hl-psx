@@ -162,12 +162,6 @@ unsafe fn mute_room_effect() {
 
 /// Optional effects use only their exact, safe top-of-SPU workspace. Tight
 /// banks retain every authored sample and receive neutral output instead.
-///
-/// The room's registers and wet level come from `env_sound_audio::program`;
-/// the SDK's `Spu::start_reverb` runs the one register sequence every game
-/// shares (stop, clear the workspace, load the registers, route every voice,
-/// enable, wait for the SPU, then the wet level). It is a load-time call, not
-/// a per-frame one.
 #[cfg_attr(target_arch = "mips", optimize(size))]
 pub unsafe fn apply_room(room: u8) {
     use psx_spu::{ReverbArea, ReverbInput, ReverbPreset};
@@ -190,19 +184,6 @@ pub unsafe fn apply_room(room: u8) {
     }
     ROOM_APPLIED = room;
 }
-
-// The effect lifecycle, for whoever reads this next:
-//
-// * `mute_room_effect` runs before any bank upload (`init_from_pack`,
-//   `load_dialogue`), because the workspace is the top of SPU RAM and a bank
-//   DMA over a live workspace becomes audible.
-// * `apply_room` runs when a map's room changes and once at map load; the
-//   same room twice is a no-op (`ROOM_APPLIED`).
-// * A bank that reaches the workspace gets no effect (neutral output), never
-//   a shortened bank.
-// * Nothing here writes a reverb register directly any more.
-//
-// The workspace layout itself is `env_sound_audio::workspace`.
 
 // ---- the held weapon's bank ----
 //
