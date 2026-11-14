@@ -71,6 +71,7 @@ fn image_start() -> u32 {
 
 /// Start or Cross, newly pressed since the poll before.
 pub(crate) struct Skip {
+    pads: psx_pad::Controllers,
     port: ControllerPort,
     held: bool,
     last_vblank: u32,
@@ -79,7 +80,7 @@ pub(crate) struct Skip {
 impl Skip {
     /// The pad's buttons now, polled on the spot.
     pub(crate) fn buttons(&mut self) -> psx_pad::ButtonState {
-        psx_pad::poll_on(&mut self.port, Port::One).buttons
+        self.pads.poll(&mut self.port, Port::One).buttons
     }
 
     fn poll(&mut self) -> bool {
@@ -90,7 +91,9 @@ impl Skip {
             return false;
         }
         self.last_vblank = now;
-        let held = psx_pad::poll_on(&mut self.port, Port::One)
+        let held = self
+            .pads
+            .poll(&mut self.port, Port::One)
             .buttons
             .is_held(button::START | button::CROSS);
         let pressed = held && !self.held;
@@ -258,6 +261,7 @@ fn main() {
     spu::set_main_volume(Volume::MAX, Volume::MAX);
 
     let mut skip = Skip {
+        pads: psx_pad::Controllers::new(),
         port: peripherals.controller_port,
         held: true,
         last_vblank: interrupts::vblank_count(),
@@ -265,9 +269,11 @@ fn main() {
     // The splash counts its fade in frames, one flip per VBlank: keep the display rate here
     // (the SDK caps every program at 30 fps unless it says otherwise).
     interrupts::set_min_flip_vblanks(1);
-    // Ask the pad for analog mode now, so a pad that cannot be seen on the splash, before the
-    // movie, instead of after it. The game asks again and locks the mode.
-    let notice = match psx_pad::require_analog_on(&mut skip.port, Port::One) {
+    // The first poll of a pad asks it for analog mode, so a pad that cannot be seen shows on the
+    // splash, before the movie, instead of after it. The game polls with its own Controllers and
+    // asks again.
+    skip.pads.poll(&mut skip.port, Port::One);
+    let notice = match skip.pads.analog(Port::One) {
         psx_pad::AnalogRequirement::Analog => ["", ""],
         psx_pad::AnalogRequirement::DigitalOnly => {
             ["Digital pad detected", "Half-Life needs a DualShock"]

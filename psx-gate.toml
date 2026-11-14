@@ -18,13 +18,6 @@ count = 2
 remove = "unscheduled"
 
 [[exception]]
-program = "hl-intro"
-kind = "deprecated-use"
-item = "intro/src/main.rs"
-count = 2
-remove = "W2"
-
-[[exception]]
 program = "hl-psx"
 kind = "no-receipt"
 item = "-"
