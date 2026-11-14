@@ -13,13 +13,13 @@ sha256 = "9c19eaeb8c0accfd9869217ccc15627757cb83c56d430822bccd7ea11ebd2d88"
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_HEALTH = 0x800cac54
-LOGIC_PLAYER_PITCH = 0x801e82c0
-LOGIC_PLAYER_POS = 0x801d38c8
-LOGIC_PLAYER_YAW = 0x801d38d4
-PLAYER_ON_GROUND = 0x801d38e0
-SIM_NOW = 0x801ea918
-WORLD_ARENA = 0x800e6808
+LOGIC_PLAYER_HEALTH = 0x800ca964
+LOGIC_PLAYER_PITCH = 0x801e7f20
+LOGIC_PLAYER_POS = 0x801d3528
+LOGIC_PLAYER_YAW = 0x801d3534
+PLAYER_ON_GROUND = 0x801d3540
+SIM_NOW = 0x801ea578
+WORLD_ARENA = 0x800e6468
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
@@ -3670,7 +3670,7 @@ rstick = [128, 128]
 press = []
 sync = "poll"
 hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="le", value=820 }
-timeout = 270
+timeout = 1500
 
 [[step]]
 sync = "poll"
