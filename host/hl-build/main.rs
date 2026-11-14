@@ -2365,6 +2365,7 @@ fn compile_game(
     features: Option<&str>,
     profile: GuestProfile<'_>,
 ) -> Result<PathBuf> {
+    DIAG_BUILD.store(!is_shipping_build(features), Ordering::Relaxed);
     let game = repository.join("game");
     let mut command = Command::new(cargo());
     command.current_dir(&game).args(["build", "--release"]);
@@ -2730,6 +2731,11 @@ fn enforce_ram_budget(repository: &Path, features: Option<&str>, free: u32) -> R
 /// meet a movie first.
 static INTRO_ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the executable `compile_game` linked last is a diagnostic build (a feature that is not on the
+/// shipping list): its gate receipt says so, and the disc builder takes it only with `--diag`, which
+/// marks the image a development disc (the journeys' probe discs and the profile collection builds).
+static DIAG_BUILD: AtomicBool = AtomicBool::new(false);
+
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
     pack_disc_into(
         repository,
@@ -2788,6 +2794,9 @@ fn pack_disc_into(
         .arg(staged_pack.join("rooms"));
     // The game and its intro carry no gate receipt yet: the exceptions file names them (sdk/docs/GATE.md, G3).
     command.arg("--gate-file").arg(repository.join("psx-gate.toml"));
+    if DIAG_BUILD.load(Ordering::Relaxed) {
+        command.arg("--diag");
+    }
     for directory in ["modelpack", "sfx", "voices", "sprites"] {
         command
             .arg("--world-pack-extra-dir")
