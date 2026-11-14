@@ -156,6 +156,7 @@ pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<Pa
             .arg(&map),
         "prove hl-intro.exe free of load-delay hazards",
     )?;
+    crate::stamp_receipt(psoxide, &intro, &exe, None)?;
     Ok(exe)
 }
 

@@ -1020,6 +1020,27 @@ fn hazard_tool(psoxide: &Path, bin: &str) -> Command {
     command
 }
 
+/// Write the architecture gate receipt into a finished executable (`psx-gate --receipt`, the one place
+/// the SDK writes it; `psoxide-pgo apply` does the same for a game built through it). It runs the
+/// gate on the program at `crate_dir` first, so a program that breaks the architecture gets no
+/// receipt and the disc builder refuses it. The receipt sits in the PSX-EXE header, outside the
+/// payload the intro checksums.
+fn stamp_receipt(psoxide: &Path, crate_dir: &Path, exe: &Path, features: Option<&str>) -> Result<()> {
+    let mut command = hazard_tool(psoxide, "psx-gate");
+    command
+        .arg("--sdk")
+        .arg(psoxide)
+        .arg("--crate")
+        .arg(crate_dir)
+        .arg("--receipt")
+        .arg(exe)
+        .args(["--", "build", "--release"]);
+    if let Some(features) = features.filter(|value| !value.trim().is_empty()) {
+        command.args(["--features", features]);
+    }
+    run(&mut command, "write the gate receipt into the executable")
+}
+
 /// The repository root: the builder's own manifest sits at host/hl-build.
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -2547,6 +2568,7 @@ fn compile_game(
                 continue;
             }
         }
+        stamp_receipt(psoxide, repository, &exe, features)?;
         println!("EXE -> {}", exe.display());
         return Ok(exe);
     }

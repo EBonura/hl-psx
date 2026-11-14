@@ -16,15 +16,3 @@ kind = "register-literal"
 item = "game/src/main.rs"
 count = 2
 remove = "unscheduled"
-
-[[exception]]
-program = "hl-psx"
-kind = "no-receipt"
-item = "-"
-remove = "W9"
-
-[[exception]]
-program = "hl-intro"
-kind = "no-receipt"
-item = "-"
-remove = "W9"
