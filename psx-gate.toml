@@ -12,12 +12,6 @@ remove = "unscheduled"
 
 [[exception]]
 program = "hl-psx"
-kind = "feature"
-item = "psx-math/asm-kernels"
-remove = "unscheduled"
-
-[[exception]]
-program = "hl-psx"
 kind = "register-literal"
 item = "game/src/main.rs"
 count = 2
