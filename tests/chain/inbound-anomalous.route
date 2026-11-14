@@ -69,7 +69,8 @@ map c1a0 next c1a0d
 map c1a0d next c1a0a
   @checkpoint arrive-c1a0d
   @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=0
-  20
+  # one neutral tick fewer than before: the first one fed the room-entry poll that the game no longer makes
+  19
   30 f127
   21 f-40
   10
@@ -143,7 +144,8 @@ map c1a0a next c1a0b
   @checkpoint arrive-c1a0a
   @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
-  40
+  # one neutral tick fewer: the first one fed the room-entry poll the game no longer makes
+  39
   20 f-127
   5 f127
   5
@@ -218,7 +220,8 @@ map c1a0b next c1a0e
   @checkpoint arrive-c1a0b
   @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
-  40
+  # one neutral tick fewer: the first one fed the room-entry poll the game no longer makes
+  39
   50 f-127
   2 f127
   20 s-127
@@ -278,7 +281,8 @@ map c1a0e next c1a0c
   @checkpoint arrive-c1a0e
   @assert sym=LOGIC_PLAYER_SUIT size=1 op=eq value=1
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=ge value=100
-  40
+  # one neutral tick fewer: the first one fed the room-entry poll the game no longer makes
+  39
   8 s-127
   2 s127
   20
@@ -905,7 +909,8 @@ map c1a1a next c1a1f
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=between value=-2540 value_hi=-2480
   @assert sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=between value=-800 value_hi=-680
   @face 1018 left
-  10
+  # one neutral tick fewer: the first one fed the room-entry poll the game no longer makes
+  9
   @hold f-126 s-11 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=-2546 timeout=45
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=-727 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-699 timeout=40
