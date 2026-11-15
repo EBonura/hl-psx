@@ -1,20 +1,9 @@
-floor 2048 B, step 50, candidates 12
-threshold  free_B  fits  c0a0  c4a3  chain  chainlate  geomean  worst
-     1000    2672  yes  14.416 (-0.75%)  19.270 (-3.46%)  19.596 (+0.75%)  20.568 (+2.02%)  0.9956  0.9872 (c4a3)
-      950    3888  yes  14.486 (-0.27%)  19.342 (-3.10%)  19.328 (-0.63%)  20.036 (-0.62%)  0.9878  0.9741 (chainlate)
-      900    3888  yes  -  -  -  -  -  -  same code as 950
-      850    3888  yes  -  -  -  -  -  -  same code as 950
-      800    3888  yes  -  -  -  -  -  -  same code as 950
-      750    3888  yes  -  -  -  -  -  -  same code as 950
-      700    3888  yes  -  -  -  -  -  -  same code as 950
-      650    5360  yes  14.372 (-1.05%)  19.402 (-2.80%)  19.295 (-0.80%)  20.001 (-0.79%)  0.9858  0.9724 (chainlate)
-      600    5360  yes  -  -  -  -  -  -  same code as 650
-      550    5360  yes  -  -  -  -  -  -  same code as 650
-      500    5360  yes  -  -  -  -  -  -  same code as 650
-      450    7120  yes  14.311 (-1.47%)  19.171 (-3.96%)  19.071 (-1.95%)  19.865 (-1.46%)  0.9772  0.9658 (chainlate)
-      400    7120  yes  -  -  -  -  -  -  same code as 450
-      350    8160  yes  14.328 (-1.36%)  19.520 (-2.21%)  19.490 (+0.20%)  20.352 (+0.95%)  0.9933  0.9891 (c0a0)
-      300    8896  yes  14.320 (-1.41%)  19.086 (-4.38%)  19.166 (-1.47%)  19.877 (-1.40%)  0.9777  0.9664 (chainlate)
-      250    9184  yes  14.293 (-1.60%)  19.263 (-3.50%)  19.133 (-1.63%)  19.820 (-1.69%)  0.9783  0.9636 (chainlate)
+floor 2048 B, step 50, candidates 1
+free_B is `psoxide-size ram` (the exact measure), packed with the shipped profile at each rung, no layout
+threshold  free_B  fits  geomean  worst
+      650    1772  under floor  -  -
+      550    1772  under floor  -  -
+      450    4700  yes  -  -  <- chosen
+      350    5852  yes  -  -
 (percentages are against the baseline; a candidate more than 1% under it on any metric is not eligible)
-rung 650 shipped by hand with a layout drawn from the window logs of the ladder's collect: the base maps' windows twice, the c0a0 window (map 0, polls 760..1760) three times and the c4a3 window (map 94, polls 1030..2030) three times (psoxide-pgo layout over the logs); the ladder's own layout at rung 650 measured 14.372 / 19.402 / 19.295 / 20.001. Shipped figures: 14.565 / 19.829 / 19.696 / 20.748, 5,360 B free.
+chosen threshold 450

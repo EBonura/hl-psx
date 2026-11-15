@@ -1,0 +1,6 @@
+# functions that moved since the profile was collected: OLD=NEW (portable names); psx_asset moved its readers into psx_asset::le
+psx_asset::read_u16=psx_asset::le::read_u16
+psx_asset::read_u32=psx_asset::le::read_u32
+psx_asset::read_i16=psx_asset::le::read_i16
+# the capture layer moved the blocking submit into the SDK
+hl_psx::submit_list=psx_goldsrc::fx::submit_list
