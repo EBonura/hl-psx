@@ -33,7 +33,10 @@ mod cdstream;
 mod combat_defs;
 mod decal_light;
 mod door_transition;
-mod driver;
+mod overlay;
+use overlay::{fx_quad_flat, fx_quad_textured_material, fx_tri_flat_blended, OverlayTail};
+use psx_goldsrc::driver;
+use psx_goldsrc::fx;
 // The modules marked allow(dead_code) are included by path into the host runner
 // (hl-logic-tests), whose oracle tests call rules the game itself does not.
 #[allow(dead_code)]
@@ -74,7 +77,7 @@ mod menu;
 mod model;
 mod music;
 mod options_record;
-mod pads;
+use psx_goldsrc::pads;
 use psx_goldsrc::ordering;
 #[cfg(feature = "order-trace")]
 mod order_trace;
@@ -173,10 +176,10 @@ use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::{isqrt_i32, mul_div_i32, mul_shr_i32};
 use psx_math::{atan2_q12, sincos, Mask64, Wide};
-use psx_pad::{button, AnalogRequirement};
+use psx_pad::{button, AnalogRequirement, Port};
 #[cfg(not(feature = "semantic-input"))]
 use psx_pad::PadTracker;
-use psx_rt::{interrupts, tty};
+use psx_rt::{interrupts, present};
 use psx_spu;
 
 use combat_defs::*;
@@ -1313,74 +1316,8 @@ unsafe fn fx_ot() -> &'static mut OrderingTable<FX_OT_LEN> {
     &mut *core::ptr::addr_of_mut!(FX_OT)
 }
 
-// --- Deferred overlay chain -------------------------------------------------
-//
-// The HUD/message/fade pass draws with immediate `write_gp0`, and every one of
-// those helpers first spins on GPUSTAT "ready for command", which the GPU only
-// asserts once its whole raster backlog has drained. Being the first immediate
-// writer after the frame's last DMA submit, that pass therefore fenced the CPU
-// against the entire frame's rasterisation -- world included. Measured at 9.8%
-// of slow-window PC samples in `draw_dark_text_panel` alone, on 11 of the 19
-// slow Hazard Course windows.
-//
-// While `FX_CAPTURE` is armed the same helpers append the *identical* GP0 words
-// to this linked list instead, which is DMA'd in one go afterwards. Same words,
-// same order, same pixels; the CPU never touches GP0, so the deferred present
-// can overlap the whole frame's raster with the next simulation tick.
-const FX_CHAIN_TERMINATOR: u32 = 0x00FF_FFFF;
-const FX_CHAIN_ADDR_MASK: u32 = 0x00FF_FFFF;
-/// Widest captured packet: the ten-word textured quad plus its tag.
-const FX_PACKET_WORDS: usize = 10;
-
-/// One captured GP0 command, shaped to borrow a render-arena slot.
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct FxPacket {
-    tag: u32,
-    words: [u32; FX_PACKET_WORDS],
-}
-
-impl FxPacket {
-    const ZERO: Self = Self {
-        tag: 0,
-        words: [0; FX_PACKET_WORDS],
-    };
-}
-
-// The chain borrows the tail of the world packet arena: slots past every packet
-// this frame claimed, so no ordering table links them while channel 2 walks
-// the world list, and the arena is rebuilt from slot zero next frame. Capturing
-// the overlay pass costs no static RAM at all.
-static mut FX_ARENA: *mut PrimitivePacketArena<'static> = core::ptr::null_mut();
-static mut FX_CHAIN_HEAD: u32 = FX_CHAIN_TERMINATOR;
-static mut FX_CHAIN_TAIL: *mut u32 = core::ptr::null_mut();
-static mut FX_CAPTURE: bool = false;
-
-unsafe fn fx_chain_reset() {
-    FX_CHAIN_HEAD = FX_CHAIN_TERMINATOR;
-    FX_CHAIN_TAIL = core::ptr::null_mut();
-}
-
-/// Submit and clear whatever has been captured. Safe with nothing queued.
-unsafe fn fx_chain_submit() {
-    if FX_CHAIN_TAIL.is_null() {
-        return;
-    }
-    submit_list(core::ptr::addr_of!(FX_CHAIN_HEAD));
-    fx_chain_reset();
-}
-
-/// One out-of-line copy of the blocking kick-and-wait for the overlay lists;
-/// inlined into each of their submits it cost 1.8 KB of .text.
-///
-/// # Safety
-///
-/// `head` must start a well-formed GPU linked list whose every node stays
-/// live and unmodified until this returns, which it does once the walk ends.
-#[inline(never)]
-unsafe fn submit_list(head: *const u32) {
-    driver::with(|gpu| psx_gpu::chain::submit_raw(gpu.dma_mut(), head));
-}
+// The overlay capture layer (the FX_CHAIN list the HUD, message and fade passes append to) is
+// `psx_goldsrc::fx`; `overlay.rs` binds it to this game's tail below.
 
 // --- Late overlay submission -------------------------------------------------
 //
@@ -1448,7 +1385,7 @@ unsafe fn finish_deferred_overlays() {
     };
     telemetry::stage_begin(telemetry::stage::WORLD_FLUSH);
     driver::with(|gpu| psx_gpu::chain::wait(gpu.dma_mut()));
-    submit_list(fx_ot().submit_head());
+    fx::submit_list(fx_ot().submit_head());
     telemetry::stage_end(telemetry::stage::WORLD_FLUSH);
     telemetry::stage_begin(telemetry::stage::OT_SUBMIT);
     if d.screen_off != [0; 2] {
@@ -1477,170 +1414,17 @@ unsafe fn finish_deferred_overlays() {
     if d.screen_off != [0; 2] {
         driver::with(|gpu| gpu.set_draw_offset((0, d.draw_y)));
     }
-    submit_list(hud_ot().submit_head());
+    fx::submit_list(hud_ot().submit_head());
     telemetry::stage_end(telemetry::stage::OT_SUBMIT);
-    fx_chain_submit();
+    fx::chain_submit();
 }
 
-/// Append one GP0 command packet, preserving issue order. Returns false when
-/// the arena is exhausted, having first flushed what was already captured, so
-/// the caller can fall back to an immediate draw without reordering the pass.
-unsafe fn fx_chain_push(words: &[u32]) -> bool {
-    let n = words.len();
-    if n == 0 || n > FX_PACKET_WORDS || FX_ARENA.is_null() {
-        return false;
-    }
-    let arena = &mut *FX_ARENA;
-    let Some(slot) = arena.push(FxPacket::ZERO) else {
-        // This frame's deferred overlay lists draw before the chain, so they
-        // go first and the immediate fallback keeps the pass order.
-        finish_deferred_overlays();
-        fx_chain_submit();
-        return false;
-    };
-    slot.tag = ((n as u32) << 24) | FX_CHAIN_TERMINATOR;
-    slot.words[..n].copy_from_slice(words);
-    let packet = core::ptr::addr_of_mut!(slot.tag);
-    let addr = packet as u32 & FX_CHAIN_ADDR_MASK;
-    if FX_CHAIN_TAIL.is_null() {
-        FX_CHAIN_HEAD = addr;
-    } else {
-        FX_CHAIN_TAIL.write((FX_CHAIN_TAIL.read() & 0xFF00_0000) | addr);
-    }
-    FX_CHAIN_TAIL = packet;
-    true
+/// The capture layer's hook (`overlay::OverlayTail`): this game builds its whole overlay tail
+/// before the capture starts, so everything pending is built and issuing it is finishing it.
+unsafe fn issue_deferred_overlays() {
+    finish_deferred_overlays();
 }
 
-// GP0 word builders. These mirror `psx_hw::gpu`'s `pack_*` / `polygon_opcode`
-// exactly (that crate is not a direct dependency of the game); the whole point
-// is that a captured primitive is bit-identical to the immediate one.
-#[inline(always)]
-fn gp0_vertex(x: i16, y: i16) -> u32 {
-    ((x as u16) as u32) | (((y as u16) as u32) << 16)
-}
-
-#[inline(always)]
-fn gp0_xy(x: u16, y: u16) -> u32 {
-    x as u32 | ((y as u32) << 16)
-}
-
-#[inline(always)]
-fn gp0_color(r: u8, g: u8, b: u8) -> u32 {
-    (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
-}
-
-#[inline(always)]
-fn gp0_texcoord(u: u8, v: u8, extra: u16) -> u32 {
-    (u as u32) | ((v as u32) << 8) | ((extra as u32) << 16)
-}
-
-/// `psx_gpu::draw_tri_flat_blended`, captured when armed.
-pub fn fx_tri_flat_blended(
-    verts: [(i16, i16); 3],
-    r: u8,
-    g: u8,
-    b: u8,
-    blend_mode: psx_gpu::material::BlendMode,
-) {
-    unsafe {
-        if !FX_CAPTURE || !blend_mode.is_translucent() {
-            driver::tri_flat_blended(verts, r, g, b, blend_mode);
-            return;
-        }
-        let material = psx_gpu::material::TextureMaterial::blended(0, 0, (r, g, b), blend_mode);
-        let captured = fx_chain_push(&[
-            material.draw_mode_word(),
-            material.texture_window_word(),
-            // GP0(22h): flat, triangle, untextured, semi-transparent.
-            0x2200_0000 | gp0_color(r, g, b),
-            gp0_vertex(verts[0].0, verts[0].1),
-            gp0_vertex(verts[1].0, verts[1].1),
-            gp0_vertex(verts[2].0, verts[2].1),
-        ]);
-        if !captured {
-            driver::tri_flat_blended(verts, r, g, b, blend_mode);
-        }
-    }
-}
-
-/// `psx_gpu::draw_quad_flat`, captured when armed.
-pub fn fx_quad_flat(verts: [(i16, i16); 4], r: u8, g: u8, b: u8) {
-    unsafe {
-        if !FX_CAPTURE {
-            driver::quad_flat(verts, r, g, b);
-            return;
-        }
-        let captured = fx_chain_push(&[
-            // GP0(28h): flat, quad, untextured, opaque.
-            0x2800_0000 | gp0_color(r, g, b),
-            gp0_vertex(verts[0].0, verts[0].1),
-            gp0_vertex(verts[1].0, verts[1].1),
-            gp0_vertex(verts[2].0, verts[2].1),
-            gp0_vertex(verts[3].0, verts[3].1),
-        ]);
-        if !captured {
-            driver::quad_flat(verts, r, g, b);
-        }
-    }
-}
-
-/// `psx_gpu::draw_quad_textured_material`, captured when armed.
-pub fn fx_quad_textured_material(
-    verts: [(i16, i16); 4],
-    uvs: [(u8, u8); 4],
-    material: psx_gpu::material::TextureMaterial,
-) {
-    unsafe {
-        if !FX_CAPTURE {
-            driver::quad_textured_material(verts, uvs, material);
-            return;
-        }
-        let captured = fx_chain_push(&[
-            material.texture_window_word(),
-            material.flat_textured_polygon_header(true),
-            gp0_vertex(verts[0].0, verts[0].1),
-            gp0_texcoord(uvs[0].0, uvs[0].1, material.clut_word()),
-            gp0_vertex(verts[1].0, verts[1].1),
-            gp0_texcoord(uvs[1].0, uvs[1].1, material.texture_page_word()),
-            gp0_vertex(verts[2].0, verts[2].1),
-            gp0_texcoord(uvs[2].0, uvs[2].1, 0),
-            gp0_vertex(verts[3].0, verts[3].1),
-            gp0_texcoord(uvs[3].0, uvs[3].1, 0),
-        ]);
-        if !captured {
-            driver::quad_textured_material(verts, uvs, material);
-        }
-    }
-}
-
-/// `psx_gpu::draw_sprite_material`, captured when armed. Native-size gameplay
-/// text uses this exact rectangle path to match the menu font's PS1 sampling.
-pub fn fx_sprite_textured_material(
-    x: i16,
-    y: i16,
-    w: u16,
-    h: u16,
-    uv: (u8, u8),
-    material: psx_gpu::material::TextureMaterial,
-) {
-    unsafe {
-        if !FX_CAPTURE {
-            driver::sprite_material(x, y, w, h, uv, material);
-            return;
-        }
-        let captured = fx_chain_push(&[
-            material.draw_mode_word(),
-            material.texture_window_word(),
-            material.textured_rect_header(),
-            gp0_vertex(x, y),
-            gp0_texcoord(uv.0, uv.1, material.clut_word()),
-            gp0_xy(w, h),
-        ]);
-        if !captured {
-            driver::sprite_material(x, y, w, h, uv, material);
-        }
-    }
-}
 // The tram cache is invalid until its live prefix is built, so keep its backing
 // arrays genuinely zero-initialised instead of carrying unused command words in
 // every PS-EXE/disc load.
@@ -2037,8 +1821,6 @@ unsafe fn vm_cache_swap(requested: usize) -> bool {
         // The normal regression build enables performance telemetry, whereas
         // reference-trace builds enable emulator telemetry. Emit one TTY line
         // in either instrumented mode; shipping builds compile it out.
-        #[cfg(any(feature = "emulator-telemetry", feature = "performance-telemetry"))]
-        tty::println("hl-psx: viewmodel tail-cache hit");
         #[cfg(feature = "emulator-telemetry")]
         telemetry::debug_log("hl-psx: viewmodel tail-cache hit");
     }
@@ -2120,15 +1902,6 @@ const PAUSE_TITLE: (u8, u8, u8) = (170, 170, 160);
 const PAUSE_BOX: (i16, i16, i16, i16) = (8, 12, 312, 212);
 #[cfg(not(feature = "semantic-input"))]
 const PAUSE_ARMED: (u8, u8, u8) = (75, 53, 10);
-
-/// Presentation cap while a map is being played: the display never flips sooner than two
-/// VBlanks after the last flip (30 fps), so a frame built inside one VBlank interval waits
-/// instead of flipping at 60 for a moment (the SDK's default for every game; see
-/// sdk/docs/PRESENT-CAP.md).
-const GAMEPLAY_PRESENT_CAP: psx_tick::PresentCap = psx_tick::PresentCap::HZ30;
-/// The boot, menus, pause screens, loading and the ending count their animations in
-/// frames, one flip per VBlank, so they keep the display rate.
-const MENU_PRESENT_CAP: psx_tick::PresentCap = psx_tick::PresentCap::UNCAPPED;
 
 // One loading indicator for every load: a small black square in the bottom-right
 // corner with a ring of orange lights in it, drawn over whatever is already on
@@ -2416,7 +2189,7 @@ static mut LAST_SAVE_VBLANKS: u32 = 0;
 #[optimize(size)]
 unsafe fn save_with_badge(target: save::Target, cp: &save::Checkpoint) -> save::CardResult {
     use psx_font::TextSink;
-    let text = hltext::Sink::SMALL;
+    let text = hltext::SMALL_SINK;
     // Amber on a dark plate, top right of the menu's area, drawn straight onto
     // the buffer that is on screen (the redraw after the write restores the
     // frame under it).
@@ -2482,7 +2255,7 @@ impl Row {
 fn draw_pause_list(title: &str, rows: usize, sel: usize, row: &dyn Fn(usize) -> Row) {
     use psx_font::TextSink;
     const VISIBLE: usize = 7;
-    let text = hltext::Sink::SMALL;
+    let text = hltext::SMALL_SINK;
     pause_dim(PAUSE_BOX.0, PAUSE_BOX.1, PAUSE_BOX.2, PAUSE_BOX.3);
     text.draw(22, 22, title, PAUSE_TITLE);
 
@@ -2661,7 +2434,7 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
     // here that can fail for reasons outside the game, so it has to say so.
     let mut status = "";
     let mut pad = PadTracker::new();
-    pad.update(pads::poll().buttons.bits());
+    pad.update(pads::poll(Port::One).buttons.bits());
     pad.prime(); // swallow buttons still held from gameplay until re-pressed
 
     pause_aim(&surface);
@@ -2671,7 +2444,7 @@ fn run_pause_menu(fb: &mut DoubleBuffer) -> PauseExit {
 
     let exit = loop {
         interrupts::wait_vblank();
-        pad.update(pads::poll().buttons.bits());
+        pad.update(pads::poll(Port::One).buttons.bits());
 
         let up = pad.just_pressed(button::UP);
         let down = pad.just_pressed(button::DOWN);
@@ -4415,7 +4188,7 @@ fn aim_curve(v: i32) -> i32 {
 #[inline(never)]
 fn live_semantic_sample(pad: psx_pad::PadState) -> semantic_input::Sample {
     let (mut fwd, mut strafe, mut turn, mut look) = (0i32, 0i32, 0i32, 0i32);
-    if pad.is_analog() {
+    if pad.mode.has_sticks() {
         let (lx, ly) = pad.sticks.left_centered();
         let (rx, ry) = pad.sticks.right_centered();
         if settings::move_deadzone().is_outside(lx, ly) {
@@ -4512,7 +4285,7 @@ fn poll_live_semantic_input(
     // The reader hands back the last clean state across a poll it had to reject,
     // so a held button cannot read as released for one tick and pressed again on
     // the next.
-    let pad = pads::poll();
+    let pad = pads::poll(Port::One);
     let pause_button = pad.buttons.is_held(button::START) || pad.buttons.is_held(button::SELECT);
     let reopen = unsafe { PAUSE_REENTER };
     if reopen || (pause_button && !*prev_pause_button) {
@@ -4539,7 +4312,7 @@ fn poll_live_semantic_input(
                 if settings::take_brightness_dirty() {
                     map::reapply_brightness();
                 }
-                pads::poll();
+                pads::poll(Port::One);
                 *prev_pause_button = true;
                 let next = if unsafe { PAUSE_REENTER } {
                     1
@@ -4684,20 +4457,8 @@ fn model_unscale_depth(depth: u32, shift: u8) -> u32 {
 }
 
 #[inline(always)]
-fn canonical_ram_const<T>(p: *const T) -> *const T {
-    #[cfg(target_arch = "mips")]
-    {
-        (((p as usize) & 0x001f_ffff) | 0x8000_0000) as *const T
-    }
-    #[cfg(not(target_arch = "mips"))]
-    {
-        p
-    }
-}
-
-#[inline(always)]
 unsafe fn streamed_map_bytes(len: usize) -> &'static [u8] {
-    let ptr = canonical_ram_const(arena_ptr().cast::<u8>());
+    let ptr = psx_hw::memory::to_kseg0_ptr(arena_ptr().cast::<u8>());
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
@@ -4715,13 +4476,13 @@ unsafe fn stream_menu_assets() -> &'static [u8] {
 }
 
 unsafe fn streamed_model_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
-    let ptr = canonical_ram_const(model_ptr().cast::<u8>());
+    let ptr = psx_hw::memory::to_kseg0_ptr(model_ptr().cast::<u8>());
     unsafe { core::slice::from_raw_parts(ptr.add(byte_off), len) }
 }
 
 #[inline(always)]
 unsafe fn viewmodel_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
-    let ptr = canonical_ram_const(model_ptr().cast::<u8>());
+    let ptr = psx_hw::memory::to_kseg0_ptr(model_ptr().cast::<u8>());
     unsafe { core::slice::from_raw_parts(ptr.add(byte_off), len) }
 }
 
@@ -4900,8 +4661,6 @@ enum VmSwitchPump {
 unsafe fn vm_switch_retry_blocking(wm: usize) -> bool {
     cdstream::stream_abort();
     VM_STREAM_WM = VM_NONE;
-    #[cfg(any(feature = "performance-telemetry", feature = "emulator-telemetry"))]
-    tty::println("hl-psx: retrying viewmodel with blocking read");
     let mut chunks = 0;
     let mut bytes = 0;
     let mut sectors = 0;
@@ -5517,6 +5276,7 @@ fn wait_until_vblank(target: u32) {
     while !vblank_reached(interrupts::vblank_count(), target) {}
 }
 
+#[cfg(not(feature = "decoupled-present"))]
 fn wait_vblank_edge() -> u32 {
     let entry = interrupts::vblank_count();
     loop {
@@ -5525,35 +5285,6 @@ fn wait_vblank_edge() -> u32 {
             return now;
         }
     }
-}
-
-/// Display periods a queued flip gets before it is forced (psx-engine's
-/// `FLIP_WAIT_VBLANKS`).
-#[cfg(feature = "decoupled-present")]
-const FLIP_WAIT_VBLANKS: u32 = 8;
-
-/// Block until the VBlank handler has applied the queued display flip.
-///
-/// The handler applies it at the first blank edge after the frame's closing
-/// GP0(1Fh) has run (GPUSTAT bit 24). If that never comes, on a wedged GPU or
-/// a frame that lost its closing node, the word is written here just after an
-/// edge, so it still lands in the blanking interval. Leaving it queued would
-/// hang the loop, and dropping it would leave the display on the buffer the
-/// next frame clears. Returns false on that path.
-#[cfg(feature = "decoupled-present")]
-fn wait_queued_flip() -> bool {
-    let entry = interrupts::vblank_count();
-    while interrupts::is_display_control_queued() {
-        if interrupts::vblank_count().wrapping_sub(entry) > FLIP_WAIT_VBLANKS {
-            wait_vblank_edge();
-            let word = interrupts::take_queued_display_control();
-            if word != 0 {
-                psx_io::gpu::write_display_control(word);
-            }
-            return false;
-        }
-    }
-    true
 }
 
 #[inline]
@@ -9002,12 +8733,13 @@ fn actor_carry_hash(name: &str, global: bool) -> u16 {
     if start == end {
         return 0;
     }
-    let mut h: u32 = 0x811c_9dc5;
+    let mut fnv = psx_pack::Fnv32::new();
     let mut i = start;
     while i < end {
-        h = (h ^ bytes[i].to_ascii_lowercase() as u32).wrapping_mul(0x0100_0193);
+        fnv.push(bytes[i].to_ascii_lowercase());
         i += 1;
     }
+    let h = fnv.finish();
     let mut id = ((h ^ (h >> 16)) as u16 & !CARRY_GLOBAL_BIT).max(1);
     if global && id == 0x7fff {
         id = 0x7ffe;
@@ -10017,7 +9749,6 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
     let map_name = m.logic_name(rec.arg0);
     let landmark_name = m.logic_name(rec.arg1);
     let Some(room_id) = menu::room_for_map_name(map_name) else {
-        tty::println("hl-psx: changelevel target not cooked");
         telemetry::debug_log("hl-psx: changelevel target not cooked");
         telemetry::debug_log(map_name);
         return true;
@@ -13002,7 +12733,7 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 #[optimize(size)]
 fn fx_quad_add(verts: [(i16, i16); 4], colors: [(u8, u8, u8); 4], gouraud: bool) {
     unsafe {
-        if FX_CAPTURE {
+        if fx::capturing() {
             let material = psx_gpu::material::TextureMaterial::blended(
                 0,
                 0,
@@ -13027,14 +12758,14 @@ fn fx_quad_add(verts: [(i16, i16); 4], colors: [(u8, u8, u8); 4], gouraud: bool)
                     } else {
                         0
                     };
-                    words[n] = cmd | gp0_color(c.0, c.1, c.2);
+                    words[n] = cmd | fx::gp0_color(c.0, c.1, c.2);
                     n += 1;
                 }
-                words[n] = gp0_vertex(verts[i].0, verts[i].1);
+                words[n] = fx::gp0_vertex(verts[i].0, verts[i].1);
                 n += 1;
                 i += 1;
             }
-            if fx_chain_push(&words[..n]) {
+            if fx::chain_push::<OverlayTail>(&words[..n]) {
                 return;
             }
         }
@@ -15462,7 +15193,7 @@ impl CameraVisibility<'_> {
         visibility_logic::sphere_in_camera_frustum(center, radius, render::NEAR_Z, far_view())
     }
 
-    #[inline]
+    #[inline(never)]
     fn sphere(&self, center: [i32; 3], radius: i32) -> bool {
         self.view_sphere(self.view_center(center), radius)
     }
@@ -15492,7 +15223,7 @@ impl CameraVisibility<'_> {
         )
     }
 
-    #[inline]
+    #[inline(always)]
     fn box_bounds(&self, center: [i32; 3], half: [i32; 3]) -> bool {
         let extent = |row: [i16; 3]| {
             ((row[0] as i32).abs() * half[0]
@@ -15523,7 +15254,7 @@ impl CameraVisibility<'_> {
         !self.have_pvs || (leaf > 0 && pvs_leaf_visible(m, leaf as usize))
     }
 
-    #[inline]
+    #[inline(always)]
     fn actor_bounds(&self, m: &Map, leaf: i32, center: [i32; 3], radius: i32) -> bool {
         self.known_leaf(m, leaf) && self.model_sphere_gte(center, radius)
     }
@@ -16067,7 +15798,7 @@ unsafe fn seed_prop_render_transform(pi: usize) {
 /// authored teleports/script warps, not locomotion, and must never sweep the
 /// model through intervening walls. Ordinary doubled walker steps are <=32
 /// units, leaving a generous threshold for moving-platform displacement.
-#[inline]
+#[inline(always)]
 unsafe fn prop_render_transform(pi: usize) -> ([i32; 3], u16) {
     const MAX_INTERPOLATED_DELTA: i32 = 96;
     let current = PROP_POS[pi];
@@ -27401,6 +27132,7 @@ unsafe fn proj_quad_verts(m: &Map, indices: [usize; 4], frame: u16) {
     }
 }
 
+#[inline(always)]
 unsafe fn next_proj_token() -> u16 {
     // Marks are one byte wide, so the token space is 1..=255.
     let next = PROJ_TOKEN.wrapping_add(1);
@@ -27416,7 +27148,7 @@ unsafe fn next_proj_token() -> u16 {
     PROJ_TOKEN
 }
 
-#[inline]
+#[inline(always)]
 unsafe fn world_projection_token(
     room_id: u16,
     projection_h: u16,
@@ -30892,7 +30624,7 @@ unsafe fn try_emit_native_affine_quad(
 /// Studio models use one tint per draw, so test the actor centre once and
 /// brighten the whole model in three angular/depth bands. This is deliberately
 /// cheaper than touching every HMD8 face and shares the world beam's occlusion.
-#[inline]
+#[inline(always)]
 fn flashlight_model_shade(base: u8, center: [i32; 3], eye: [i32; 3], rot: &Mat3I16) -> u8 {
     if !unsafe { FLASHLIGHT_ON } {
         return base;
@@ -33423,6 +33155,7 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
 /// active projection plane / depth), and emits an additive textured quad into the OT at the
 /// center's depth so it sorts with the world. Screen-aligned (VP_PARALLEL);
 /// upright/oriented sprite types collapse to this, which reads fine at PS1 scale.
+#[inline(always)]
 unsafe fn draw_billboard(
     packets: &mut PrimitivePacketArena<'_>,
     np: &mut usize,
@@ -35256,7 +34989,6 @@ fn enable_cop2() {
 #[no_mangle]
 #[optimize(size)]
 fn main() {
-    tty::println("hl-psx: booting renderer");
     enable_cop2();
     unsafe {
         init_pvs_link_sentinels();
@@ -35279,15 +35011,12 @@ fn main() {
     // first poll asks for analog and locks it, before anything reads the pad. The poll
     // blocks for a few frames. Anything but analog gets a notice on the splash; a pad
     // plugged in later gets the same handshake from its first poll.
-    pads::poll();
-    let pad_notice = match pads::analog() {
+    pads::poll(Port::One);
+    let pad_notice = match pads::analog(Port::One) {
         AnalogRequirement::Analog => ["", ""],
         AnalogRequirement::DigitalOnly => ["Digital pad detected", "Half-Life needs a DualShock"],
         AnalogRequirement::Absent => ["No controller found", "Plug a DualShock into port 1"],
     };
-    if !pad_notice[0].is_empty() {
-        tty::println(pad_notice[0]);
-    }
     driver::with(|gpu| {
         gpu.set_draw_area((0, 0), (319, 239));
         gpu.set_draw_offset((0, 0));
@@ -35307,7 +35036,7 @@ fn main() {
         // The strip counts VBlanks, and the game installs the counter only when play()
         // starts: do it now, or the boot loads would draw it once and freeze it.
         interrupts::install_vblank_counter();
-        interrupts::set_min_flip_vblanks(MENU_PRESENT_CAP.min_vblanks());
+        psx_goldsrc::present::set_menu_cap();
         begin_loading(&mut fb);
         draw_next_loading_screen(&mut fb);
     }
@@ -35331,9 +35060,6 @@ fn main() {
             0
         }
     };
-    if sfx_ready == 0 {
-        tty::println("hl-psx: SFX pack missing/failed (silent boot)");
-    }
     // Per-map core profiles: which core bank each map loads. MAP_BUF is still
     // free here; a missing or malformed table keeps the chapter defaults.
     {
@@ -35398,7 +35124,7 @@ fn main() {
             while i < 150 {
                 interrupts::wait_vblank();
                 driver::with(|gpu| fb.swap(gpu));
-                let b = pads::poll().buttons;
+                let b = pads::poll(Port::One).buttons;
                 if b.is_held(button::L1) {
                     dbg_sel = Some((b.bits() & 0xFF) as usize);
                     let selector = ((b.bits() >> 12) & 0x0F) as usize;
@@ -35469,7 +35195,7 @@ fn main() {
             menu_start(sel)
         };
         if DEBUG_REGRESSION_VIEWPOINTS && dbg_sel.is_some() {
-            let selector = ((pads::poll().buttons.bits() >> 12) & 0x0F) as usize;
+            let selector = ((pads::poll(Port::One).buttons.bits() >> 12) & 0x0F) as usize;
             if selector == DEBUG_REGRESSION_SELECTOR {
                 // Diagnostic-only sentinel consumed after the cooked map is
                 // resident. Shipping launches always retain pitch zero here.
@@ -35529,7 +35255,7 @@ fn main() {
         // so keep it frozen and overlay only a tiny "Loading" strip.
         let mut keep_frame = false;
         loop {
-            interrupts::set_min_flip_vblanks(GAMEPLAY_PRESENT_CAP.min_vblanks());
+            psx_goldsrc::present::set_gameplay_cap();
             // The flip-interval histogram then describes this stretch of play only (the journey
             // tests/present-cap.toml reads it).
             interrupts::reset_flip_histogram();
@@ -35546,7 +35272,7 @@ fn main() {
                 #[cfg(feature = "route-follow")]
                 &mut follower,
             );
-            interrupts::set_min_flip_vblanks(MENU_PRESENT_CAP.min_vblanks());
+            psx_goldsrc::present::set_menu_cap();
             match exit {
                 exit @ (PlayExit::BackToMenu | PlayExit::Ending) => {
                     // Silence the physical drive and SPU route before the first
@@ -36341,7 +36067,6 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, 0);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: WORLD.PAK texture stream failed");
         telemetry::debug_log("hl-psx: WORLD.PAK texture stream failed");
         end_loading();
         return PlayExit::BackToMenu;
@@ -36366,7 +36091,6 @@ fn play(
             telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
             telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
             telemetry::task_end(telemetry::task::FIXED_UPDATE);
-            tty::println("hl-psx: WORLD.PAK texture chunk invalid");
             telemetry::debug_log("hl-psx: WORLD.PAK texture chunk invalid");
             end_loading();
             return PlayExit::BackToMenu;
@@ -36536,7 +36260,6 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: WORLD.PAK world stream failed");
         telemetry::debug_log("hl-psx: WORLD.PAK world stream failed");
         end_loading();
         return PlayExit::BackToMenu;
@@ -36566,7 +36289,6 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: WORLD.PAK viewmodel stream failed");
         telemetry::debug_log("hl-psx: WORLD.PAK viewmodel stream failed");
         end_loading();
         return PlayExit::BackToMenu;
@@ -36607,7 +36329,6 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        tty::println("hl-psx: unsupported world map format");
         telemetry::debug_log("hl-psx: unsupported world map format");
         end_loading();
         return PlayExit::BackToMenu;
@@ -36629,7 +36350,6 @@ fn play(
     reference_trace::begin_map(map_name, launch.room_id);
     m.expand_light_palette(); // per-corner light lookups read the expanded table
     if room_texs != m.n_texs {
-        tty::println("hl-psx: texture/world count mismatch");
         telemetry::debug_log("hl-psx: texture/world count mismatch");
     }
     // GoldSrc carries the player's pev->gravity through a level change, so
@@ -37363,6 +37083,10 @@ fn play(
     // Timer 1 counts HBlanks and resets at VBlank, as the SDK's old helper set it.
     psx_io::timers::set_mode(psx_io::timers::Timer::Timer1, 0x0103);
     interrupts::install_vblank_counter();
+    // The one present path: the frame loop below hands each finished frame to it and starts
+    // the next with it. The GPU is idle here (every swap above waited for it).
+    #[cfg(feature = "decoupled-present")]
+    let mut frame = psx_goldsrc::present::FramePresent::new();
     // Gameplay ticks at SIM_VBLANKS on the shared psx-tick clock, with every
     // owed tick caught up before the next render.
     let mut sim_clock = psx_tick::FixedClock::new(
@@ -37384,14 +37108,12 @@ fn play(
     // look like a release and a re-press. Seed it with a poll outside the
     // deadline-critical loop.
     #[cfg(not(feature = "semantic-input"))]
-    pads::poll();
+    pads::poll(Port::One);
 
-    // A frame has been built and submitted but not yet swapped in.
+    // A frame has been built and submitted but not yet handed to the presenter (the decoupled
+    // build keeps that in `frame`).
+    #[cfg(not(feature = "decoupled-present"))]
     let mut present_pending = false;
-    // The finished frame's display flip sits in the VBlank handler's GP1
-    // queue; the clear below gates on it having been applied.
-    #[cfg(feature = "decoupled-present")]
-    let mut flip_queued = false;
 
     diag_stage(0x0430, "FIRST FRAME");
     // Only the live pad's resume path continues the loop by label.
@@ -39945,38 +39667,25 @@ fn play(
         // ours again. When the walk already drained this is one register
         // read.
         driver::with(|gpu| psx_gpu::chain::wait(gpu.dma_mut()));
-        // Queue the previous frame's display flip NOW and let the VBlank
-        // handler apply it exactly at the next blank edge, so the whole CPU
-        // build below overlaps what used to be a blocking edge spin (the
-        // ride profile measured that spin at ~12% of moving frames). The
-        // draw side switches immediately -- nothing touches the framebuffer
-        // until the gated clear -- and the raster of the finished buffer is
-        // fenced by draw_sync first. In-target the raster has already
-        // drained; a real-hardware build pays the sync here by design until
-        // the decoupled path settles its GPU bill.
-        // No CPU-side draw_sync here: syncing at build start measured 14.8%
-        // of moving frames (it serialises against the previous frame's
-        // charged fill/walk time that the old late placement overlapped).
-        // The VBlank handler applies the flip only once GPUSTAT bit 24 is
-        // set, by the GP0(1Fh) that closes the previous frame, so a busy
-        // raster just retries at the next edge. That frame's last list went
-        // out in finish_deferred_overlays and the walk fence above has
-        // drained it, so the closing node is the next thing channel 2
-        // walks: GP0(1Fh) then follows every command of that frame. It
-        // never goes through the port, where it could land inside a list
-        // channel 2 is still walking.
+        // Hand the previous frame to the presenter NOW, as the frame's last part: its chain is
+        // the draw-done node, and the presenter links the draw area and offset in front,
+        // acknowledges GPUSTAT bit 24, kicks the walk without waiting for it (at once when the
+        // frame before is on screen and channel 2 is idle, else at the first edge that
+        // allows it) and queues the frame's display flip, which the VBlank handler applies at
+        // the first blank edge the cap allows once the frame is drawn. The whole CPU build
+        // below overlaps what used to be a blocking edge spin (the ride profile measured that
+        // spin at ~12% of moving frames). The draw side switches immediately -- nothing touches
+        // the framebuffer until `begin_frame` below -- and no CPU-side draw_sync is added here:
+        // syncing at build start measured 14.8% of moving frames (it serialises against the
+        // previous frame's charged fill/walk time). The frame's last list went out in
+        // finish_deferred_overlays and the walk fence above has drained it, so the node is the
+        // next thing channel 2 walks.
         #[cfg(feature = "decoupled-present")]
-        if present_pending {
+        if frame.is_pending() {
             telemetry::stage_begin(telemetry::stage::PRESENT);
-            driver::with(|gpu| gpu.submit_static(&psx_gpu::chain::DRAW_DONE_NODE));
-            interrupts::queue_display_control_at_vblank(fb.begin_deferred_swap());
+            // Every list of the frame went out (and was waited out) in finish_deferred_overlays.
+            frame.hand_over(fb);
             telemetry::stage_end(telemetry::stage::PRESENT);
-            // Consumed; every build path re-arms it before the next read.
-            #[allow(unused_assignments)]
-            {
-                present_pending = false;
-            }
-            flip_queued = true;
         }
         unsafe {
             world_ot().clear();
@@ -41314,6 +41023,10 @@ fn play(
                     RectFlat::WORDS,
                 );
                 if t >= ENDING_FADE_TICKS {
+                    // The previous frame's flip may still be queued: land it before the ending
+                    // screens flip directly.
+                    #[cfg(feature = "decoupled-present")]
+                    frame.land();
                     return PlayExit::Ending;
                 }
                 false
@@ -41348,30 +41061,19 @@ fn play(
                 telemetry::stage_end(telemetry::stage::PRESENT);
                 present_pending = false;
             }
-            // Decoupled: the flip was queued before the build. At ride pace
-            // the edge passed long ago and this is one volatile load; only a
-            // frame built inside a single VBlank interval (the 60 fps cap
-            // case) waits. Gating the clear on the applied flip is what keeps
-            // the displayed buffer untouched -- never clear before the flip.
+            // Decoupled: the flip was queued before the build. At ride pace the edge passed
+            // long ago and `begin_frame` is a few loads; only a frame built inside a single
+            // VBlank interval (the 60 fps cap case) waits. Gating the clear on the applied flip
+            // is what keeps the displayed buffer untouched -- never clear before the flip. The
+            // VBlank handler lands the flip only once the previous frame's GP0(1Fh) has run,
+            // so the draw target `begin_frame` programs here, after that proof, can never
+            // collect the previous frame's raster backlog at build start.
             #[cfg(feature = "decoupled-present")]
-            if flip_queued {
+            {
                 telemetry::stage_begin(telemetry::stage::PRESENT);
-                wait_queued_flip();
+                frame.begin_frame(fb);
                 telemetry::stage_end(telemetry::stage::PRESENT);
-                // The VBlank handler consumes the queued flip only once the
-                // previous frame's GP0(1Fh) has run, i.e. that frame is fully
-                // drawn. Program the new draw side here, after that
-                // proof, so these GP0 writes can never collect the previous
-                // frame's raster backlog at build start.
-                driver::with(|gpu| fb.apply_draw_target(gpu));
-                flip_queued = false;
             }
-            // The previous flip has landed (or none was queued), so this
-            // frame takes over GPUSTAT bit 24: acknowledge it before the
-            // frame's first drawing, the clear below. The frame's own
-            // GP0(1Fh) sets it again once all of it is drawn.
-            #[cfg(feature = "decoupled-present")]
-            driver::with(|gpu| gpu.arm_draw_done());
             telemetry::stage_begin(telemetry::stage::FRAME_CLEAR);
             driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
             // Culls and fog after this point reach FAR_VIEW_WIDE only while
@@ -41513,9 +41215,7 @@ fn play(
             // to GP0 a word at a time. Identical words in identical order; the
             // gain is that the CPU stops fencing on the frame's raster. The
             // chain is submitted last, after the deferred lists above.
-            fx_chain_reset();
-            FX_ARENA = (&mut packets as *mut PrimitivePacketArena<'_>).cast();
-            FX_CAPTURE = true;
+            fx::begin(&mut packets);
             if draw_viewmodel_now && recoil >= 13 && MUZZLE_FLASH_WEAPONS[weapon.current] {
                 draw_muzzle_flash(sim_frame_no);
             }
@@ -41531,8 +41231,7 @@ fn play(
                     pitch as i32,
                 );
             }
-            FX_CAPTURE = false;
-            FX_ARENA = core::ptr::null_mut();
+            fx::end();
             // A coupled frame presents at the end of this iteration, so its
             // overlays go out now, in the same order.
             #[cfg(not(feature = "decoupled-present"))]
@@ -41544,7 +41243,7 @@ fn play(
             // manual L1 re-dump. Lets the same tri be compared between a frame
             // where it shows and one where it is missing.
             if DEBUG_XHAIR {
-                let dump_now = pads::poll().buttons.is_held(button::L1);
+                let dump_now = pads::poll(Port::One).buttons.is_held(button::L1);
                 let key = if XHAIR.valid != 0 {
                     XHAIR.tt
                 } else {
@@ -41673,7 +41372,7 @@ fn play(
             // Always defer: the present overlaps the next frame's entire CPU
             // build instead of spinning out the rest of this VBlank interval,
             // which the decoupled profile measured as ~40% of a typical frame.
-            present_pending = true;
+            frame.frame_built();
         }
         #[cfg(not(feature = "decoupled-present"))]
         if vblank_reached(interrupts::vblank_count(), sim_clock.next_due()) {

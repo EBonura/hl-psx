@@ -196,10 +196,11 @@ pub fn logic_name_hash32(name: &str) -> u32 {
     if name.is_empty() {
         return 0;
     }
-    let mut hash = 0x811c_9dc5u32;
+    let mut fnv = psx_pack::Fnv32::new();
     for byte in name.bytes() {
-        hash = (hash ^ byte.to_ascii_lowercase() as u32).wrapping_mul(0x0100_0193);
+        fnv.push(byte.to_ascii_lowercase());
     }
+    let hash = fnv.finish();
     // Zero is the payload sentinel. FNV-1a can theoretically produce it, so
     // reserve that value without reducing ordinary hash width.
     if hash == 0 {

@@ -409,16 +409,9 @@ pub fn decode(buf: &[u8]) -> Option<Checkpoint> {
     Some(cp)
 }
 
-#[optimize(size)]
 fn checksum(bytes: &[u8]) -> u32 {
-    // FNV-1a: the same hash the cook and runtime already share for globalnames,
-    // so there is one checksum idiom in the project rather than two.
-    let mut h: u32 = 0x811c_9dc5;
-    for &b in bytes {
-        h ^= b as u32;
-        h = h.wrapping_mul(0x0100_0193);
-    }
-    h
+    // The one FNV-1a (the same hash the cook and runtime share for globalnames).
+    psx_pack::fnv1a32(bytes)
 }
 
 /// Outcome of a card operation, kept coarse: the pause menu shows one line and

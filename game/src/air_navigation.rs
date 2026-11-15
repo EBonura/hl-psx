@@ -38,7 +38,7 @@ impl Flight {
     /// profile still binds to this hot function's line offsets.
     pub fn candidate(&mut self, pos: [i32; 3], goal: [i32; 3], speed: i32) -> [i32; 3] {
         let d = [goal[0] - pos[0], goal[1] - pos[1], goal[2] - pos[2]];
-        let length = sqrt(distance2(pos, goal)).max(1);
+        let length = psx_math::int32::isqrt_i32(distance2(pos, goal)).max(1);
         let mut out = pos;
         for axis in 0..3 {
             let desired = mul_div_i32(d[axis], speed.clamp(0, (1 << 23) - 1) * 256, length)
@@ -51,25 +51,6 @@ impl Flight {
         }
         out
     }
-}
-
-fn sqrt(n: i32) -> i32 {
-    let mut remainder = n.max(0) as u32;
-    let mut root = 0u32;
-    let mut bit = 1u32 << 30;
-    while bit > remainder {
-        bit >>= 2;
-    }
-    while bit != 0 {
-        if remainder >= root + bit {
-            remainder -= root + bit;
-            root = (root >> 1) + bit;
-        } else {
-            root >>= 1;
-        }
-        bit >>= 2;
-    }
-    root as i32
 }
 
 #[cfg(test)]
@@ -112,7 +93,7 @@ mod tests {
         // The former i64 body of `Flight::candidate`, verbatim.
         let wide = |flight: &mut Flight, pos: [i32; 3], goal: [i32; 3], speed: i32| -> [i32; 3] {
             let d = [goal[0] - pos[0], goal[1] - pos[1], goal[2] - pos[2]];
-            let length = sqrt(distance2(pos, goal)).max(1);
+            let length = psx_math::int32::isqrt_i32(distance2(pos, goal)).max(1);
             let mut out = pos;
             for axis in 0..3 {
                 let desired = (d[axis] as i64 * speed.max(0) as i64 * 256 / length as i64)

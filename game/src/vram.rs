@@ -181,25 +181,8 @@ unsafe fn reset_allocators() {
 }
 
 #[inline(always)]
-fn canonical_ram_const<T>(p: *const T) -> *const T {
-    #[cfg(target_arch = "mips")]
-    {
-        (((p as usize) & 0x001f_ffff) | 0x8000_0000) as *const T
-    }
-    #[cfg(not(target_arch = "mips"))]
-    {
-        p
-    }
-}
-
-#[inline(always)]
-fn canonical_ram_mut<T>(p: *mut T) -> *mut T {
-    canonical_ram_const(p as *const T) as *mut T
-}
-
-#[inline(always)]
 unsafe fn canonical_ram_bytes(data: &[u8]) -> &[u8] {
-    unsafe { core::slice::from_raw_parts(canonical_ram_const(data.as_ptr()), data.len()) }
+    unsafe { core::slice::from_raw_parts(psx_hw::memory::to_kseg0_ptr(data.as_ptr()), data.len()) }
 }
 
 /// Upload a streamed map texture chunk:
@@ -271,7 +254,7 @@ pub unsafe fn upload_tex_chunk_append_masked_raw(
         return None;
     }
 
-    let slots = canonical_ram_mut(slots);
+    let slots = psx_hw::memory::to_kseg0_mut(slots);
     let blob = &data[8..];
     let mut off = 0usize;
     let mut out = 0usize;
@@ -319,7 +302,7 @@ pub unsafe fn upload_tex_blob_raw(
     slot_len: usize,
 ) -> usize {
     let data = unsafe { canonical_ram_bytes(data) };
-    let slots = canonical_ram_mut(slots);
+    let slots = psx_hw::memory::to_kseg0_mut(slots);
     let mut off = 0usize;
     let mut failed = 0usize;
     let mut shared_clut_ready = false;

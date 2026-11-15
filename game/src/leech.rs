@@ -304,7 +304,7 @@ impl Motion {
 /// judged on the horizontal plane.
 pub fn in_view(yaw: u16, dx: i32, dz: i32) -> bool {
     let f = flat_forward(yaw);
-    let len = isqrt(dx * dx + dz * dz).max(1);
+    let len = psx_math::int32::isqrt_i32(dx * dx + dz * dz).max(1);
     (f[0] * dx + f[1] * dz) / len > -2048
 }
 
@@ -313,7 +313,7 @@ pub fn in_view(yaw: u16, dx: i32, dz: i32) -> bool {
 /// on the horizontal plane (dot > 0.9).
 pub fn bite_connects(yaw: u16, dx: i32, dz: i32) -> bool {
     let f = flat_forward(yaw);
-    let len = isqrt(dx * dx + dz * dz);
+    let len = psx_math::int32::isqrt_i32(dx * dx + dz * dz);
     len != 0 && (f[0] * dx + f[1] * dz) / len > 3686
 }
 
@@ -355,27 +355,7 @@ fn approach(target: i32, value: i32, step: i32) -> i32 {
 
 #[optimize(size)]
 fn length(v: [i32; 3]) -> i32 {
-    isqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
-}
-
-#[optimize(size)]
-fn isqrt(n: i32) -> i32 {
-    let mut remainder = n.max(0) as u32;
-    let mut root = 0u32;
-    let mut bit = 1u32 << 30;
-    while bit > remainder {
-        bit >>= 2;
-    }
-    while bit != 0 {
-        if remainder >= root + bit {
-            remainder -= root + bit;
-            root = (root >> 1) + bit;
-        } else {
-            root >>= 1;
-        }
-        bit >>= 2;
-    }
-    root as i32
+    psx_math::int32::isqrt_i32(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
 }
 
 #[optimize(size)]

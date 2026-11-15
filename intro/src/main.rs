@@ -268,7 +268,7 @@ fn main() {
     };
     // The splash counts its fade in frames, one flip per VBlank: keep the display rate here
     // (the SDK caps every program at 30 fps unless it says otherwise).
-    interrupts::set_min_flip_vblanks(1);
+    psx_rt::present::set_cap(psx_rt::present::PresentCap::UNCAPPED);
     // The first poll of a pad asks it for analog mode, so a pad that cannot be seen shows on the
     // splash, before the movie, instead of after it. The game polls with its own Controllers and
     // asks again.

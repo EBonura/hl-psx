@@ -12,8 +12,8 @@
 //! until the file ends.
 
 use hl_format::music as layout;
-use psx_fmv::iso;
 use psx_io::cd::xa::{DriveSpeed, Event, File, Player};
+use psx_io::iso;
 use psx_io::periph::Cd;
 use psx_pack::cd::{SectorReader, SECTOR_WORDS};
 
@@ -54,13 +54,13 @@ unsafe fn read_sector<'a>(
     reader: &mut SectorReader,
     lba: u32,
     sector: &'a mut [u32; SECTOR_WORDS],
-) -> Option<&'a [u8]> {
+) -> Option<&'a [u8; iso::BYTES]> {
     if !reader.start_read(lba) {
         return None;
     }
     let read = reader.read_sector(sector);
     reader.stop();
-    read.then(|| core::slice::from_raw_parts(sector.as_ptr().cast::<u8>(), SECTOR_WORDS * 4))
+    read.then(|| iso::as_bytes(sector))
 }
 
 /// Find the music files by name in the disc's root directory, so no sector
@@ -93,7 +93,7 @@ pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
         return;
     };
     // A root directory this small is one sector; scan a few in case it is not.
-    for at in 0..size.div_ceil(2048).min(4) {
+    for at in 0..iso::sectors(size).min(4) {
         let Some(directory) = read_sector(&mut reader, root + at, sector) else {
             return;
         };

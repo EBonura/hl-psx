@@ -22,7 +22,7 @@ use psx_gpu::display::DoubleBuffer;
 use psx_gpu::material::TextureMaterial;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use crate::pads;
-use psx_pad::{button, PadTracker};
+use psx_pad::{button, PadTracker, Port};
 use psx_rt::interrupts;
 use psx_vram::{upload_bytes, upload_bytes_aligned, Clut, TextureDepth, TexturePage, VramRect};
 
@@ -391,7 +391,7 @@ pub fn intro(fb: &mut DoubleBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
     while frame < TOTAL {
         // Held, not edge-triggered, past a short grace: holding Start from
         // boot should walk out of the splash.
-        if frame > TITLE_SKIP_GRACE && any(pads::poll().buttons.bits()) {
+        if frame > TITLE_SKIP_GRACE && any(pads::poll(Port::One).buttons.bits()) {
             break;
         }
 
@@ -432,8 +432,7 @@ pub fn intro(fb: &mut DoubleBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
         }
 
         driver::with(|gpu| gpu.wait_idle());
-        psx_rt::interrupts::wait_vblank();
-        driver::with(|gpu| fb.swap(gpu));
+        driver::with(|gpu| psx_goldsrc::present::title_flip(fb, gpu));
         frame += 1;
     }
 }
@@ -871,23 +870,21 @@ fn play_menu_accept() {
 /// One pad poll folded into the tracker's active-high mask: when the pad is
 /// analog, left-stick deflection past a +-48 deadzone maps onto the d-pad bits.
 fn menu_buttons() -> u16 {
-    let pad = pads::poll();
+    let pad = pads::poll(Port::One);
     let mut b = pad.buttons.bits();
-    if pad.is_analog() {
-        let (lx, ly) = pad.sticks.left_centered();
-        const DZ: i16 = 48;
-        if ly < -DZ {
-            b |= button::UP;
-        }
-        if ly > DZ {
-            b |= button::DOWN;
-        }
-        if lx < -DZ {
-            b |= button::LEFT;
-        }
-        if lx > DZ {
-            b |= button::RIGHT;
-        }
+    let (lx, ly) = pad.menu_stick();
+    const DZ: i16 = 48;
+    if ly < -DZ {
+        b |= button::UP;
+    }
+    if ly > DZ {
+        b |= button::DOWN;
+    }
+    if lx < -DZ {
+        b |= button::LEFT;
+    }
+    if lx > DZ {
+        b |= button::RIGHT;
     }
     b
 }
@@ -1264,9 +1261,8 @@ pub fn ending(fb: &mut DoubleBuffer, assets: &[u8]) {
             draw_centered(&font, 221, "Press any button", DIM);
         }
         driver::with(|gpu| gpu.wait_idle());
-        interrupts::wait_vblank();
-        driver::with(|gpu| fb.swap(gpu));
-        let pad = pads::poll();
+        driver::with(|gpu| psx_goldsrc::present::title_flip(fb, gpu));
+        let pad = pads::poll(Port::One);
         let any = pad.buttons.bits() != 0;
         if any && !prev_any && frame > 40 {
             unsafe { crate::sfx::play(crate::sfx::BUTTON) };
@@ -1523,8 +1519,7 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
         title_phase = title_phase.wrapping_add(1);
 
         driver::with(|gpu| gpu.wait_idle());
-        interrupts::wait_vblank();
-        driver::with(|gpu| fb.swap(gpu));
+        driver::with(|gpu| psx_goldsrc::present::title_flip(fb, gpu));
     }
 }
 
