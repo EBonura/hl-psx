@@ -58,6 +58,7 @@ version = "0.1.0"
 dependencies = [
  "psx-gte",
  "psx-hw",
+ "psx-math",
  "psxed-format",
 ]
 
@@ -110,6 +111,7 @@ dependencies = [
  "psx-gpu",
  "psx-hw",
  "psx-io",
+ "psx-math",
  "psx-pack",
  "psx-rt",
  "psx-spu",
@@ -140,14 +142,19 @@ version = "0.1.0"
 dependencies = [
  "psx-asset",
  "psx-engine",
+ "psx-font",
  "psx-gpu",
  "psx-gte",
  "psx-io",
  "psx-math",
  "psx-pack",
+ "psx-pad",
+ "psx-rt",
  "psx-sfx",
  "psx-spu",
  "psx-telemetry",
+ "psx-tick",
+ "psx-vram",
 ]
 
 [[package]]
@@ -165,6 +172,7 @@ version = "0.1.0"
 dependencies = [
  "psx-gte-core",
  "psx-hw",
+ "psx-math",
 ]
 
 [[package]]
@@ -239,8 +247,10 @@ version = "0.1.0"
 name = "psx-rt"
 version = "0.1.0"
 dependencies = [
+ "psx-gpu",
  "psx-hw",
  "psx-io",
+ "psx-tick",
 ]
 
 [[package]]
@@ -302,6 +312,7 @@ version = "0.1.0"
 dependencies = [
  "psx-hw",
  "psx-io",
+ "psx-math",
 ]
 
 [[package]]

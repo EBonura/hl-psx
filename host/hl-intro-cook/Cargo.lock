@@ -22,6 +22,7 @@ dependencies = [
  "psx-gpu",
  "psx-hw",
  "psx-io",
+ "psx-math",
  "psx-pack",
  "psx-rt",
  "psx-spu",
@@ -52,6 +53,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-math"
+version = "0.1.0"
+
+[[package]]
 name = "psx-pack"
 version = "0.1.0"
 dependencies = [
@@ -62,8 +67,10 @@ dependencies = [
 name = "psx-rt"
 version = "0.1.0"
 dependencies = [
+ "psx-gpu",
  "psx-hw",
  "psx-io",
+ "psx-tick",
 ]
 
 [[package]]
@@ -75,9 +82,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-tick"
+version = "0.1.0"
+
+[[package]]
 name = "psx-vram"
 version = "0.1.0"
 dependencies = [
  "psx-hw",
  "psx-io",
+ "psx-math",
 ]
