@@ -1,10 +1,8 @@
 #!/bin/sh
-# Fail when guest source names a 64/128-bit integer or a float type (the rules
-# and the allow marker are in scripts/no64_guard.rs). There is no exempt file:
-# wide arithmetic is psx_math::Wide, enforced in the SDK. Run from anywhere.
+# Fail when guest source names a 64/128-bit integer or a float type: the SDK's own scanner
+# (psoxide-dev no64-scan) on the game's sources. Wide arithmetic is psx_math::Wide, enforced in
+# the SDK; there is no exempt file. Run from anywhere, after the SDK is hydrated into .psoxide.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-out="${TMPDIR:-/tmp}/no64_guard.$$"
-trap 'rm -f "$out"' EXIT
-rustc -O --edition 2021 "$root/scripts/no64_guard.rs" -o "$out"
-"$out" "$root/game/src"
+psoxide=${PSOXIDE:-$root/.psoxide}
+cargo run --locked --manifest-path "$psoxide/tools/psoxide-dev/Cargo.toml" --release -- no64-scan "$root/game/src"

@@ -1758,8 +1758,6 @@ fn main() {
     // the pinned SDK remains pristine and an upstream linker-layout change fails
     // loudly rather than being patched blindly.
     let sdk_linker = fs::read_to_string(&ld).expect("read PSoXide linker script");
-    const SDK_STACK: &str = "STACK_RESERVE = 0x8000;";
-    assert_eq!(sdk_linker.matches(SDK_STACK).count(), 1);
     // `HLPSX_STACK_RESERVE` overrides the reservation for a build that is
     // only profiled, never shipped (hl-build's PGO collect link). A link-only
     // input: the code and its addresses do not change.
@@ -1777,12 +1775,11 @@ fn main() {
             .parse()
             .ok()
     });
-    let hlpsx_stack = match env::var("HLPSX_STACK_RESERVE") {
-        Ok(reserve) if !reserve.is_empty() => format!("STACK_RESERVE = {reserve};"),
-        _ => match committed {
-            Some(bytes) => format!("STACK_RESERVE = {bytes};"),
-            None => SDK_STACK.to_string(),
-        },
+    // The SDK linker script takes the reserve from `STACK_RESERVE_OVERRIDE` when a link defines
+    // it; a script placed before psoxide.ld does that, so the script text is not patched.
+    let stack_override = match env::var("HLPSX_STACK_RESERVE") {
+        Ok(reserve) if !reserve.is_empty() => Some(reserve),
+        _ => committed.map(|bytes| bytes.to_string()),
     };
     // Rare renderer extensions live outside `.text.*` so enabling one does
     // not shift the PS1's cache-sensitive world loop. Keep the custom bucket
@@ -1790,14 +1787,17 @@ fn main() {
     const SDK_TEXT: &str = "        *(.text .text.*);";
     const HLPSX_TEXT: &str = "        *(.text .text.*);\n        *(.hlpsx_cold .hlpsx_cold.*);";
     assert_eq!(sdk_linker.matches(SDK_TEXT).count(), 1);
-    let linker = sdk_linker
-        .replace(SDK_STACK, &hlpsx_stack)
-        .replace(SDK_TEXT, HLPSX_TEXT);
+    let linker = sdk_linker.replace(SDK_TEXT, HLPSX_TEXT);
     let hlpsx_ld = out_dir.join("hl-psx.ld");
     fs::write(&hlpsx_ld, linker).expect("write hl-psx linker script");
 
     // `-T` selects the linker script; `--oformat=binary` dumps a flat PSX-EXE
     // image (the script lays out the executable header) instead of an ELF.
+    if let Some(reserve) = &stack_override {
+        let stack_ld = out_dir.join("stack-reserve.ld");
+        fs::write(&stack_ld, format!("STACK_RESERVE_OVERRIDE = {reserve};\n")).expect("write stack reserve script");
+        println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
+    }
     println!("cargo:rustc-link-arg=-T{}", hlpsx_ld.display());
     // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to
     // symbolize emulator PC profiles. Same code at the same addresses; it

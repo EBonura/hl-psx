@@ -2173,7 +2173,10 @@ fn sdk_stack_geometry(script: &str) -> Result<(u32, u32)> {
             .lines()
             .find_map(|line| {
                 let rest = line.trim().strip_prefix(name)?.trim_start();
-                let rest = rest.strip_prefix('=')?.trim().strip_prefix(prefix)?;
+                let rest = rest.strip_prefix('=')?.trim();
+                // `DEFINED(STACK_RESERVE_OVERRIDE) ? STACK_RESERVE_OVERRIDE : 0x8000`: the default.
+                let rest = if rest.starts_with("DEFINED") { rest.rsplit(':').next()?.trim() } else { rest };
+                let rest = rest.strip_prefix(prefix)?;
                 let digits = rest.split(|c: char| !c.is_ascii_hexdigit()).next()?;
                 u32::from_str_radix(digits, 16).ok()
             })
@@ -2399,7 +2402,8 @@ fn compile_game(
         if let GuestProfile::Use(samples, hot_callsite_threshold)
         | GuestProfile::UseElf(samples, hot_callsite_threshold) = profile
         {
-            flags.push(format!("-Zprofile-sample-use={}", samples.display()));
+            let bound = bound_profile(repository, psoxide, features, samples)?;
+            flags.push(format!("-Zprofile-sample-use={}", bound.display()));
             // LLVM's default hot call-site threshold (3000) inlined enough to
             // grow .text by 17 KB on hl-psx and 25 KB on cs-psx, leaving
             // hl-psx 6.7 KB of free RAM, and it was the slowest of the
@@ -2952,6 +2956,19 @@ fn profile_guided_pack(
             .arg(&profile),
         "convert the PC histogram into a sample profile",
     )?;
+    // Record the tree this profile was collected on, so a later edit of the sources is carried
+    // across by `rebind` (it refuses a profile with no record).
+    run(
+        Command::new(cargo())
+            .current_dir(psoxide)
+            .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "stamp"])
+            .arg(&profile)
+            .arg("--elf")
+            .arg(&elf)
+            .arg("--crate")
+            .arg(repository),
+        "record the profile's source (psoxide-pgo stamp)",
+    )?;
     let coverage = env::var("HLPSX_PGO_COVERAGE")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -3138,15 +3155,133 @@ fn collect_layout(
     Ok(())
 }
 
-/// Free RAM a link keeps: bytes between `.bss` end and the stack reserve the
-/// link was made with (the SDK's `psoxide-pgo ram` figure when that is the SDK's
-/// 32 KiB; the map names the reserve, so a smaller committed one is honoured).
-fn ram_free(_psoxide: &Path, link_map: &Path) -> Result<u32> {
-    let text = fs::read_to_string(link_map)
-        .map_err(|error| format!("read {}: {error}", link_map.display()))?;
-    ram_report::parse(&text)
-        .free()
-        .ok_or_else(|| format!("{} has no __bss_end", link_map.display()).into())
+/// Free RAM a profile-guided link keeps, by the SDK's check
+/// (`psoxide-pgo ram`, which prints `free N B`).
+fn ram_free(psoxide: &Path, link_map: &Path) -> Result<u32> {
+    let output = Command::new(cargo())
+        .current_dir(psoxide)
+        .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])
+        .arg(link_map)
+        .output()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .find_map(|line| line.strip_prefix("free ")?.strip_suffix(" B")?.parse().ok())
+        .ok_or_else(|| {
+            format!(
+                "psoxide-pgo ram printed no free byte count for {}",
+                link_map.display()
+            )
+            .into()
+        })
+}
+
+/// The profile as LLVM must see it: the committed sample profile bound onto the symbols of this
+/// checkout's own build.
+///
+/// A sample profile names every function by its mangled symbol, and every Rust symbol carries
+/// its crate's disambiguator, which cargo derives from the dependency set, the features and the
+/// checkout path. LLVM matches by exact spelling and says nothing about the names it did not
+/// match, so a profile handed over as collected silently stops applying to the game's own crate
+/// the moment an SDK move re-hashes it. The SDK's flow is the cure: build the ELF twin of this
+/// code, `psoxide-pgo rebind` the profile onto the twin's symbols, and give LLVM the result.
+/// Its output reports how many names bound.
+fn bound_profile(
+    repository: &Path,
+    psoxide: &Path,
+    features: Option<&str>,
+    samples: &Path,
+) -> Result<PathBuf> {
+    let work = repository.join(".hlpsx/twin");
+    fs::create_dir_all(&work)?;
+    let twin = work.join("twin.elf");
+    let key_file = work.join("twin.key");
+    let key = twin_key(repository, features)?;
+    if !twin.is_file() || fs::read_to_string(&key_file).ok().as_deref() != Some(key.as_str()) {
+        let built = compile_twin(repository, psoxide, features)?;
+        fs::copy(&built, &twin)?;
+        fs::write(&key_file, &key)?;
+    }
+    let name = samples
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .ok_or("the profile has no file name")?;
+    let bound = work.join(format!("{name}.bound.prof"));
+    // `renames.txt` beside the profile: `OLD=NEW` lines (portable names) for functions that moved
+    // since the profile was collected; delete a line when the profile is next recollected.
+    let renames = fs::read_to_string(samples.with_file_name("renames.txt")).unwrap_or_default();
+    let renames = renames
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'));
+    run(
+        Command::new(cargo())
+            .current_dir(psoxide)
+            .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "rebind"])
+            .arg(samples)
+            .arg(&twin)
+            .arg(&bound)
+            .args(renames.flat_map(|pair| ["--rename", pair])),
+        "bind the sample profile onto this build's symbols (psoxide-pgo rebind)",
+    )?;
+    Ok(bound)
+}
+
+/// What the twin's code depends on: the features and every source file of the game and its
+/// shared crates, the manifests and the component pin. A twin is reused while this holds.
+fn twin_key(repository: &Path, features: Option<&str>) -> Result<String> {
+    fn visit(dir: &Path, hasher: &mut Sha256) -> Result<()> {
+        let mut entries: Vec<_> = fs::read_dir(dir)?.flatten().map(|entry| entry.path()).collect();
+        entries.sort();
+        for path in entries {
+            if path.file_name().is_some_and(|name| name == "target") {
+                continue;
+            }
+            if path.is_dir() {
+                visit(&path, hasher)?;
+            } else {
+                hasher.update(path.as_os_str().as_encoded_bytes());
+                hasher.update(fs::read(&path)?);
+            }
+        }
+        Ok(())
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(features.unwrap_or("").as_bytes());
+    hasher.update(env::var("HLPSX_COLLECT_MAPS").unwrap_or_default().as_bytes());
+    for part in ["game/src", "game/.cargo", "shared"] {
+        let dir = repository.join(part);
+        if dir.is_dir() {
+            visit(&dir, &mut hasher)?;
+        }
+    }
+    for file in ["game/Cargo.toml", "game/build.rs", "Cargo.toml", "Cargo.lock", "components.lock.json"] {
+        if let Ok(bytes) = fs::read(repository.join(file)) {
+            hasher.update(bytes);
+        }
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Build the ELF twin of the shipping code: the collect flags and no profile, linked as an ELF
+/// that keeps its DWARF, at a stack reserve that links.
+fn compile_twin(repository: &Path, psoxide: &Path, features: Option<&str>) -> Result<PathBuf> {
+    let mut reserve = PGO_COLLECT_STACK_RESERVE;
+    loop {
+        match compile_game(repository, psoxide, features, GuestProfile::CollectElf(reserve)) {
+            Ok(exe) => return Ok(exe),
+            Err(error) => {
+                let message = error.to_string();
+                let Some(over) = overflowed_by(&message) else {
+                    return Err(error);
+                };
+                let wanted = reserve.saturating_sub(over.div_ceil(256) * 256);
+                if wanted < PGO_COLLECT_STACK_MIN {
+                    return Err(message.into());
+                }
+                reserve = wanted;
+            }
+        }
+    }
 }
 
 /// A profile-guided link: the image, the hot call-site threshold it was
@@ -3667,6 +3802,8 @@ mod tests {
             "STACK_INIT  = RAM_BASE + 0x001FFF00;\nSTACK_RESERVE = 0x8000;     /* 32 KiB */\n";
         assert_eq!(sdk_stack_geometry(script).unwrap(), (0x8000, 0x100));
         assert!(sdk_stack_geometry("STACK_RESERVE = 0x8000;").is_err());
+        let hooked = "STACK_INIT  = RAM_BASE + 0x001FFF00;\nSTACK_RESERVE = DEFINED(STACK_RESERVE_OVERRIDE) ? STACK_RESERVE_OVERRIDE : 0x8000; /* default */\n";
+        assert_eq!(sdk_stack_geometry(hooked).unwrap(), (0x8000, 0x100));
         // The repository's own pin has both lines.
         let ld = root().join(".psoxide/sdk/psoxide.ld");
         if let Ok(text) = fs::read_to_string(ld) {
