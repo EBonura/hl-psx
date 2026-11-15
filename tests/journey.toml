@@ -7,6 +7,11 @@ symbols = [".hlpsx/hl-psx.map"]
 pad = "analog"
 max_ticks = 5900
 
+# Bound to the build these journeys were written against (SIM_NOW is the map's tick counter):
+# rebind.sh rewrites it from a link map.
+[addr]
+SIM_NOW = 0x801ea190
+
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
@@ -197,11 +202,21 @@ min_changes = 5
 kind = "pc_not_stuck"
 window = 120
 
+# The chapter's load ends on a different video frame on each build (a build that loads sooner is
+# further into the map when the next step starts), and the moving props are a function of the map's
+# tick, so the walk starts at a fixed map tick instead of a fixed frame.
+[[step]]
+label = "start the walk at map tick 170"
+sync = "poll"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "eq", value = 170 }
+timeout = 900
+
 [[step]]
 label = "walk through the Interloper entry terrain"
 lstick = [128, 0]
-hold = 150
-wait = 20
+hold = 50
+wait = 7
+sync = "poll"
 
 [[step]]
 checkpoint = "interloper-walk"
@@ -213,7 +228,7 @@ kind = "ram"
 sym = "LOGIC_PLAYER_POS"
 signed = true
 op = "eq"
-value = -166
+value = -136
 [[step.assert]]
 kind = "ram"
 sym = "LOGIC_PLAYER_POS"
@@ -235,7 +250,7 @@ kind = "ram"
 sym = "CAM_CUR"
 signed = true
 op = "eq"
-value = -166
+value = -136
 [[step.assert]]
 kind = "ram"
 sym = "CAM_CUR"
@@ -257,7 +272,7 @@ kind = "ram"
 sym = "CAM_PREV"
 signed = true
 op = "eq"
-value = -166
+value = -136
 [[step.assert]]
 kind = "ram"
 sym = "CAM_PREV"
