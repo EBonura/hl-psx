@@ -65,7 +65,13 @@ pub fn prune(text: &str, coverage_permille: u64, cold: &[&str]) -> (String, Prun
         keep[index] = true;
         covered += blocks[index].1;
     }
+    // The comment lines a profile starts with (the source record `psoxide-pgo stamp` writes) are not
+    // functions: keep them, or `rebind` refuses the pruned profile as one with no record.
     let mut out = String::new();
+    for line in text.lines().take_while(|line| line.starts_with('#')) {
+        out.push_str(line);
+        out.push('\n');
+    }
     let mut kept = 0;
     for (index, block) in blocks.iter().enumerate() {
         if keep[index] {
@@ -127,6 +133,14 @@ cold:10:0
         assert_eq!(pruned.kept, 1);
         assert_eq!(pruned.covered_permille, 600);
         assert_eq!(pruned.total, 4);
+    }
+
+    #[test]
+    fn the_source_record_a_profile_starts_with_survives_the_prune() {
+        let stamped = format!("# psoxide-pgo source: abc\n# psoxide-pgo file: 1 game/src/main.rs\n{PROFILE}");
+        let (text, _) = prune(&stamped, 800, &[]);
+        assert!(text.starts_with("# psoxide-pgo source: abc\n# psoxide-pgo file: 1 game/src/main.rs\n"));
+        assert!(text.contains("hot:600:0"));
     }
 
     #[test]
