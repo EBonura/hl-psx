@@ -800,7 +800,8 @@ const HELP: &str = "hl-psx Rust build\n\n\
                       watermark comes within 25% of game/stack-reserve\n\
            pack       compile and pack dist/hl-psx.bin/.cue\n\
            disc       compile, pack, and copy the disc to --games-dir\n\
-           install    full build and copy the disc to --games-dir\n\
+           install    copy the disc the last build/pack/disc made (dist/) and its link map\n\
+                      to --games-dir; it never cooks or links again\n\
            pgo        profile-guided pack: replay --tape in PSoXide, feed its\n\
                       instruction counts back into the compiler, pack again\n\
            check      locate and validate the Half-Life installation\n\n\
@@ -3575,14 +3576,23 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn install_disc(cue: &Path, games_dir: &Path) -> Result<()> {
+/// The suffix of the link map installed beside the disc (`<name>.map`): the provenance record
+/// names the disc it belongs to, and the next install replaces it.
+const MAP_SIDECAR: &str = ".map";
+
+/// Install the disc `cue` names into `games_dir` with `map` (the link map of its executable)
+/// beside it. The intro cook's record is read from `cooked` (the checkout that cooked the movie).
+fn install_disc(cue: &Path, map: &Path, cooked: &Path, games_dir: &Path) -> Result<()> {
     let source = psx_library::Source::from_git(&root(), GAME_REPOSITORY)?;
     // The intro cook's record (the ffmpeg that decoded the movie and the hashes of what it
     // decoded) rides in the provenance, so a different ffmpeg that decodes differently shows.
     let base =
-        intro::cook_record(&root())?.map(|record| serde_json::json!({ "intro_cook": record }));
+        intro::cook_record(cooked)?.map(|record| serde_json::json!({ "intro_cook": record }));
+    let map_bytes = fs::read(map).map_err(|error| format!("read {}: {error}", map.display()))?;
+    let sidecars = [psx_library::Sidecar::new(MAP_SIDECAR, &map_bytes)];
     let mut request = psx_library::Request::new(cue, games_dir, CANONICAL_GAME_NAME, source)
-        .with_legacy_stem(LEGACY_GAME_STEM);
+        .with_legacy_stem(LEGACY_GAME_STEM)
+        .with_sidecars(&sidecars);
     if let Some(base) = base.as_ref() {
         request = request.with_provenance_base(base);
     }
@@ -3693,6 +3703,27 @@ fn main() -> Result<()> {
         return Err("pgo needs at least one --tape PATH or --script MAP:POLLS to profile".into());
     }
     let repository = root();
+    if options.action == Action::Install {
+        // The disc the last build, pack or disc action made, as it is: installing never cooks
+        // or links again, so what is installed is what was gated.
+        let games_dir = options
+            .games_dir
+            .as_deref()
+            .ok_or("install requires --games-dir PATH or GAMES_DIR")?;
+        let cue = repository.join("dist/hl-psx.cue");
+        let map = repository.join(LINK_MAP);
+        for path in [&cue, &map] {
+            if !path.is_file() {
+                return Err(format!(
+                    "install copies the built disc and its link map, and {} is missing; run \
+                     `cargo hl-build build` (or pack) first",
+                    path.display()
+                )
+                .into());
+            }
+        }
+        return install_disc(&cue, &map, &repository, games_dir);
+    }
     if options.action == Action::Ram {
         if let Some(map) = options.map.as_deref() {
             let text = fs::read_to_string(map)
@@ -3719,12 +3750,7 @@ fn main() -> Result<()> {
     }
     let needs_half_life = matches!(
         options.action,
-        Action::Build
-            | Action::Assets
-            | Action::Models
-            | Action::Audit
-            | Action::Install
-            | Action::Check
+        Action::Build | Action::Assets | Action::Models | Action::Audit | Action::Check
     );
     // Host cookers consume the same draw-surface wire types as the guest.
     // Hydrate before any action that builds those tools; the previous order
@@ -3822,7 +3848,7 @@ fn main() -> Result<()> {
         !options.no_intro
             && matches!(
                 options.action,
-                Action::Build | Action::Pack | Action::Disc | Action::Install | Action::Pgo
+                Action::Build | Action::Pack | Action::Disc | Action::Pgo
             )
             && is_shipping_build(options.features.as_deref()),
         Ordering::Relaxed,
@@ -3857,7 +3883,7 @@ fn main() -> Result<()> {
             &options.scripts,
         )?;
         if let Some(games_dir) = options.games_dir.as_deref() {
-            install_disc(&cue, games_dir)?;
+            install_disc(&cue, &repository.join(LINK_MAP), &repository, games_dir)?;
         }
         return Ok(());
     }
@@ -3911,15 +3937,15 @@ fn main() -> Result<()> {
         // The shipped image, not the telemetry one, is what the stack reserve covers.
         run_stack_gate(&repository, &psoxide, &shipping_cue, None)?;
         if let Some(games_dir) = options.games_dir.as_deref() {
-            install_disc(&cue, games_dir)?;
+            install_disc(&cue, &repository.join(LINK_MAP), &repository, games_dir)?;
         }
         return Ok(());
     }
-    if matches!(options.action, Action::Disc | Action::Install) {
+    if options.action == Action::Disc {
         let games_dir = options
             .games_dir
-            .ok_or("disc/install requires --games-dir PATH or GAMES_DIR")?;
-        install_disc(&cue, &games_dir)?;
+            .ok_or("disc requires --games-dir PATH or GAMES_DIR")?;
+        install_disc(&cue, &repository.join(LINK_MAP), &repository, &games_dir)?;
     }
     Ok(())
 }
@@ -4240,7 +4266,17 @@ mod tests {
         fs::write(dist.join("hl-psx.cue"), "FILE \"hl-psx.bin\" BINARY\n").unwrap();
         fs::write(library.join("hl-psx.bin"), b"disc").unwrap();
         fs::write(library.join("hl-psx.cue"), "FILE \"hl-psx.bin\" BINARY\n").unwrap();
-        install_disc(&dist.join("hl-psx.cue"), &library).unwrap();
+        // A checkout that cooked the intro: its record reaches the provenance.
+        let cooked = scratch.join("checkout");
+        fs::create_dir_all(intro::dir(&cooked)).unwrap();
+        fs::write(
+            intro::dir(&cooked).join("cook-record.json"),
+            br#"{"ffmpeg": "ffmpeg version 8.0.1"}"#,
+        )
+        .unwrap();
+        let map = scratch.join("hl-psx.map");
+        fs::write(&map, b"VMA LMA Size Align Out In Symbol\n").unwrap();
+        install_disc(&dist.join("hl-psx.cue"), &map, &cooked, &library).unwrap();
         let mut names: Vec<_> = fs::read_dir(&library)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -4251,6 +4287,7 @@ mod tests {
             [
                 "Half-Life (hl-psx).bin",
                 "Half-Life (hl-psx).cue",
+                "Half-Life (hl-psx).map",
                 "Half-Life (hl-psx).provenance.json",
             ]
         );
@@ -4260,6 +4297,11 @@ mod tests {
         .unwrap();
         assert_eq!(record["source"]["repository"], GAME_REPOSITORY);
         assert_eq!(record["artifacts"]["bin"]["bytes"], 4);
+        assert_eq!(record["intro_cook"]["ffmpeg"], "ffmpeg version 8.0.1");
+        assert_eq!(
+            fs::read(library.join("Half-Life (hl-psx).map")).unwrap(),
+            fs::read(&map).unwrap()
+        );
         fs::remove_dir_all(&scratch).unwrap();
     }
 
