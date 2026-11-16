@@ -137,7 +137,7 @@ fn intro_stage() -> PathBuf {
 /// Mirror `intro/` and the hydrated SDK under the stage and return the stage's `intro/`.
 fn stage_intro(repository: &Path, psoxide: &Path) -> Result<(PathBuf, PathBuf)> {
     let root = intro_stage();
-    let (staged_intro, staged_sdk) = (root.join("intro"), root.join("psoxide"));
+    let (staged_intro, staged_sdk) = (root.join("intro"), root.join(".psoxide"));
     fs::create_dir_all(&root)?;
     // Sources: replace wholesale (small); keep `target/` so cargo stays incremental.
     fs::create_dir_all(&staged_intro)?;
