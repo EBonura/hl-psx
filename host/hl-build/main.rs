@@ -770,7 +770,11 @@ struct Options {
     no_intro: bool,
 }
 
+/// The library name before the canonical one (flat `hl-psx.bin`); an install removes a stale pair.
+const LEGACY_GAME_STEM: &str = "hl-psx";
 const CANONICAL_GAME_NAME: &str = "Half-Life (hl-psx)";
+/// The GitHub repository recorded in the installed provenance.
+const GAME_REPOSITORY: &str = "EBonura/hl-psx";
 
 const HELP: &str = "hl-psx Rust build\n\n\
          USAGE:\n\
@@ -2361,6 +2365,29 @@ fn compile_collect(
     }
 }
 
+/// The delay-slot filler flags every guest builds with. The SDK owns the set
+/// (`PSX_DELAY_SLOT_FLAGS` in tools/sdk-examples.mk), so it is read from the
+/// hydrated SDK rather than copied into each game's cargo config.
+fn sdk_delay_slot_flags(psoxide: &Path) -> Result<Vec<String>> {
+    let path = psoxide.join("tools/sdk-examples.mk");
+    let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let flags = text
+        .lines()
+        .find_map(|line| line.strip_prefix("PSX_DELAY_SLOT_FLAGS"))
+        .map(|value| {
+            value
+                .split(|c: char| c.is_whitespace() || c == ',' || c == '"')
+                .filter(|word| word.starts_with("-C"))
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if flags.is_empty() {
+        return Err(format!("no PSX_DELAY_SLOT_FLAGS in {}", path.display()).into());
+    }
+    Ok(flags)
+}
+
 fn compile_game(
     repository: &Path,
     psoxide: &Path,
@@ -2376,7 +2403,7 @@ fn compile_game(
     }
     // `--config` appends to the rustflags in game/.cargo/config.toml; an
     // exported RUSTFLAGS would replace them.
-    let mut flags = Vec::new();
+    let mut flags = sdk_delay_slot_flags(psoxide)?;
     if is_shipping_build(features) {
         // Every panic, bounds check and overflow check becomes a bare
         // `break`, so core's formatting machinery, the panic messages and
@@ -3435,29 +3462,15 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn install_disc(cue: &Path, games_dir: &Path) -> Result<()> {
-    let game_name = CANONICAL_GAME_NAME;
-    let image = cue.with_extension("bin");
-    let cue_text = fs::read_to_string(cue)?;
-    let mut replaced = false;
-    let mut output = String::new();
-    for line in cue_text.lines() {
-        if !replaced && line.trim_start().starts_with("FILE ") {
-            output.push_str(&format!("FILE \"{game_name}.bin\" BINARY\n"));
-            replaced = true;
-        } else {
-            output.push_str(line);
-            output.push('\n');
-        }
+    let source = psx_library::Source::from_git(&root(), GAME_REPOSITORY)?;
+    let installed = psx_library::install(
+        &psx_library::Request::new(cue, games_dir, CANONICAL_GAME_NAME, source)
+            .with_legacy_stem(LEGACY_GAME_STEM),
+    )?;
+    for path in &installed.removed {
+        println!("REMOVED stale {}", path.display());
     }
-    if !replaced {
-        return Err(format!("{} has no FILE directive", cue.display()).into());
-    }
-    fs::create_dir_all(games_dir)?;
-    let target_bin = games_dir.join(format!("{game_name}.bin"));
-    let target_cue = games_dir.join(format!("{game_name}.cue"));
-    fs::copy(&image, &target_bin)?;
-    fs::write(&target_cue, output)?;
-    println!("INSTALLED -> {}", target_cue.display());
+    println!("INSTALLED -> {}", installed.cue.display());
     Ok(())
 }
 
@@ -4092,5 +4105,39 @@ mod tests {
         let (stored, outcome) = encode_world_pack_chunk(&raw, Some(raw.len()));
         assert_eq!(outcome, CompressionOutcome::UnsafeInPlace);
         assert_eq!(stored, raw);
+    }
+
+    #[test]
+    fn install_disc_writes_the_library_name_a_record_and_clears_the_flat_pair() {
+        let scratch = env::temp_dir().join(format!("hl-install-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&scratch);
+        let (dist, library) = (scratch.join("dist"), scratch.join("library"));
+        fs::create_dir_all(&dist).unwrap();
+        fs::create_dir_all(&library).unwrap();
+        fs::write(dist.join("hl-psx.bin"), b"disc").unwrap();
+        fs::write(dist.join("hl-psx.cue"), "FILE \"hl-psx.bin\" BINARY\n").unwrap();
+        fs::write(library.join("hl-psx.bin"), b"disc").unwrap();
+        fs::write(library.join("hl-psx.cue"), "FILE \"hl-psx.bin\" BINARY\n").unwrap();
+        install_disc(&dist.join("hl-psx.cue"), &library).unwrap();
+        let mut names: Vec<_> = fs::read_dir(&library)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "Half-Life (hl-psx).bin",
+                "Half-Life (hl-psx).cue",
+                "Half-Life (hl-psx).provenance.json",
+            ]
+        );
+        let record: serde_json::Value = serde_json::from_slice(
+            &fs::read(library.join("Half-Life (hl-psx).provenance.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["source"]["repository"], GAME_REPOSITORY);
+        assert_eq!(record["artifacts"]["bin"]["bytes"], 4);
+        fs::remove_dir_all(&scratch).unwrap();
     }
 }
