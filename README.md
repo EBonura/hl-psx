@@ -230,7 +230,8 @@ evicts itself. Every later build places the functions with that layout and
 links twice (the code is identical, only its addresses move); a layout that no
 longer binds to the code fails the build, naming the unbound functions (the SDK's
 `psoxide-pgo place` gate: 98% of the profile bound and no single function over 1%
-left out). Collect it again whenever the profile is. The shipped profile has none: a layout from the chapter-two
+left out). Collect it again whenever the profile or the code changes. The shipped layout
+comes from `scripts/collect-layout.sh` over eleven maps: a layout from the chapter-two
 tape alone made c1a2b 14% slower when it bound, so do not pass `--polls` unless
 the layout is collected over several maps.
 
