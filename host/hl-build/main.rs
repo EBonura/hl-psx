@@ -3572,10 +3572,16 @@ fn home_dir() -> Option<PathBuf> {
 
 fn install_disc(cue: &Path, games_dir: &Path) -> Result<()> {
     let source = psx_library::Source::from_git(&root(), GAME_REPOSITORY)?;
-    let installed = psx_library::install(
-        &psx_library::Request::new(cue, games_dir, CANONICAL_GAME_NAME, source)
-            .with_legacy_stem(LEGACY_GAME_STEM),
-    )?;
+    // The intro cook's record (the ffmpeg that decoded the movie and the hashes of what it
+    // decoded) rides in the provenance, so a different ffmpeg that decodes differently shows.
+    let base =
+        intro::cook_record(&root())?.map(|record| serde_json::json!({ "intro_cook": record }));
+    let mut request = psx_library::Request::new(cue, games_dir, CANONICAL_GAME_NAME, source)
+        .with_legacy_stem(LEGACY_GAME_STEM);
+    if let Some(base) = base.as_ref() {
+        request = request.with_provenance_base(base);
+    }
+    let installed = psx_library::install(&request)?;
     for path in &installed.removed {
         println!("REMOVED stale {}", path.display());
     }

@@ -29,6 +29,8 @@ mod loudness;
 use psx_str_cook::stream::{encode, Options, Report, Sound};
 use psx_str_cook::y4m;
 
+/// The cook's record beside `INTRO.STR` (see [`record`]).
+const RECORD_FILE: &str = "cook-record.json";
 /// Exit status for "no intro on this machine".
 const NO_INTRO: u8 = 3;
 
@@ -101,13 +103,88 @@ fn startup_movie(valve: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Whether `ffmpeg` runs: the decoder of the install's WebM, the one tool the
-/// cook needs from outside the SDK.
-fn ffmpeg_present() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .is_ok_and(|out| out.status.success())
+/// The first line of `ffmpeg -version` (the decoder of the install's WebM, the one tool the
+/// cook needs from outside the SDK), or `None` when it does not run. The version is not
+/// pinned: it is the user's ffmpeg, recorded so that a different one is visible.
+fn ffmpeg_version() -> Option<String> {
+    let out = Command::new("ffmpeg").arg("-version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    Some(text.lines().next().unwrap_or("").trim().to_string())
+}
+
+/// SHA-256 of a file, as lowercase hex, and its length.
+fn sha256_file(path: &Path) -> Result<(String, u64), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let (mut hasher, mut buffer, mut total) = (Sha256::new(), vec![0u8; 1 << 16], 0u64);
+    loop {
+        let n = file
+            .read(&mut buffer)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+        total += n as u64;
+    }
+    Ok((
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        total,
+    ))
+}
+
+/// What ffmpeg handed the encoder: the decoded pictures and sound, hashed, so that another ffmpeg
+/// that decodes differently shows up as a different record rather than a silently different disc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Decoded {
+    video: (String, u64),
+    sound: (String, u64),
+}
+
+/// A JSON string literal.
+fn json_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The record of this cook: the ffmpeg that decoded, the hashes of what it decoded and of the
+/// stream written. The build keeps it in the installed disc's provenance.
+fn record(version: &str, source: &str, decoded: &Decoded, stream: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let stream_sha: String = Sha256::digest(stream)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!(
+        "{{\n  \"ffmpeg\": {},\n  \"source\": {},\n  \"decoded_video_y4m\": {{\"sha256\": \"{}\", \"bytes\": {}}},\n  \
+         \"decoded_sound_wav\": {{\"sha256\": \"{}\", \"bytes\": {}}},\n  \
+         \"intro_str\": {{\"sha256\": \"{}\", \"bytes\": {}}}\n}}\n",
+        json_string(version),
+        json_string(source),
+        decoded.video.0,
+        decoded.video.1,
+        decoded.sound.0,
+        decoded.sound.1,
+        stream_sha,
+        stream.len()
+    )
 }
 
 /// Runs `ffmpeg` with `args` after the quiet, non-interactive options.
@@ -176,7 +253,10 @@ fn master(pcm: &[f64], hz: f64) -> Result<(Vec<f64>, Mastering), String> {
 /// no centre mix to stereo (-3 dB), and the sound takes half the sectors a
 /// stereo stream would, which go to the picture instead. The drive plays a
 /// mono XA stream to both speakers.
-fn encode_movie(movie: &Path, work: &Path) -> Result<(Vec<u8>, Report, Mastering), String> {
+fn encode_movie(
+    movie: &Path,
+    work: &Path,
+) -> Result<(Vec<u8>, Report, Mastering, Decoded), String> {
     std::fs::create_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
     let (video, sound) = (work.join("video.y4m"), work.join("sound.wav"));
     let result = (|| {
@@ -204,6 +284,10 @@ fn encode_movie(movie: &Path, work: &Path) -> Result<(Vec<u8>, Report, Mastering
             "wav".as_ref(),
             sound.as_os_str(),
         ])?;
+        let decoded = Decoded {
+            video: sha256_file(&video)?,
+            sound: sha256_file(&sound)?,
+        };
         let wav = std::fs::read(&sound).map_err(|e| format!("{}: {e}", sound.display()))?;
         let (rate, channels) =
             psx_audio_cook::wav::read_channels(&wav).map_err(|e| format!("sound: {e:?}"))?;
@@ -216,7 +300,7 @@ fn encode_movie(movie: &Path, work: &Path) -> Result<(Vec<u8>, Report, Mastering
         let mut options = Options::default();
         options.audio_delay = AUDIO_DELAY_SECTORS;
         let (stream, report) = encode(pictures, Some(&Sound::new(rate, vec![mastered])), &options)?;
-        Ok((stream, report, mastering))
+        Ok((stream, report, mastering, decoded))
     })();
     std::fs::remove_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
     result
@@ -258,16 +342,16 @@ fn run() -> Result<ExitCode, String> {
             return Ok(ExitCode::from(NO_INTRO));
         }
     };
-    if !ffmpeg_present() {
+    let Some(version) = ffmpeg_version() else {
         eprintln!(
             "hl-intro-cook: ffmpeg not found on the PATH; it decodes the install's startup movie \
              (valve.webm: VP9 and Opus) for the SDK's encoder"
         );
         return Ok(ExitCode::from(NO_INTRO));
-    }
+    };
     std::fs::create_dir_all(&args.out).map_err(|e| format!("{}: {e}", args.out.display()))?;
     let target = args.out.join("INTRO.STR");
-    let (raw, report, mastering) = encode_movie(&movie, &args.out.join("work"))?;
+    let (raw, report, mastering, decoded) = encode_movie(&movie, &args.out.join("work"))?;
     std::fs::write(&target, &raw).map_err(|e| format!("{}: {e}", target.display()))?;
     let name = movie
         .file_name()
@@ -275,6 +359,13 @@ fn run() -> Result<ExitCode, String> {
         .unwrap_or("startup movie");
     std::fs::write(args.out.join("movie.rs"), constants(&report, name))
         .map_err(|e| format!("movie.rs: {e}"))?;
+    let cooked = record(&version, name, &decoded, &raw);
+    std::fs::write(args.out.join(RECORD_FILE), &cooked)
+        .map_err(|e| format!("{RECORD_FILE}: {e}"))?;
+    eprintln!(
+        "hl-intro-cook: decoded by {version}: video y4m {} ({} bytes), sound wav {} ({} bytes)",
+        decoded.video.0, decoded.video.1, decoded.sound.0, decoded.sound.1
+    );
     eprintln!(
         "hl-intro-cook: sound {:.1} LUFS in the install, {:+.1} dB gain to reach {:.1}, {:.1} LUFS and {:.1} dBFS peak after \
          the limiter (at most {:.1} dB, {:.1}% of the time)",
@@ -336,6 +427,53 @@ mod tests {
         ] {
             assert!(text.contains(want), "{want}\n{text}");
         }
+    }
+
+    #[test]
+    fn the_record_names_the_ffmpeg_and_hashes_what_it_decoded() {
+        let decoded = Decoded {
+            video: ("a".repeat(64), 123),
+            sound: ("b".repeat(64), 45),
+        };
+        let text = record("ffmpeg version \"8.0.1\" x", "valve.webm", &decoded, b"abc");
+        assert!(
+            text.contains(r#""ffmpeg": "ffmpeg version \"8.0.1\" x""#),
+            "{text}"
+        );
+        assert!(text.contains(&format!(
+            r#""decoded_video_y4m": {{"sha256": "{}", "bytes": 123}}"#,
+            "a".repeat(64)
+        )));
+        assert!(text.contains(&format!(
+            r#""decoded_sound_wav": {{"sha256": "{}", "bytes": 45}}"#,
+            "b".repeat(64)
+        )));
+        // SHA-256 of "abc".
+        assert!(text.contains(
+            r#""intro_str": {"sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "bytes": 3}"#
+        ));
+        // A different decode changes the record.
+        let other = Decoded {
+            video: ("c".repeat(64), 123),
+            ..decoded.clone()
+        };
+        assert_ne!(
+            text,
+            record("ffmpeg version \"8.0.1\" x", "valve.webm", &other, b"abc")
+        );
+    }
+
+    #[test]
+    fn a_file_is_hashed_whole() {
+        let path = std::env::temp_dir().join(format!("hl-intro-cook-sha-{}", std::process::id()));
+        std::fs::write(&path, b"abc").unwrap();
+        let (sha, bytes) = sha256_file(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(bytes, 3);
+        assert_eq!(
+            sha,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

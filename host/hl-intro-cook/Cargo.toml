@@ -15,5 +15,7 @@ description = "Encodes the startup movie of the user's own Half-Life install for
 psx-str-cook = { path = "../../.psoxide/crates/psx-str-cook" }
 psx-audio-cook = { path = "../../.psoxide/crates/psx-audio-cook" }
 
+sha2 = "0.10"
+
 [profile.release]
 codegen-units = 1

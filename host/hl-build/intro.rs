@@ -75,6 +75,18 @@ pub fn cook(repository: &Path, valve: &Path) -> Result<bool> {
     }
 }
 
+/// The cook's record of this movie (`cook-record.json`: ffmpeg version, hashes of the decoded
+/// pictures and sound and of `INTRO.STR`), if the checkout has one.
+pub fn cook_record(repository: &Path) -> Result<Option<serde_json::Value>> {
+    let path = dir(repository).join("cook-record.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let record = serde_json::from_slice(&fs::read(&path)?)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(Some(record))
+}
+
 /// 32-bit FNV-1a, the chain loader's payload checksum.
 pub fn fnv1a(bytes: &[u8]) -> u32 {
     bytes.iter().fold(0x811C_9DC5u32, |hash, byte| {
@@ -275,6 +287,24 @@ mod tests {
         bytes[0x18..0x1C].copy_from_slice(&address.to_le_bytes());
         bytes[0x1C..0x20].copy_from_slice(&size.to_le_bytes());
         bytes
+    }
+
+    #[test]
+    fn the_cook_record_is_read_when_present_and_refused_when_broken() {
+        let root = env::temp_dir().join(format!("hl-cook-record-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        assert!(cook_record(&root).unwrap().is_none());
+        fs::create_dir_all(dir(&root)).unwrap();
+        fs::write(
+            dir(&root).join("cook-record.json"),
+            br#"{"ffmpeg": "ffmpeg version 8.0.1", "decoded_video_y4m": {"sha256": "ab", "bytes": 1}}"#,
+        )
+        .unwrap();
+        let record = cook_record(&root).unwrap().unwrap();
+        assert_eq!(record["ffmpeg"], "ffmpeg version 8.0.1");
+        fs::write(dir(&root).join("cook-record.json"), b"{").unwrap();
+        assert!(cook_record(&root).is_err());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
