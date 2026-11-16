@@ -12,7 +12,16 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 name = "hl-intro-cook"
 version = "0.1.0"
 dependencies = [
- "psx-fmv",
+ "psx-audio-cook",
+ "psx-str-cook",
+]
+
+[[package]]
+name = "psx-audio-cook"
+version = "0.1.0"
+dependencies = [
+ "psx-hw",
+ "psxed-format",
 ]
 
 [[package]]
@@ -85,6 +94,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-str-cook"
+version = "0.1.0"
+dependencies = [
+ "psx-audio-cook",
+ "psx-fmv",
+ "psx-hw",
+]
+
+[[package]]
 name = "psx-tick"
 version = "0.1.0"
 
@@ -96,3 +114,7 @@ dependencies = [
  "psx-io",
  "psx-math",
 ]
+
+[[package]]
+name = "psxed-format"
+version = "0.1.0"

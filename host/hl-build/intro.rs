@@ -11,8 +11,9 @@
 //!
 //! The movie comes from the player's own install (`host/hl-intro-cook`) and
 //! lives, with everything derived from it, under `.hlpsx/intro/`, never in
-//! the repository. A machine without the encoder (or an install without a
-//! startup movie) builds the disc without an intro stage.
+//! the repository. The SDK's encoder (`psx-str-cook`) writes it from the install's `valve.webm`,
+//! which `ffmpeg` decodes. A machine without `ffmpeg` (or an install without a startup movie)
+//! cannot cook the intro, and the build stops unless `--without-intro` is said.
 
 use super::*;
 
@@ -37,11 +38,11 @@ pub fn cooked(repository: &Path) -> Option<PathBuf> {
     (dir.join("INTRO.STR").is_file() && dir.join("movie.rs").is_file()).then_some(dir)
 }
 
-/// Encode the install's startup movie. Without the encoder or the movie the
-/// build stops (`--without-intro` is the explicit way to leave the stage off, and then this is
+/// Encode the install's startup movie with the SDK's encoder (`ffmpeg` decodes the install's
+/// WebM for it). Without `ffmpeg` or the movie the build stops (`--without-intro` is the explicit way to leave the stage off, and then this is
 /// not called); the earlier cook is removed first, so a disc cannot carry a movie that no
 /// longer matches the install.
-pub fn cook(repository: &Path, valve: &Path, psxavenc: Option<&Path>) -> Result<bool> {
+pub fn cook(repository: &Path, valve: &Path) -> Result<bool> {
     let manifest = repository.join("host/hl-intro-cook/Cargo.toml");
     run(
         Command::new(cargo())
@@ -52,21 +53,22 @@ pub fn cook(repository: &Path, valve: &Path, psxavenc: Option<&Path>) -> Result<
     )?;
     let out = dir(repository);
     println!("\n==> cook the intro movie");
-    let mut command = Command::new(executable(
+    let status = Command::new(executable(
         repository.join("host/hl-intro-cook/target/release/hl-intro-cook"),
-    ));
-    command.arg("--valve").arg(valve).arg("--out").arg(&out);
-    if let Some(psxavenc) = psxavenc {
-        command.arg("--psxavenc").arg(psxavenc);
-    }
-    let status = command.status()?;
+    ))
+    .arg("--valve")
+    .arg(valve)
+    .arg("--out")
+    .arg(&out)
+    .status()?;
     match status.code() {
         Some(0) => Ok(true),
         Some(NO_INTRO) => {
             let _ = fs::remove_dir_all(&out);
-            Err("the startup movie could not be cooked: no psxavenc was found (pass --psxavenc PATH \
-                 or set PSXAVENC) or the install has no valve.webm. A disc is not made without the \
-                 intro unless you say --without-intro."
+            Err("the startup movie could not be cooked: ffmpeg was not found on the PATH (it decodes \
+                 valve.webm for the SDK's encoder) or the install has no startup movie; the cook \
+                 said which just above. A disc is not made without the intro unless you say \
+                 --without-intro."
                 .into())
         }
         _ => Err(format!("cook the intro movie failed with {status}").into()),

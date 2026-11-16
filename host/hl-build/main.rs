@@ -773,8 +773,6 @@ struct Options {
     scripts: Vec<(usize, u32)>,
     /// Pack the game alone, without the intro stage (`--without-intro`; `--no-intro` is the same).
     no_intro: bool,
-    /// The `psxavenc` the intro cooker encodes the movie with (`--psxavenc`, else `PSXAVENC`, else the PATH).
-    psxavenc: Option<PathBuf>,
 }
 
 /// The library name before the canonical one (flat `hl-psx.bin`); an install removes a stale pair.
@@ -820,8 +818,8 @@ const HELP: &str = "hl-psx Rust build\n\n\
            --items            ram: list every placed section instead of the summary\n\
            --without-intro    leave the startup-movie stage off the disc, so the game boots\n\
                               directly (stack, regress and the journeys' disc are built so);\n\
-                              without it a missing psxavenc stops the build (--no-intro: same)\n\
-           --psxavenc PATH    the psxavenc that encodes the startup movie (or set PSXAVENC)\n\
+                              without it a missing ffmpeg (it decodes the movie) or a missing\n\
+                              startup movie stops the build (--no-intro: same)\n\
            --map PATH         ram: report this link map (default .hlpsx/hl-psx.map) without linking\n\
            --polls FROM..TO   gameplay window (port-1 polls) of the preceding --tape; with one pgo\n\
                               also collects the I-cache layout (game/pgo/hl-psx.layout)\n\n\
@@ -920,7 +918,6 @@ fn parse_args() -> Options {
         maps: None,
         scripts: Vec::new(),
         no_intro: false,
-        psxavenc: None,
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -938,7 +935,6 @@ fn parse_args() -> Options {
             }
             "--items" => options.items = true,
             "--without-intro" | "--no-intro" => options.no_intro = true,
-            "--psxavenc" => options.psxavenc = Some(PathBuf::from(value(&mut args))),
             "--script" => {
                 let text = value(&mut args).to_string_lossy().into_owned();
                 match text
@@ -2815,9 +2811,9 @@ fn pack_disc_into(
     let movie = intro.then(|| intro::cooked(repository)).flatten();
     if intro && movie.is_none() {
         return Err(
-            "no cooked startup movie under .hlpsx/intro: cook it (build or assets with psxavenc, \
-             --psxavenc PATH or PSXAVENC) or say --without-intro; a disc is never made without \
-             the intro by accident"
+            "no cooked startup movie under .hlpsx/intro: cook it (build or assets; ffmpeg \
+             must be on the PATH) or say --without-intro; a disc is never made without the intro \
+             by accident"
                 .into(),
         );
     }
@@ -3782,7 +3778,7 @@ fn main() -> Result<()> {
         // The startup movie sits beside the cooked assets, outside data/ and
         // so outside the cook provenance: it shapes no cooked byte.
         if !options.no_intro {
-            intro::cook(&repository, &valve, options.psxavenc.as_deref())?;
+            intro::cook(&repository, &valve)?;
         }
     }
     if options.action == Action::Assets {

@@ -1,51 +1,37 @@
 //! Encodes the movie Half-Life plays at startup for the intro program.
 //!
 //! The game's own `media/StartupVids.txt` names it (one `media/<file>` line);
-//! the cook reads that file from the user's install, encodes it with
-//! `psxavenc` as a 320x240, 15 frames a second, bitstream version 2 STR with
-//! interleaved XA-ADPCM audio, then decodes every frame once with the SDK's
-//! bitstream decoder and writes what the guest has to size its buffers for.
-//! Nothing it writes belongs in the repository: the movie and everything
-//! derived from it stay under `.hlpsx/intro/` beside the other build output.
+//! the cook reads that file from the user's install. `ffmpeg` decodes it (the
+//! one outside step: the movie is VP9 and Opus in a WebM) to a Y4M picture
+//! stream and a WAV; the SDK's encoder, `psx-str-cook`, turns those into a
+//! 320x240, 15 frames a second, bitstream version 2 STR with interleaved
+//! XA-ADPCM audio, and its report gives what the guest has to size its
+//! buffers for. Nothing it writes belongs in the repository: the movie and
+//! everything derived from it stay under `.hlpsx/intro/` beside the other
+//! build output.
 //!
 //! ```text
-//! hl-intro-cook --valve DIR --out DIR [--psxavenc PATH]
+//! hl-intro-cook --valve DIR --out DIR
 //! ```
 //!
 //! Writes `INTRO.STR` (raw 2336-byte sectors for `mkisopsx --xa-file`) and
-//! `movie.rs` (constants the intro program includes). `psxavenc` comes from
-//! `--psxavenc`, then `PSXAVENC`, then the `PATH`. Exit status 3 means the
-//! install has no startup movie or the encoder is missing, which is not an
-//! error for the caller: the disc is then built without an intro.
+//! `movie.rs` (constants the intro program includes). Exit status 3 means the
+//! install has no startup movie or `ffmpeg` is not on the `PATH`, which is not
+//! an error for the caller: the disc is then built without an intro (or the
+//! build stops, as the caller decides).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 mod limiter;
 mod loudness;
-mod mux;
-mod xa;
 
-use psx_fmv::bitstream as bs;
-use psx_fmv::stream::{Chunk, FrameAssembler, CHUNK_PAYLOAD_BYTES, MAX_CHUNKS};
+use psx_str_cook::stream::{encode, Options, Report, Sound};
+use psx_str_cook::y4m;
 
-/// Raw XA sector record: 8-byte subheader and 2328 bytes.
-const XA_SECTOR: usize = 2336;
-const SUBMODE_AUDIO: u8 = 0x04;
-const SUBMODE_FORM2: u8 = 0x20;
-
-/// Picture and rate the intro plays at.
-const WIDTH: u16 = 320;
-const HEIGHT: u16 = 240;
-const FPS: &str = "15";
-/// XA file and channel the movie's audio is filed under (psxavenc `-F`, `-C`).
-const XA_FILE: u8 = 1;
-const XA_CHANNEL: u8 = 0;
 /// Exit status for "no intro on this machine".
 const NO_INTRO: u8 = 3;
 
-/// Sample rate of the movie's sound on the disc.
-const SOUND_HZ: f64 = 37_800.0;
 /// VBlanks from a picture's last sector to its flip, as the intro asks the
 /// player (`Config::latency_vblanks`); written to `movie.rs`.
 const LATENCY_VBLANKS: u32 = 5;
@@ -61,135 +47,17 @@ const LATENCY_VBLANKS: u32 = 5;
 /// limiter's ceiling and the limiter does nothing; it remains as the guard for
 /// another install's movie.
 const PLAYBACK_LOSS_DB: f64 = 0.9;
-/// Sectors the sound is moved later behind the encoder's placement, so that
-/// it plays together with the picture. The picture shows its frame the
+/// Sectors the sound is moved later behind where the encoder starts it with no
+/// delay (sector 0), so that it plays together with the picture. The picture shows its frame the
 /// headroom of [`LATENCY_VBLANKS`] after the frame's last sector arrives, and
 /// a frame is read in 10 sectors (150 a second, 15 frames a second), so the
 /// sound has to wait 10 sectors plus 5 / 59.94 s (12.5 sectors) behind where
-/// the encoder starts it; 1.5 more sectors (10 ms) are what the first frame's
+/// the sound starts; 1.5 more sectors (10 ms) are what the first frame's
 /// decode and the flip to the next VBlank add, measured on the emulator.
 const AUDIO_DELAY_SECTORS: usize = 24;
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Movie {
-    frames: u32,
-    width: u16,
-    height: u16,
-    max_chunks: u16,
-    rle_words: usize,
-    xa: Option<(u8, u8)>,
-    video_sectors: u32,
-    audio_sectors: u32,
-    other_sectors: u32,
-    versions: [u32; 4],
-}
-
-/// Decodes every frame of `raw` (2336-byte sectors) and returns the figures
-/// the guest needs, or the first reason the player could not show it.
-fn measure(raw: &[u8]) -> Result<Movie, String> {
-    if raw.is_empty() || !raw.len().is_multiple_of(XA_SECTOR) {
-        return Err(format!(
-            "{} bytes is not a whole number of {XA_SECTOR}-byte sectors",
-            raw.len()
-        ));
-    }
-    let mut m = Movie::default();
-    let mut asm = FrameAssembler::new();
-    let mut frame = vec![0u8; MAX_CHUNKS as usize * CHUNK_PAYLOAD_BYTES];
-    let mut rle = vec![0u16; 1 << 17];
-    for (i, sector) in raw.chunks_exact(XA_SECTOR).enumerate() {
-        let (sub, data) = sector.split_at(8);
-        let submode = sub[2];
-        if submode & SUBMODE_AUDIO != 0 {
-            if submode & SUBMODE_FORM2 == 0 {
-                return Err(format!("sector {i}: an audio sector outside Form 2"));
-            }
-            let at = (sub[0], sub[1]);
-            match m.xa {
-                None => m.xa = Some(at),
-                Some(xa) if xa != at => {
-                    return Err(format!("sector {i}: audio from {at:?}, earlier {xa:?}"))
-                }
-                Some(_) => {}
-            }
-            m.audio_sectors += 1;
-            continue;
-        }
-        let user = &data[..2048];
-        let Some(chunk) = Chunk::parse(user) else {
-            m.other_sectors += 1;
-            continue;
-        };
-        if submode & SUBMODE_FORM2 != 0 {
-            return Err(format!("sector {i}: a video sector in Form 2"));
-        }
-        m.video_sectors += 1;
-        m.max_chunks = m.max_chunks.max(chunk.count);
-        let Some(done) = asm.add(user, &mut frame) else {
-            continue;
-        };
-        if done.number != m.frames + 1 {
-            return Err(format!(
-                "sector {i}: frame {} follows frame {}",
-                done.number, m.frames
-            ));
-        }
-        if m.frames == 0 {
-            (m.width, m.height) = (done.width, done.height);
-        } else if (done.width, done.height) != (m.width, m.height) {
-            return Err(format!(
-                "frame {}: {}x{}, earlier frames {}x{}",
-                done.number, done.width, done.height, m.width, m.height
-            ));
-        }
-        m.frames = done.number;
-        let bytes = &frame[..(done.size as usize).min(frame.len())];
-        let header =
-            bs::Header::parse(bytes).map_err(|e| format!("frame {}: {e:?}", done.number))?;
-        m.versions[(header.version as usize).min(3)] += 1;
-        let macroblocks = (done.width as u32 / 16) * (done.height as u32 / 16);
-        let words = bs::decode_frame(bytes, &mut rle, macroblocks, macroblocks, &mut || {})
-            .map_err(|e| format!("frame {}: {e:?}", done.number))?;
-        m.rle_words = m.rle_words.max(words);
-    }
-    if asm.dropped != 0 {
-        return Err(format!("{} frames have sectors missing", asm.dropped));
-    }
-    if m.frames == 0 || (m.width, m.height) != (WIDTH, HEIGHT) {
-        return Err(format!(
-            "{} frames of {}x{} is not a {WIDTH}x{HEIGHT} movie",
-            m.frames, m.width, m.height
-        ));
-    }
-    if m.xa.is_none() {
-        return Err("the encoder wrote no audio".into());
-    }
-    Ok(m)
-}
-
-/// Where the data of a sector record ends and what the disc builder rebuilds
-/// begins: after the 2048 bytes of a Form 1 sector's user data, and after the
-/// 18 sound groups of 128 bytes of a Form 2 audio sector.
-const FORM1_TAIL: std::ops::Range<usize> = 8 + 2048..XA_SECTOR;
-const AUDIO_TAIL: std::ops::Range<usize> = 8 + 18 * 128..XA_SECTOR;
-
-/// Zero what follows each sector's data: the encoder leaves it as whatever its
-/// memory held, which makes the disc differ from one cook of the same movie to
-/// the next, and the disc builder rebuilds it (checksums, and for audio 20
-/// unused bytes the drive never plays) at the sector's final address.
-fn zero_sector_tails(raw: &mut [u8]) {
-    for sector in raw.chunks_exact_mut(XA_SECTOR) {
-        let tail = if sector[2] & SUBMODE_AUDIO != 0 {
-            AUDIO_TAIL
-        } else {
-            FORM1_TAIL
-        };
-        sector[tail].fill(0);
-    }
-}
-
 /// The generated constants the intro program includes.
-fn constants(m: &Movie, source: &str) -> String {
+fn constants(report: &Report, source: &str) -> String {
     format!(
         "// Generated by host/hl-intro-cook from the user's Half-Life install ({source}).\n\
          pub const FRAMES: u32 = {};\n\
@@ -199,7 +67,13 @@ fn constants(m: &Movie, source: &str) -> String {
          pub const RLE_WORDS: usize = {};\n\
          pub const XA: Option<(u8, u8)> = {:?};\n\
          pub const LATENCY_VBLANKS: u32 = {};\n",
-        m.frames, m.width, m.height, m.max_chunks, m.rle_words, m.xa, LATENCY_VBLANKS
+        report.frames,
+        report.size.0,
+        report.size.1,
+        report.max_chunks,
+        report.rle_words,
+        report.xa,
+        LATENCY_VBLANKS
     )
 }
 
@@ -227,51 +101,27 @@ fn startup_movie(valve: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn find_psxavenc(explicit: Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = explicit.or_else(|| std::env::var_os("PSXAVENC").map(PathBuf::from)) {
-        return path.is_file().then_some(path);
-    }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join("psxavenc"))
-            .find(|candidate| candidate.is_file())
-    })
+/// Whether `ffmpeg` runs: the decoder of the install's WebM, the one tool the
+/// cook needs from outside the SDK.
+fn ffmpeg_present() -> bool {
+    Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_ok_and(|out| out.status.success())
 }
 
-/// Runs the encoder with `args`.
-fn run_psxavenc(psxavenc: &Path, args: &[&std::ffi::OsStr]) -> Result<(), String> {
-    let status = Command::new(psxavenc)
-        .arg("-q")
+/// Runs `ffmpeg` with `args` after the quiet, non-interactive options.
+fn run_ffmpeg(args: &[&std::ffi::OsStr]) -> Result<(), String> {
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-y"])
         .args(args)
         .status()
-        .map_err(|e| format!("{}: {e}", psxavenc.display()))?;
+        .map_err(|e| format!("ffmpeg: {e}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} failed: {status}", psxavenc.display()))
+        Err(format!("ffmpeg failed: {status}"))
     }
-}
-
-/// The encoder as the XA options of one audio pass: mono 37.8 kHz, `bits`
-/// per sample, filed under the movie's file and channel.
-fn xa_args(bits: &'static str) -> Vec<std::ffi::OsString> {
-    ["-f", "37800", "-c", "1", "-b", bits, "-F"]
-        .iter()
-        .map(std::ffi::OsString::from)
-        .chain([
-            XA_FILE.to_string().into(),
-            "-C".into(),
-            XA_CHANNEL.to_string().into(),
-        ])
-        .collect()
-}
-
-fn pass(psxavenc: &Path, head: &[&str], tail: &[&Path], bits: &'static str) -> Result<(), String> {
-    let xa = xa_args(bits);
-    let mut args: Vec<&std::ffi::OsStr> = head.iter().map(std::ffi::OsStr::new).collect();
-    args.extend(xa.iter().map(|a| a.as_os_str()));
-    args.extend(tail.iter().map(|p| p.as_os_str()));
-    run_psxavenc(psxavenc, &args)
 }
 
 /// What the gain stage did to the sound, for the log.
@@ -287,23 +137,20 @@ struct Mastering {
 
 /// Raises the sound by [`PLAYBACK_LOSS_DB`] over the install's own loudness,
 /// through a look-ahead limiter so that it cannot clip, and returns the new
-/// samples. The movie keeps about 17 dB between its loudness and its peak, so
-/// the 0.9 dB the player's path loses fits under the ceiling untouched.
-fn master(pcm: &[i16]) -> Result<(Vec<i16>, Mastering), String> {
-    let x: Vec<f64> = pcm.iter().map(|s| f64::from(*s) / 32768.0).collect();
-    let source = loudness::integrated(&x, SOUND_HZ).ok_or("the movie's sound is silent")?;
+/// samples (in the 16-bit range, as they came). The movie keeps about 17 dB
+/// between its loudness and its peak, so the 0.9 dB the player's path loses
+/// fits under the ceiling untouched.
+fn master(pcm: &[f64], hz: f64) -> Result<(Vec<f64>, Mastering), String> {
+    let x: Vec<f64> = pcm.iter().map(|s| s / 32768.0).collect();
+    let source = loudness::integrated(&x, hz).ok_or("the movie's sound is silent")?;
     let target = source + PLAYBACK_LOSS_DB;
-    let gain = limiter::gain_for(&x, SOUND_HZ, target)
+    let gain = limiter::gain_for(&x, hz, target)
         .ok_or_else(|| format!("{target:.1} LUFS is out of reach for the movie's sound"))?;
-    let (y, report) = limiter::apply(&x, gain, SOUND_HZ);
-    let out: Vec<i16> = y
-        .iter()
-        .map(|v| (v * 32768.0).round().clamp(-32768.0, 32767.0) as i16)
-        .collect();
+    let (y, report) = limiter::apply(&x, gain, hz);
     let peak = y.iter().fold(0.0f64, |m, v| m.max(v.abs()));
-    let result = loudness::integrated(&y, SOUND_HZ).ok_or("the mastered sound is silent")?;
+    let result = loudness::integrated(&y, hz).ok_or("the mastered sound is silent")?;
     Ok((
-        out,
+        y.iter().map(|v| v * 32768.0).collect(),
         Mastering {
             source_lufs: source,
             target_lufs: target,
@@ -315,75 +162,73 @@ fn master(pcm: &[i16]) -> Result<(Vec<i16>, Mastering), String> {
     ))
 }
 
-/// A 16-bit mono PCM WAV, the form the encoder reads without guessing.
-fn wav(pcm: &[i16], hz: u32) -> Vec<u8> {
-    let data = pcm.len() as u32 * 2;
-    let mut w = Vec::with_capacity(44 + data as usize);
-    w.extend_from_slice(b"RIFF");
-    w.extend_from_slice(&(36 + data).to_le_bytes());
-    w.extend_from_slice(b"WAVEfmt ");
-    w.extend_from_slice(&16u32.to_le_bytes());
-    w.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    w.extend_from_slice(&1u16.to_le_bytes()); // mono
-    w.extend_from_slice(&hz.to_le_bytes());
-    w.extend_from_slice(&(hz * 2).to_le_bytes());
-    w.extend_from_slice(&2u16.to_le_bytes());
-    w.extend_from_slice(&16u16.to_le_bytes());
-    w.extend_from_slice(b"data");
-    w.extend_from_slice(&data.to_le_bytes());
-    for s in pcm {
-        w.extend_from_slice(&s.to_le_bytes());
-    }
-    w
-}
-
 /// The movie as an STR with its sound beside the picture.
 ///
-/// The encoder makes the picture (320x240, 15 frames a second, bitstream
-/// version 2) and the sound twice. First the sound at 8 bits, which the cook
-/// decodes to samples, loudens and limits ([`master`]); then those samples at
-/// 4 bits, the form the drive plays. [`mux::interleave`] puts the two streams
-/// back together with the sound [`AUDIO_DELAY_SECTORS`] later than the encoder
-/// would place it.
+/// `ffmpeg` decodes the install's movie to a Y4M picture stream and a mono
+/// 16-bit WAV (the two files in `work`). The sound is mastered
+/// ([`master`]) and the SDK's encoder ([`psx_str_cook::stream::encode`])
+/// writes the stream: 320x240 at the movie's own 15 frames a second, bitstream
+/// version 2, each frame on the finest quantisation that fits its ten sectors,
+/// mono 37.8 kHz XA-ADPCM in every 16th sector from sector
+/// [`AUDIO_DELAY_SECTORS`].
 ///
-/// Mono 37.8 kHz XA: the movie's sound is mono, so nothing is lost, the
-/// encoder's centre mix to stereo (-3 dB) is avoided, and the sound takes
-/// half the sectors a stereo stream would, which go to the picture instead.
-/// The drive plays a mono XA stream to both speakers.
-fn encode(psxavenc: &Path, movie: &Path, work: &Path) -> Result<(Vec<u8>, Mastering), String> {
+/// Mono 37.8 kHz XA: the movie's sound is mono, so nothing is lost, there is
+/// no centre mix to stereo (-3 dB), and the sound takes half the sectors a
+/// stereo stream would, which go to the picture instead. The drive plays a
+/// mono XA stream to both speakers.
+fn encode_movie(movie: &Path, work: &Path) -> Result<(Vec<u8>, Report, Mastering), String> {
     std::fs::create_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
-    let size = format!("{WIDTH}x{HEIGHT}");
-    let (picture, wide, mastered, sound) = (
-        work.join("picture.str"),
-        work.join("wide.xa"),
-        work.join("sound.wav"),
-        work.join("sound.xa"),
-    );
-    pass(
-        psxavenc,
-        &["-t", "str", "-v", "v2", "-s", &size, "-r", FPS, "-x", "2"],
-        &[movie, &picture],
-        "4",
-    )?;
-    pass(psxavenc, &["-t", "xa"], &[movie, &wide], "8")?;
-    let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
-    let (pcm, mastering) = master(&xa::decode_mono_37800(&read(&wide)?)?)?;
-    std::fs::write(&mastered, wav(&pcm, SOUND_HZ as u32))
-        .map_err(|e| format!("{}: {e}", mastered.display()))?;
-    pass(psxavenc, &["-t", "xa"], &[&mastered, &sound], "4")?;
-    let stream = mux::interleave(&read(&picture)?, &read(&sound)?, AUDIO_DELAY_SECTORS)?;
+    let (video, sound) = (work.join("video.y4m"), work.join("sound.wav"));
+    let result = (|| {
+        run_ffmpeg(&[
+            "-i".as_ref(),
+            movie.as_os_str(),
+            "-map".as_ref(),
+            "0:v:0".as_ref(),
+            "-f".as_ref(),
+            "yuv4mpegpipe".as_ref(),
+            "-pix_fmt".as_ref(),
+            "yuv420p".as_ref(),
+            video.as_os_str(),
+        ])?;
+        run_ffmpeg(&[
+            "-i".as_ref(),
+            movie.as_os_str(),
+            "-map".as_ref(),
+            "0:a:0".as_ref(),
+            "-ac".as_ref(),
+            "1".as_ref(),
+            "-c:a".as_ref(),
+            "pcm_s16le".as_ref(),
+            "-f".as_ref(),
+            "wav".as_ref(),
+            sound.as_os_str(),
+        ])?;
+        let wav = std::fs::read(&sound).map_err(|e| format!("{}: {e}", sound.display()))?;
+        let (rate, channels) =
+            psx_audio_cook::wav::read_channels(&wav).map_err(|e| format!("sound: {e:?}"))?;
+        let [channel] = <[Vec<f64>; 1]>::try_from(channels)
+            .map_err(|c| format!("the decoded sound has {} channels, not one", c.len()))?;
+        let (mastered, mastering) = master(&channel, f64::from(rate))?;
+        let file = std::fs::File::open(&video).map_err(|e| format!("{}: {e}", video.display()))?;
+        let pictures = y4m::Reader::new(std::io::BufReader::new(file))
+            .map_err(|e| format!("{}: {e}", video.display()))?;
+        let mut options = Options::default();
+        options.audio_delay = AUDIO_DELAY_SECTORS;
+        let (stream, report) = encode(pictures, Some(&Sound::new(rate, vec![mastered])), &options)?;
+        Ok((stream, report, mastering))
+    })();
     std::fs::remove_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
-    Ok((stream, mastering))
+    result
 }
 
 struct Args {
     valve: PathBuf,
     out: PathBuf,
-    psxavenc: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let (mut valve, mut out, mut psxavenc) = (None, None, None);
+    let (mut valve, mut out) = (None, None);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || {
@@ -394,15 +239,13 @@ fn parse_args() -> Result<Args, String> {
         match arg.as_str() {
             "--valve" => valve = Some(value()?),
             "--out" => out = Some(value()?),
-            "--psxavenc" => psxavenc = Some(value()?),
             other => return Err(format!("unknown argument {other}")),
         }
     }
-    let usage = "usage: hl-intro-cook --valve DIR --out DIR [--psxavenc PATH]";
+    let usage = "usage: hl-intro-cook --valve DIR --out DIR";
     Ok(Args {
         valve: valve.ok_or(usage)?,
         out: out.ok_or(usage)?,
-        psxavenc,
     })
 }
 
@@ -415,24 +258,22 @@ fn run() -> Result<ExitCode, String> {
             return Ok(ExitCode::from(NO_INTRO));
         }
     };
-    let Some(psxavenc) = find_psxavenc(args.psxavenc) else {
-        eprintln!("hl-intro-cook: psxavenc not found (--psxavenc, PSXAVENC or PATH)");
+    if !ffmpeg_present() {
+        eprintln!(
+            "hl-intro-cook: ffmpeg not found on the PATH; it decodes the install's startup movie \
+             (valve.webm: VP9 and Opus) for the SDK's encoder"
+        );
         return Ok(ExitCode::from(NO_INTRO));
-    };
+    }
     std::fs::create_dir_all(&args.out).map_err(|e| format!("{}: {e}", args.out.display()))?;
     let target = args.out.join("INTRO.STR");
-    let (mut raw, mastering) = encode(&psxavenc, &movie, &args.out.join("work"))?;
-    // Same movie, same bytes: the encoder leaves the unused tail of each audio
-    // sector as whatever its memory held, which would make the disc differ
-    // from one cook to the next.
-    zero_sector_tails(&mut raw);
+    let (raw, report, mastering) = encode_movie(&movie, &args.out.join("work"))?;
     std::fs::write(&target, &raw).map_err(|e| format!("{}: {e}", target.display()))?;
-    let m = measure(&raw).map_err(|e| format!("intro movie: {e}"))?;
     let name = movie
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("startup movie");
-    std::fs::write(args.out.join("movie.rs"), constants(&m, name))
+    std::fs::write(args.out.join("movie.rs"), constants(&report, name))
         .map_err(|e| format!("movie.rs: {e}"))?;
     eprintln!(
         "hl-intro-cook: sound {:.1} LUFS in the install, {:+.1} dB gain to reach {:.1}, {:.1} LUFS and {:.1} dBFS peak after \
@@ -446,19 +287,17 @@ fn run() -> Result<ExitCode, String> {
         mastering.limiter.active * 100.0
     );
     eprintln!(
-        "hl-intro-cook: {name}: {} frames {}x{}, {} video + {} audio + {} other sectors ({} bytes), \
-         max {} chunks, max {} RLE words, bitstream versions {:?}, XA {:?}",
-        m.frames,
-        m.width,
-        m.height,
-        m.video_sectors,
-        m.audio_sectors,
-        m.other_sectors,
+        "hl-intro-cook: {name}: {} frames {}x{}, {} video + {} audio sectors ({} bytes), \
+         max {} chunks, max {} RLE words, XA {:?}",
+        report.frames,
+        report.size.0,
+        report.size.1,
+        report.video_sectors,
+        report.audio_sectors.0,
         raw.len(),
-        m.max_chunks,
-        m.rle_words,
-        m.versions,
-        m.xa
+        report.max_chunks,
+        report.rle_words,
+        report.xa
     );
     Ok(ExitCode::SUCCESS)
 }
@@ -478,44 +317,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_stream_that_is_not_whole_sectors_is_refused() {
-        assert!(measure(&[0u8; XA_SECTOR + 1]).is_err());
-        assert!(measure(&[]).is_err());
-    }
-
-    #[test]
-    fn only_what_follows_each_sectors_data_is_zeroed() {
-        let mut raw = vec![0xAAu8; XA_SECTOR * 2];
-        raw[2] = SUBMODE_AUDIO | SUBMODE_FORM2;
-        raw[XA_SECTOR + 2] = 0;
-        zero_sector_tails(&mut raw);
-        // Audio sector: the sound groups stay, the tail goes.
-        assert!(raw[AUDIO_TAIL].iter().all(|b| *b == 0));
-        assert_eq!(raw[AUDIO_TAIL.start - 1], 0xAA);
-        // Data sector: the user data stays, the tail goes.
-        let second = &raw[XA_SECTOR..];
-        assert!(second[FORM1_TAIL].iter().all(|b| *b == 0));
-        assert_eq!(second[FORM1_TAIL.start - 1], 0xAA);
-    }
-
-    #[test]
-    fn a_stream_without_video_is_refused() {
-        // All-zero sectors are neither audio nor an STR chunk.
-        assert!(measure(&vec![0u8; XA_SECTOR * 4]).is_err());
-    }
-
-    #[test]
     fn the_constants_name_every_figure_the_guest_sizes_by() {
-        let m = Movie {
-            frames: 150,
-            width: 320,
-            height: 240,
-            max_chunks: 9,
-            rle_words: 20_000,
-            xa: Some((1, 0)),
-            ..Movie::default()
-        };
-        let text = constants(&m, "valve.webm");
+        let mut report = Report::default();
+        report.frames = 150;
+        report.size = (320, 240);
+        report.max_chunks = 9;
+        report.rle_words = 20_000;
+        report.xa = Some((1, 0));
+        let text = constants(&report, "valve.webm");
         for want in [
             "FRAMES: u32 = 150",
             "WIDTH: u16 = 320",
@@ -545,5 +354,18 @@ mod tests {
         .unwrap();
         assert!(startup_movie(&dir).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn mastering_keeps_the_sample_count_and_adds_the_playback_loss() {
+        let tone: Vec<f64> = (0..48_000 * 3)
+            .map(|i| 6000.0 * (i as f64 * 440.0 * std::f64::consts::TAU / 48_000.0).sin())
+            .collect();
+        let (out, m) = master(&tone, 48_000.0).unwrap();
+        assert_eq!(out.len(), tone.len());
+        assert!(
+            (m.result_lufs - m.source_lufs - PLAYBACK_LOSS_DB).abs() < 0.1,
+            "{m:?}"
+        );
     }
 }

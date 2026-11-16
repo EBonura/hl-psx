@@ -112,12 +112,13 @@ image has no RAM to spare for a video player, so a small boot program plays the
 movie and then loads the game's executable, which sits on the disc as the file
 `HLGAME.EXE`.
 
-The movie is encoded from your install at build time with
-[`psxavenc`](https://github.com/WonderfulToolchain/psxavenc) (zlib licence; it
-reads the movie itself, so no `ffmpeg` binary is needed). Build it and put it on
-your `PATH`, or point `PSXAVENC` at it. Without it, or without a startup movie
-in your install, the build stops with a message naming `--psxavenc PATH` and
-`PSXAVENC`: a disc is never made without the intro by accident. `--without-intro`
+The movie is cooked from your install at build time, from the `valve.webm` the
+install names, by the SDK's own movie encoder (`psx-str-cook`, used as a
+library by `host/hl-intro-cook`). The movie is VP9 video and Opus sound in a
+WebM, which the encoder does not read, so the build decodes it first with
+`ffmpeg`, which must be on your `PATH`: the one outside tool. Without `ffmpeg`,
+or without a startup movie in your install, the build stops with a message
+naming it: a disc is never made without the intro by accident. `--without-intro`
 (`--no-intro`) leaves the stage off on purpose; `stack`, `regress`, `pgo` data
 collection and the journeys use such a disc because they replay input from boot.
 Nothing derived from the movie is
@@ -127,10 +128,10 @@ The cook also fits the sound to the player. The CD sound loses 0.9 dB of loudnes
 in the 37.8 to 44.1 kHz conversion on its way to the output (the level assumes
 the SPU main volume at 0x3FFF is applied at unity, as PSX-SPX and DuckStation
 do), so the cook measures the movie's integrated loudness (EBU R128, in Rust, no
-external meter), raises the sound by that much and re-encodes it, through a
-look-ahead limiter that holds the encoded stream under -1 dBFS (the movie's own
-peak is 2.5 dB under full scale, so it does nothing here). It also places the
-sound sectors 24 sectors (160 ms) later in the stream than the encoder does,
+external meter), raises the sound by that much before it is encoded, through a
+look-ahead limiter that holds the stream under -1 dBFS (the movie's own
+peak is 2.5 dB under full scale, so it does nothing here). It also starts the
+sound 24 sectors (160 ms) into the stream, later than the encoder would,
 which is the time the picture waits for its last sector and for the player's
 five VBlanks of decoder headroom, so that sound and picture meet.
 
