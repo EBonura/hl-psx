@@ -1,0 +1,13 @@
+# functions that moved since the profile was collected: OLD=NEW (portable names)
+# psx_goldsrc::emit took the soft-cell refinement
+hl_psx::emit_soft_cell=psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit> @hl_psx
+hl_psx::emit_soft_cell::{closure#0} @hl_psx=psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#0} @hl_psx
+hl_psx::emit_soft_cell::{closure#1} @hl_psx=psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#1} @hl_psx
+hl_psx::emit_soft_cell::{closure#2} @hl_psx=psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#2} @hl_psx
+hl_psx::emit_soft_cell::{closure#3} @hl_psx=psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#3} @hl_psx
+hl_psx::emit_soft_cell::{closure#5} @hl_psx=psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#5} @hl_psx
+<core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<hl_psx::emit_soft_cell::{closure#0}> @hl_psx=<core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#0}> @hl_psx
+<core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<hl_psx::emit_soft_cell::{closure#1}> @hl_psx=<core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#1}> @hl_psx
+<core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<hl_psx::emit_soft_cell::{closure#2}> @hl_psx=<core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#2}> @hl_psx
+hl_psx::soft_cell_mid=psx_goldsrc::emit::soft_cell_mid
+hl_psx::warp_cell_edge_over=psx_goldsrc::emit::warp_cell_edge_over
