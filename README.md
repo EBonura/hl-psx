@@ -173,7 +173,7 @@ cargo hl-build models                 # recook and audit models
 cargo hl-build audit                  # audit map and transition residency
 cargo hl-build compile                # rebuild the PS1 executable
 cargo hl-build pack                   # rebuild the executable and disc
-cargo hl-build install --games-dir "DESTINATION_FOLDER" # build and copy
+cargo hl-build install --games-dir "DESTINATION_FOLDER" # copy the built disc and its link map
 cargo hl-build regress --psoxide "PATH_TO_PSOXIDE"      # test matrix
 cargo hl-build ram                    # free RAM, and where the rest went
 cargo hl-build stack                  # stack watermarks and bound against game/stack-reserve
