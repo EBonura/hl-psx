@@ -138,7 +138,7 @@ dependencies = [
 [[package]]
 name = "psoxide-link"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=b3a6926d8f645c570f595b262d9cc0f5c91a89aa#b3a6926d8f645c570f595b262d9cc0f5c91a89aa"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d#913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d"
 dependencies = [
  "serde_json",
  "toml",
@@ -147,7 +147,7 @@ dependencies = [
 [[package]]
 name = "psx-hw"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=b3a6926d8f645c570f595b262d9cc0f5c91a89aa#b3a6926d8f645c570f595b262d9cc0f5c91a89aa"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d#913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d"
 dependencies = [
  "bitflags",
 ]
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "psx-io"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=b3a6926d8f645c570f595b262d9cc0f5c91a89aa#b3a6926d8f645c570f595b262d9cc0f5c91a89aa"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d#913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d"
 dependencies = [
  "psx-hw",
  "psx-math",
@@ -164,7 +164,7 @@ dependencies = [
 [[package]]
 name = "psx-library"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=b3a6926d8f645c570f595b262d9cc0f5c91a89aa#b3a6926d8f645c570f595b262d9cc0f5c91a89aa"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d#913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d"
 dependencies = [
  "serde_json",
  "sha2",
@@ -173,12 +173,12 @@ dependencies = [
 [[package]]
 name = "psx-math"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=b3a6926d8f645c570f595b262d9cc0f5c91a89aa#b3a6926d8f645c570f595b262d9cc0f5c91a89aa"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d#913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d"
 
 [[package]]
 name = "psx-pack"
 version = "0.1.0"
-source = "git+https://github.com/EBonura/PSoXide.git?rev=b3a6926d8f645c570f595b262d9cc0f5c91a89aa#b3a6926d8f645c570f595b262d9cc0f5c91a89aa"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d#913a9e7bb789a16aa1a40b4c12d19d1e2084ab7d"
 dependencies = [
  "psx-io",
  "psx-math",
