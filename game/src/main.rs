@@ -308,17 +308,10 @@ const MAX_RENDER_PACKETS: usize = 1472 - BEAM_FX_TRIM - MODEL_STREAM_CODE_TRIM -
 // Telemetry and its interpolation state displace packet storage. Packet-drop
 // counters expose that diagnostic trade; release discs keep the full budget.
 #[cfg(all(
-    feature = "decoupled-present",
     not(feature = "reference-trace"),
     any(feature = "performance-telemetry", feature = "emulator-telemetry")
 ))]
 const DECOUPLED_PACKET_TRIM: usize = 135;
-#[cfg(all(
-    not(feature = "decoupled-present"),
-    not(feature = "reference-trace"),
-    any(feature = "performance-telemetry", feature = "emulator-telemetry")
-))]
-const DECOUPLED_PACKET_TRIM: usize = 0;
 #[cfg(all(
     not(feature = "reference-trace"),
     any(feature = "performance-telemetry", feature = "emulator-telemetry")
@@ -39484,9 +39477,7 @@ fn play(
         // phase 0 right after a tick (previous pose), sweeping into the current
         // pose as the next tick's deadline approaches. Simulation state is
         // untouched; only what the camera looks like this frame changes.
-        #[cfg(feature = "decoupled-present")]
         let render_phase_q12: i32 = sim_clock.phase_q12(interrupts::vblank_count()) as i32;
-        #[cfg(feature = "decoupled-present")]
         let (cam_pos, cam_h, cam_yaw, cam_pitch) =
             if DBG_CAM || reference_checkpoint::DBG_CAM_OVERRIDE.is_some() {
                 (player.pos, view_h_cur, yaw, pitch)
@@ -39494,8 +39485,6 @@ fn play(
                 let cam = unsafe { interpolated_camera(render_phase_q12) };
                 (cam.pos, cam.view_h, cam.yaw, cam.pitch)
             };
-        #[cfg(not(feature = "decoupled-present"))]
-        let (cam_pos, cam_h, cam_yaw, cam_pitch) = (player.pos, view_h_cur, yaw, pitch);
         // env_shake: jitter the view (yaw/pitch/eye height) by a decaying random
         // amount while a shake is active -- explosions/quakes rattle the camera.
         let (mut eye, mut view_yaw, mut view_pitch) = (
@@ -39538,11 +39527,8 @@ fn play(
                 let amp = SHAKE_AMP as i32 * SHAKE_TICKS as i32 / SHAKE_DUR.max(1) as i32;
                 // Presented-frame randomness must not advance the simulation's
                 // RNG once render count decouples from tick count.
-                #[cfg(feature = "decoupled-present")]
                 let j =
                     |m: i32| ((*core::ptr::addr_of_mut!(VIEW_RNG)).next() as i32 % (2 * m + 1)) - m;
-                #[cfg(not(feature = "decoupled-present"))]
-                let j = |m: i32| (impact_rng().below((2 * m + 1) as u32) as i32) - m;
                 view_yaw = ((view_yaw as i32 + j(amp * 6)) & 0xFFF) as u16;
                 view_pitch = (view_pitch as i32 + j(amp * 6))
                     .clamp(-PITCH_MAX as i32, PITCH_MAX as i32) as i16;
@@ -39569,10 +39555,7 @@ fn play(
             for i in 0..PENDING_EXPLO_N {
                 if let Some((sx, sy, _)) = project_world_point(PENDING_EXPLO[i], &rot, base_t) {
                     let cnt = (PENDING_EXPLO_MAG[i] as usize / 5).clamp(14, 44);
-                    #[cfg(feature = "decoupled-present")]
                     let rng = core::ptr::addr_of_mut!(VIEW_RNG);
-                    #[cfg(not(feature = "decoupled-present"))]
-                    let rng = core::ptr::addr_of_mut!(IMPACT_RNG);
                     (*core::ptr::addr_of_mut!(IMPACT_PARTICLES)).spawn_burst(
                         &mut *rng,
                         (sx, sy),
@@ -39618,7 +39601,6 @@ fn play(
         // previous frame's charged fill/walk time). The frame's last list went out in
         // finish_deferred_overlays and the walk fence above has drained it, so the node is the
         // next thing channel 2 walks.
-        #[cfg(feature = "decoupled-present")]
         if frame.is_pending() {
             telemetry::stage_begin(telemetry::stage::PRESENT);
             // Every list of the frame went out (and was waited out) in finish_deferred_overlays.
@@ -39784,10 +39766,7 @@ fn play(
                                                  // Liquid sway phase for this frame; blend state starts opaque.
                                                  // Decoupled presentation animates sway at simulation rate so
                                                  // water speed no longer scales with presented frame rate.
-                #[cfg(feature = "decoupled-present")]
                 let wi = ((sim_frame_no >> 3) & 15) as usize;
-                #[cfg(not(feature = "decoupled-present"))]
-                let wi = ((frame_no >> 3) & 15) as usize;
                 WAVE_DU = WAVE_TAB[wi] as u8;
                 WAVE_DV = WAVE_TAB[(wi + 4) & 15] as u8;
                 light_tick(&m, sim_frame_no);
@@ -40424,10 +40403,7 @@ fn play(
                                      // transform, so the packet cache holds through the ride
                                      // instead of only while parked (render-only; the sim pose,
                                      // collision mover and carry logic keep the tick values).
-                #[cfg(feature = "decoupled-present")]
                 let (ride_off_draw, tram_yaw_draw) = interpolated_tram_pose(render_phase_q12);
-                #[cfg(not(feature = "decoupled-present"))]
-                let (ride_off_draw, tram_yaw_draw) = (ride_off, tram_yaw_render);
                 let tram_rot = tram_world_rotation(tram_yaw_draw);
                 let mr = rot.mul(&tram_rot);
                 let train_pos = [
@@ -40797,10 +40773,7 @@ fn play(
                             // Tick-rate animation phase: presented-frame count
                             // no longer maps to time once presentation
                             // decouples from the simulation.
-                            #[cfg(feature = "decoupled-present")]
                             let phase = sim_frame_no as usize;
-                            #[cfg(not(feature = "decoupled-present"))]
-                            let phase = frame_no as usize;
                             (phase / 8) % md.frame_count().max(1)
                         },
                         0,
@@ -40963,7 +40936,6 @@ fn play(
                 if t >= ENDING_FADE_TICKS {
                     // The previous frame's flip may still be queued: land it before the ending
                     // screens flip directly.
-                    #[cfg(feature = "decoupled-present")]
                     frame.land();
                     return PlayExit::Ending;
                 }
@@ -40990,15 +40962,6 @@ fn play(
             // edge wait: swapping mid-scanout tears on hardware and leaves an
             // accuracy compositor showing the buffer this frame is about to
             // clear -- black regions in gameplay.
-            #[cfg(not(feature = "decoupled-present"))]
-            if present_pending {
-                telemetry::stage_begin(telemetry::stage::PRESENT);
-                driver::with(|gpu| gpu.wait_idle());
-                wait_vblank_edge();
-                driver::with(|gpu| fb.swap(gpu));
-                telemetry::stage_end(telemetry::stage::PRESENT);
-                present_pending = false;
-            }
             // Decoupled: the flip was queued before the build. At ride pace the edge passed
             // long ago and `begin_frame` is a few loads; only a frame built inside a single
             // VBlank interval (the 60 fps cap case) waits. Gating the clear on the applied flip
@@ -41006,7 +40969,6 @@ fn play(
             // VBlank handler lands the flip only once the previous frame's GP0(1Fh) has run,
             // so the draw target `begin_frame` programs here, after that proof, can never
             // collect the previous frame's raster backlog at build start.
-            #[cfg(feature = "decoupled-present")]
             {
                 telemetry::stage_begin(telemetry::stage::PRESENT);
                 frame.begin_frame(fb);
@@ -41172,8 +41134,6 @@ fn play(
             fx::end();
             // A coupled frame presents at the end of this iteration, so its
             // overlays go out now, in the same order.
-            #[cfg(not(feature = "decoupled-present"))]
-            finish_deferred_overlays();
 
             // DEBUG: dump the crosshair tri + camera state to PSoXide's Play debug
             // terminal. Auto-fires whenever the aimed triangle (or valid state)
@@ -41305,22 +41265,11 @@ fn play(
         // next simulation tick can run underneath the raster backlog rather
         // than behind it. That is where the time is: on a slow frame the GPU
         // tail is otherwise serialised after all of the CPU's work.
-        #[cfg(feature = "decoupled-present")]
         {
             // Always defer: the present overlaps the next frame's entire CPU
             // build instead of spinning out the rest of this VBlank interval,
             // which the decoupled profile measured as ~40% of a typical frame.
             frame.frame_built();
-        }
-        #[cfg(not(feature = "decoupled-present"))]
-        if vblank_reached(interrupts::vblank_count(), sim_clock.next_due()) {
-            present_pending = true;
-        } else {
-            telemetry::stage_begin(telemetry::stage::PRESENT);
-            driver::with(|gpu| gpu.wait_idle());
-            wait_vblank_edge();
-            driver::with(|gpu| fb.swap(gpu));
-            telemetry::stage_end(telemetry::stage::PRESENT);
         }
         // Match psx-engine's deadline semantics: a miss is a visual interval
         // that was due but could not be presented, not a permanent phase
