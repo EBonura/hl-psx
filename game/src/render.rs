@@ -2,6 +2,14 @@
 use psx_goldsrc::render as shared;
 pub use shared::*;
 static mut VIEW: FullView = FullView::new();
+/// The view being drawn.
+///
+/// # Safety
+/// Rendering is serialised: nothing changes the view while the reference is live.
+#[inline(always)]
+pub unsafe fn view() -> &'static FullView {
+    &*core::ptr::addr_of!(VIEW)
+}
 static mut SCRATCH: ClipScratch = ClipScratch::new();
 #[inline(always)]
 pub unsafe fn set_projection_h(h: i32) {
