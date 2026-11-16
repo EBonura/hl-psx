@@ -5,6 +5,11 @@
 //! Pure integer arithmetic so the host runner can exercise it (`hl-logic-tests`
 //! includes this file by path). Velocities are world units per 20 Hz tick
 //! (retail units per second divided by 20); directions are q12 unit vectors.
+//!
+//! The rocket, hornet and bounce rules here are proven by the host runner but not called by the
+//! game, which flies rockets and bounces charges with `throwable.rs`: two versions of one job,
+//! left open until one is shown to match the retail game.
+#![cfg_attr(target_arch = "mips", allow(dead_code))]
 
 use psx_math::Wide;
 

@@ -23,7 +23,6 @@ use psx_gpu::material::TextureMaterial;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use crate::pads;
 use psx_pad::{button, PadTracker, Port};
-use psx_rt::interrupts;
 use psx_vram::{upload_bytes, upload_bytes_aligned, Clut, TextureDepth, TexturePage, VramRect};
 
 const FONT_TPAGE: TexturePage = TexturePage::new(320, 0, TextureDepth::Bit4);

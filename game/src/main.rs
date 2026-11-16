@@ -179,7 +179,7 @@ use psx_math::{atan2_q12, sincos, Mask64, Wide};
 use psx_pad::{button, AnalogRequirement, Port};
 #[cfg(not(feature = "semantic-input"))]
 use psx_pad::PadTracker;
-use psx_rt::{interrupts, present};
+use psx_rt::interrupts;
 use psx_spu;
 
 use combat_defs::*;
@@ -4295,7 +4295,7 @@ fn poll_live_semantic_input(
                 if settings::take_brightness_dirty() {
                     map::reapply_brightness();
                 }
-                pads::poll(Port::One);
+                let _ = pads::poll(Port::One);
                 *prev_pause_button = true;
                 let next = if unsafe { PAUSE_REENTER } {
                     1
@@ -9590,7 +9590,7 @@ unsafe fn restore_transition_actors(
         };
         PROP_SCRIPT_GOAL[pi] = [0; 3];
         PROP_JUMP[pi] = monsterjump::State::EMPTY;
-        PROP_FLIGHT.release(pi);
+        (*core::ptr::addr_of_mut!(PROP_FLIGHT)).release(pi);
         PROP_SCRIPT_YAW[pi] = 0;
         PROP_SCRIPT_MODE[pi] = 0;
         PROP_SCRIPT_LI[pi] = u16::MAX;
@@ -12175,7 +12175,7 @@ unsafe fn maker_make(
                 PROP_ANIM_CLIP[pi] = PROP_ANIM_CLIP_FRESH;
                 PROP_POS[pi] = rec.origin;
                 PROP_JUMP[pi] = monsterjump::State::EMPTY;
-                PROP_FLIGHT.release(pi);
+                (*core::ptr::addr_of_mut!(PROP_FLIGHT)).release(pi);
                 PROP_ACTIVE[pi] = 0;
                 PROP_DORMANT[pi] = PROP_RUNTIME_DORMANT_STOCK;
                 found = pi;
@@ -12207,7 +12207,7 @@ unsafe fn maker_make(
     prop_nav_cache_invalidate(pi);
     PROP_DORMANT[pi] = 0;
     PROP_JUMP[pi] = monsterjump::State::EMPTY;
-    PROP_FLIGHT.release(pi);
+    (*core::ptr::addr_of_mut!(PROP_FLIGHT)).release(pi);
     PROP_ACTIVE[pi] = 1;
     PROP_MAKER[pi] = tag;
     // The maker targetname is only an allocation-free link to its dormant
@@ -12695,55 +12695,53 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
 #[inline(never)]
 #[optimize(size)]
 fn fx_quad_add(verts: [(i16, i16); 4], colors: [(u8, u8, u8); 4], gouraud: bool) {
-    unsafe {
-        if fx::capturing() {
-            let material = psx_gpu::material::TextureMaterial::blended(
-                0,
-                0,
-                (0, 0, 0),
-                psx_gpu::material::BlendMode::Add,
-            );
-            let mut words = [0u32; 10];
-            words[0] = material.draw_mode_word();
-            words[1] = material.texture_window_word();
-            let mut n = 2;
-            let mut i = 0;
-            while i < 4 {
-                if gouraud || i == 0 {
-                    let c = colors[i];
-                    // GP0(3Ah) Gouraud quad, GP0(2Ah) flat quad: untextured, semi-transparent.
-                    let cmd = if i == 0 {
-                        if gouraud {
-                            psx_hw::gpu::packet::SHADED_QUAD | psx_hw::gpu::packet::SEMI_TRANSPARENT
-                        } else {
-                            psx_hw::gpu::packet::FLAT_QUAD | psx_hw::gpu::packet::SEMI_TRANSPARENT
-                        }
-                    } else {
-                        0
-                    };
-                    words[n] = cmd | fx::gp0_color(c.0, c.1, c.2);
-                    n += 1;
-                }
-                words[n] = fx::gp0_vertex(verts[i].0, verts[i].1);
-                n += 1;
-                i += 1;
-            }
-            if fx::chain_push::<OverlayTail>(&words[..n]) {
-                return;
-            }
-        }
-        // No overlay chain to join: two flat triangles in the mean colour.
-        let c = colors[0];
-        let m = if gouraud { colors[3] } else { c };
-        let mid = (
-            ((c.0 as u16 + m.0 as u16) / 2) as u8,
-            ((c.1 as u16 + m.1 as u16) / 2) as u8,
-            ((c.2 as u16 + m.2 as u16) / 2) as u8,
+    if fx::capturing() {
+        let material = psx_gpu::material::TextureMaterial::blended(
+            0,
+            0,
+            (0, 0, 0),
+            psx_gpu::material::BlendMode::Add,
         );
-        let add = psx_gpu::material::BlendMode::Add;
-        driver::tri_flat_blended([verts[0], verts[1], verts[2]], mid.0, mid.1, mid.2, add);
-        driver::tri_flat_blended([verts[1], verts[2], verts[3]], mid.0, mid.1, mid.2, add);
+        let mut words = [0u32; 10];
+        words[0] = material.draw_mode_word();
+        words[1] = material.texture_window_word();
+        let mut n = 2;
+        let mut i = 0;
+        while i < 4 {
+            if gouraud || i == 0 {
+                let c = colors[i];
+                // GP0(3Ah) Gouraud quad, GP0(2Ah) flat quad: untextured, semi-transparent.
+                let cmd = if i == 0 {
+                    if gouraud {
+                        psx_hw::gpu::packet::SHADED_QUAD | psx_hw::gpu::packet::SEMI_TRANSPARENT
+                    } else {
+                        psx_hw::gpu::packet::FLAT_QUAD | psx_hw::gpu::packet::SEMI_TRANSPARENT
+                    }
+                } else {
+                    0
+                };
+                words[n] = cmd | fx::gp0_color(c.0, c.1, c.2);
+                n += 1;
+            }
+            words[n] = fx::gp0_vertex(verts[i].0, verts[i].1);
+            n += 1;
+            i += 1;
+        }
+        if fx::chain_push::<OverlayTail>(&words[..n]) {
+            return;
+        }
     }
+    // No overlay chain to join: two flat triangles in the mean colour.
+    let c = colors[0];
+    let m = if gouraud { colors[3] } else { c };
+    let mid = (
+        ((c.0 as u16 + m.0 as u16) / 2) as u8,
+        ((c.1 as u16 + m.1 as u16) / 2) as u8,
+        ((c.2 as u16 + m.2 as u16) / 2) as u8,
+    );
+    let add = psx_gpu::material::BlendMode::Add;
+    driver::tri_flat_blended([verts[0], verts[1], verts[2]], mid.0, mid.1, mid.2, add);
+    driver::tri_flat_blended([verts[1], verts[2], verts[3]], mid.0, mid.1, mid.2, add);
 }
 
 /// GoldSrc's `320_pain.spr` is four additive edge arrows (`CHudHealth::DrawPain`): a
@@ -14488,7 +14486,7 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     PUSH_N = 0;
     MONSTERJUMP_N = 0;
     PROP_JUMP = [monsterjump::State::EMPTY; LIVE_PROPS];
-    PROP_FLIGHT.clear();
+    (*core::ptr::addr_of_mut!(PROP_FLIGHT)).clear();
     BOSS_WALKER = u16::MAX;
     OSPREY.li = u16::MAX;
     garg::reset();
@@ -17217,7 +17215,7 @@ unsafe fn prop_controller_move_towards(
         };
         node
     };
-    let mut flight = PROP_FLIGHT
+    let mut flight = (*core::ptr::addr_of!(PROP_FLIGHT))
         .get(pi)
         .copied()
         .unwrap_or(air_navigation::Flight::EMPTY);
@@ -17230,7 +17228,7 @@ unsafe fn prop_controller_move_towards(
         || !phys::actor_line_clear_movers(m, movers, from, to)
         || in_monsterclip(to, 0)
     {
-        PROP_FLIGHT.release(pi);
+        (*core::ptr::addr_of_mut!(PROP_FLIGHT)).release(pi);
         return false;
     }
     let (mins, maxs) = actor_collision_bounds(PROP_TYPE_CONTROLLER, candidate);
@@ -17240,7 +17238,7 @@ unsafe fn prop_controller_move_towards(
     {
         return false;
     }
-    if let Some(slot) = PROP_FLIGHT.claim(pi, air_navigation::Flight::EMPTY) {
+    if let Some(slot) = (*core::ptr::addr_of_mut!(PROP_FLIGHT)).claim(pi, air_navigation::Flight::EMPTY) {
         *slot = flight;
     }
     prop_face_point(pi, target);
@@ -18098,7 +18096,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     if PROP_HEALTH[pi] == 0 {
         PROP_JUMP[pi] = monsterjump::State::EMPTY;
-        PROP_FLIGHT.release(pi);
+        (*core::ptr::addr_of_mut!(PROP_FLIGHT)).release(pi);
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
         if PROP_KIND[pi] == 59 {
@@ -34949,7 +34947,7 @@ fn main() {
     // first poll asks for analog and locks it, before anything reads the pad. The poll
     // blocks for a few frames. Anything but analog gets a notice on the splash; a pad
     // plugged in later gets the same handshake from its first poll.
-    pads::poll(Port::One);
+    let _ = pads::poll(Port::One);
     let pad_notice = match pads::analog(Port::One) {
         AnalogRequirement::Analog => ["", ""],
         AnalogRequirement::DigitalOnly => ["Digital pad detected", "Half-Life needs a DualShock"],
@@ -34983,7 +34981,7 @@ fn main() {
     if let Some(sector) = unsafe { map_buf() }.first_chunk_mut() {
         unsafe { music::locate_files(sector) };
     }
-    let sfx_ready = {
+    let _ = {
         let len = cdstream::load_chunk_decompressed(sfx::CHUNK_ID, unsafe { map_buf() })
             .map(|load| load.raw_len)
             .unwrap_or(0);
@@ -37044,7 +37042,7 @@ fn play(
     // look like a release and a re-press. Seed it with a poll outside the
     // deadline-critical loop.
     #[cfg(not(feature = "semantic-input"))]
-    pads::poll(Port::One);
+    let _ = pads::poll(Port::One);
 
     // A frame has been built and submitted but not yet handed to the presenter (the decoupled
     // build keeps that in `frame`).
