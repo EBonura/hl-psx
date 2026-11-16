@@ -8992,7 +8992,6 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
     DOOR_CARRY_COUNT = 0;
     PUSHABLE_CARRY_COUNT = 0;
     if PROP_COUNT > CARRY_MAILBOX_FIRST {
-        telemetry::debug_log("hl-psx: transition live-prop invariant exceeded");
         return 0;
     }
     let Some((landmark_id, landmark_origin)) = launch_landmark_record(m, nlogic, landmark) else {
@@ -9068,7 +9067,6 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
             || delta[2] < i16::MIN as i32
             || delta[2] > i16::MAX as i32
         {
-            telemetry::debug_log("hl-psx: transition actor offset overflow");
             pi += 1;
             continue;
         }
@@ -9186,7 +9184,6 @@ unsafe fn snapshot_transition_actors(m: &Map, nlogic: usize, landmark: LandmarkN
             || delta[2] < i16::MIN as i32
             || delta[2] > i16::MAX as i32
         {
-            telemetry::debug_log("hl-psx: transition train offset overflow");
             li += 1;
             continue;
         }
@@ -9357,8 +9354,6 @@ unsafe fn restore_transition_doors(m: &Map, nlogic: usize, landmark: Option<[i32
             {
                 sfx::play_map_loop_world(rec.sound0, e.center, li as u16);
             }
-        } else if records.iter().any(|record| record.id == id) {
-            telemetry::debug_log("hl-psx: global door transition geometry mismatch");
         }
     }
 }
@@ -9449,7 +9444,6 @@ unsafe fn restore_transition_pushables(m: &Map, nlogic: usize, landmark: Option<
             continue;
         };
         let Some(offset) = carry.destination_offset(landmark, e.center) else {
-            telemetry::debug_log("hl-psx: global pushable transition offset overflow");
             continue;
         };
         ENT_CACHE[ei].origin = offset;
@@ -9526,7 +9520,6 @@ unsafe fn restore_transition_actors(
         let overlay = pi != usize::MAX;
         if !overlay {
             if PROP_COUNT >= CARRY_MAILBOX_FIRST {
-                telemetry::debug_log("hl-psx: transition destination prop cap reached");
                 slot += 1;
                 continue;
             }
@@ -9712,8 +9705,6 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
     let map_name = m.logic_name(rec.arg0);
     let landmark_name = m.logic_name(rec.arg1);
     let Some(room_id) = menu::room_for_map_name(map_name) else {
-        telemetry::debug_log("hl-psx: changelevel target not cooked");
-        telemetry::debug_log(map_name);
         return true;
     };
     // GoldSrc requires the player to be inside a matching transition volume,
@@ -9744,17 +9735,10 @@ unsafe fn logic_request_changelevel(m: &Map, nlogic: usize, rec: map::LogicEnt) 
         has_transition_volume,
         inside_transition_volume,
     ) {
-        telemetry::debug_log("hl-psx: player outside transition volume");
         return false;
     }
     #[cfg(feature = "reference-trace")]
     reference_trace::changelevel(SIM_NOW, map_name, landmark_name);
-    telemetry::debug_log("hl-psx: changelevel request");
-    telemetry::debug_log(map_name);
-    if !landmark_name.is_empty() {
-        telemetry::debug_log("hl-psx: changelevel landmark");
-        telemetry::debug_log(landmark_name);
-    }
     let old_landmark = logic_landmark_origin_by_id(m, nlogic, rec.arg1);
     let offset = if let Some(origin) = old_landmark {
         [
@@ -9935,7 +9919,6 @@ unsafe fn logic_schedule_changelevel_post_target(m: &Map, payload: [i32; 3], now
         }
         id += 1;
     }
-    telemetry::debug_log("hl-psx: changelevel changetarget missing in destination");
 }
 
 unsafe fn logic_sub_use_targets(
@@ -15061,7 +15044,6 @@ fn debug_line(tag: &str, vals: &[(&str, i32)]) {
     for &(k, v) in vals {
         append_kv(&mut buf, &mut n, k, v);
     }
-    telemetry::debug_log(kv_text(&buf[..n]));
 }
 
 fn append_kv(buf: &mut [u8], n: &mut usize, label: &str, v: i32) {
@@ -21400,7 +21382,6 @@ unsafe fn collect_pickups(
                         // suit collection audible with its resident core line.
                         sfx::play(sfx::HEV_ACTIVATE);
                     }
-                    telemetry::debug_log("hl-psx: HEV suit equipped");
                 }
             }
             ty @ PROP_TYPE_WEAPON_FIRST..=PROP_TYPE_WEAPON_LAST => {
@@ -21498,7 +21479,6 @@ unsafe fn collect_pickups(
                     {
                         hev::request(sentence, hl_format::hev::NEXT_IN_30SEC);
                     }
-                    telemetry::debug_log("hl-psx: HEV battery picked up");
                 }
             }
             _ => {}
@@ -35976,8 +35956,6 @@ fn play(
         .get(launch.room_id as usize)
         .copied()
         .unwrap_or("unknown");
-    telemetry::debug_log("hl-psx: loading room");
-    telemetry::debug_log(map_name);
     unsafe { FAR_WIDE_MAP = map_name == "c0a0b" };
     set_far(false);
     begin_loading(fb);
@@ -36003,11 +35981,9 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, 0);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        telemetry::debug_log("hl-psx: WORLD.PAK texture stream failed");
         end_loading();
         return PlayExit::BackToMenu;
     }
-    telemetry::debug_log("hl-psx: WORLD.PAK texture chunk loaded");
 
     draw_next_loading_screen(fb);
     let tex_bytes = unsafe { streamed_map_bytes(tex_len) };
@@ -36027,7 +36003,6 @@ fn play(
             telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
             telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
             telemetry::task_end(telemetry::task::FIXED_UPDATE);
-            telemetry::debug_log("hl-psx: WORLD.PAK texture chunk invalid");
             end_loading();
             return PlayExit::BackToMenu;
         }
@@ -36196,11 +36171,9 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        telemetry::debug_log("hl-psx: WORLD.PAK world stream failed");
         end_loading();
         return PlayExit::BackToMenu;
     }
-    telemetry::debug_log("hl-psx: WORLD.PAK world chunk loaded");
     unsafe {
         // Hand the arena above this map to the model pool. 16-byte alignment
         // keeps every streamed chunk on the same boundary it had when the pool
@@ -36225,7 +36198,6 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        telemetry::debug_log("hl-psx: WORLD.PAK viewmodel stream failed");
         end_loading();
         return PlayExit::BackToMenu;
     }
@@ -36237,7 +36209,6 @@ fn play(
         telemetry::counter::ROOM_MATERIAL_TEXTURE_DROPS,
         (tex_failed + model_tex_failed) as u32,
     );
-    telemetry::debug_log("hl-psx: WORLD.PAK viewmodels loaded");
     unsafe { invalidate_weapon_tri_cache() }
 
     let map_bytes = unsafe { streamed_map_bytes(map_len) };
@@ -36265,7 +36236,6 @@ fn play(
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_SECTORS, stream_sectors);
         telemetry::counter(telemetry::counter::CD_WORLD_PACK_STATUS, 0);
         telemetry::task_end(telemetry::task::FIXED_UPDATE);
-        telemetry::debug_log("hl-psx: unsupported world map format");
         end_loading();
         return PlayExit::BackToMenu;
     }
@@ -36285,9 +36255,6 @@ fn play(
     #[cfg(feature = "reference-trace")]
     reference_trace::begin_map(map_name, launch.room_id);
     m.expand_light_palette(); // per-corner light lookups read the expanded table
-    if room_texs != m.n_texs {
-        telemetry::debug_log("hl-psx: texture/world count mismatch");
-    }
     // GoldSrc carries the player's pev->gravity through a level change, so
     // Xen maps after c4a1's trigger_gravity keep its 0.6. A fresh start
     // (menu, chapter) is normal gravity; a death restart returns to the
@@ -36404,16 +36371,12 @@ fn play(
         axis += 1;
     }
     let spawn_pos = if let Some(origin) = landmark_found {
-        telemetry::debug_log("hl-psx: spawning at landmark");
         [
             origin[0] + landmark_offset[0],
             origin[1] + landmark_offset[1],
             origin[2] + landmark_offset[2],
         ]
     } else {
-        if launch.landmark.len > 0 {
-            telemetry::debug_log("hl-psx: landmark missing, using spawn");
-        }
         m.spawn_pos
     };
     // Ride transfer (Black Mesa Inbound) WITHOUT a landmark: nothing anchors
@@ -37745,7 +37708,6 @@ fn play(
                     tram_speed = 0;
                     tram_speed_remainder = 0;
                     unsafe { player_tram_audio_stop(&m, tram_audio_li, train_pos) };
-                    telemetry::debug_log("hl-psx: tram path end");
                 }
             }
             let (next_actual_yaw_q28, physical_yaw_step_q28) = tram_integrate_yaw_q28(
