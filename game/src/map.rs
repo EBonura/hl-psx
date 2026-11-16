@@ -98,28 +98,23 @@ use psx_gte::math::Vec3I16;
 // single MIPS unaligned word load (lwl/lwr). Offsets all come from header
 // counts in our own cooked blob (magic-checked at load), so they are in range
 // by construction. If a map ever fails to cook cleanly, re-add the checks.
+// SAFETY (all four): offsets come from header counts in our own cooked blob, in range by
+// construction (see above); the load itself is the SDK's.
 #[inline(always)]
 fn rd_u32(d: &[u8], o: usize) -> u32 {
-    unsafe {
-        u32::from_le_bytes([
-            *d.get_unchecked(o),
-            *d.get_unchecked(o + 1),
-            *d.get_unchecked(o + 2),
-            *d.get_unchecked(o + 3),
-        ])
-    }
+    unsafe { psx_asset::le::read_u32_unchecked(d, o) }
 }
 #[inline(always)]
 fn rd_i32(d: &[u8], o: usize) -> i32 {
-    rd_u32(d, o) as i32
+    unsafe { psx_asset::le::read_i32_unchecked(d, o) }
 }
 #[inline(always)]
 fn rd_u16(d: &[u8], o: usize) -> u16 {
-    unsafe { u16::from_le_bytes([*d.get_unchecked(o), *d.get_unchecked(o + 1)]) }
+    unsafe { psx_asset::le::read_u16_unchecked(d, o) }
 }
 #[inline(always)]
 fn rd_i16(d: &[u8], o: usize) -> i16 {
-    rd_u16(d, o) as i16
+    unsafe { psx_asset::le::read_i16_unchecked(d, o) }
 }
 
 /// Halfword load for cooked sections whose format guarantees even offsets.
