@@ -30,7 +30,7 @@ Columns: actors = `monster_*` placements (not the `_dead` props); scripts = `scr
 | 13 | c1a1 | Unforeseen Consequences | c1a1a@c1a1[]<br>c1a0c@c1a0catoc1a1[] | 7 | 4 | 5 | 17 | traversed (chain-new-game) | [unforeseen-consequences](unforeseen-consequences.md#c1a1) |
 | 14 | c1a1a | Unforeseen Consequences | c1a1f@c1a1atof[]<br>c1a1@c1a1[] | 3 | 1 | 2 | 10 | traversed (chain-new-game) | [unforeseen-consequences](unforeseen-consequences.md#c1a1a) |
 | 15 | c1a1f | Unforeseen Consequences | c1a1a@c1a1atof[]<br>c1a1b@c1a1b[] | 11 | 8 | 18 | 25 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1f) |
-| 16 | c1a1b | Unforeseen Consequences | c1a1c@c1a1bc[]<br>c1a1f@c1a1b[] | 17 | 9 | 17 | 29 | narrow tape replay (unstick-vent, present-cap) | [unforeseen-consequences](unforeseen-consequences.md#c1a1b) |
+| 16 | c1a1b | Unforeseen Consequences | c1a1c@c1a1bc[]<br>c1a1f@c1a1b[] | 17 | 9 | 17 | 29 | probe disc (unstick-vent), narrow tape replay (present-cap) | [unforeseen-consequences](unforeseen-consequences.md#c1a1b) |
 | 17 | c1a1c | Unforeseen Consequences | c1a1b@c1a1bc[]<br>c1a1d@c1a1c/d[]<br>c1a1d@c1a1dtoc1a1c[]<br>c1a2@a1a2[changetoc1a2] | 11 | 0 | 9 | 34 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1c) |
 | 18 | c1a1d | Unforeseen Consequences | c1a1c@c1a1c/d[]<br>c1a1c@c1a1dtoc1a1c[] | 0 | 0 | 0 | 4 | none | [unforeseen-consequences](unforeseen-consequences.md#c1a1d) |
 | 19 | c1a2 | Office Complex | c1a2a@one[]<br>c1a1c@a1a2[changetoc1a1e]<br>c1a2d@c1a2toc1a2d[] | 68 | 23 | 14 | 58 | none | census only |

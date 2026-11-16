@@ -1,26 +1,70 @@
-# RED since the scripted-death landing (SCRIPT_EVENT_DEAD, hl-parity 10-31): the tape was recorded against a port whose c1a1f
-# slide zombie lived and clawed the player at the exit crawl. It now dies in its sequence, as in the reference, nothing shoves the
-# player into the hole and this absolute tape ends in c1a1f at (-12, y -1065), before the crawl. It needs a re-recorded playtest
-# (title to the c1a1b vent mouth), not a code change.
 # Embedded hull release: a hull sunk 4 to 6 units into the clip slab of the c1a1b vent mouth
-# (room 14) froze the player for good, because the unstick pass only reached 2 units.
-# The tape is a playtest on the shipping disc from the title (intro, menu, chapter select
-# "Unforeseen Consequences", c1a1f, the c1a1b changelevel, the scientist at the vent mouth) up to
-# poll 2420, followed by 60 polls of the left stick pushed forward. It is absolute (poll-bound
-# from boot), so this journey needs the disc WITH the startup movie. The embed lands at poll
-# ~2376 at (-511, -180, -718). Before the fix the player never leaves z -718; after it the
-# forward stick walks him out along +z.
+# (room 14) froze the player for good, because the unstick pass only reached 2 units; it now
+# searches in rings out to 18 units while the hull is stuck (game/src/phys.rs try_unstick).
+#
+# This journey used to replay a recorded playtest tape from the title. An absolute tape breaks on
+# every timing or map change (it has ended in c1a1f since the scripted death of the slide zombie,
+# long before the vent), so it is gone. The state the playtest met is now set up directly: the
+# journey runs on the probe disc (scripts/gate.sh builds it from tests/probes/gate.txt; a probe
+# disc boots the room the held buttons name, L1 plus the room id in the low byte of the pad, here
+# c1a1b = room 14: L3, R3 and Start), and the probe stands the player at the point where the
+# playtest embedded, HL (-511, -718), up -180, facing +y, at map tick 30. Nothing is written to
+# the player after that: the unstick pass has to free him and the forward stick has to walk him
+# out along +y. Broken (reach back at 2 units) the player stays frozen on y -718 and the walk
+# leg times out.
 name = "hl-unstick-vent"
 title = "Half-Life: a hull embedded in the c1a1b vent clip slab is released"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
+disc = ["dist/probe/hl-psx.cue"]
+symbols = [".hlpsx/probe/hl-psx.map"]
 pad = "analog"
-max_ticks = 14000
+max_ticks = 3000
 
 [[step]]
-label = "replay the playtest tape from boot, then push the stick forward"
-tape = "tests/unstick/c1a1b-vent-embed.pxtape"
-timeout = 13000
+label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad (c1a1b is room 14: L3, R3 and Start)"
+press = ["l1", "l3", "r3", "start"]
+hold = 180
+
+[[step]]
+label = "wait for the world (c1a1b)"
+wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 8133 }
+timeout = 3000
+
+[[step]]
+label = "the probe stands the player at the embed point at map tick 30; give it the time"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "ge", value = 40 }
+timeout = 600
+
+[[step]]
+checkpoint = "at-the-slab"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 0
+size = 4
+signed = true
+op = "between"
+value = -517
+value_hi = -505
+note = "the player is at the vent mouth (x), not wherever the map spawns him"
+[[step.assert]]
+kind = "ram"
+sym = "LOGIC_PLAYER_POS"
+offset = 8
+size = 4
+signed = true
+op = "between"
+value = -730
+value_hi = -700
+note = "the player is at the vent mouth (y)"
+
+[[step]]
+label = "push the left stick forward until he is a safe distance out of the slab"
+lstick = [128, 0]
+hold_until = { kind = "ram", sym = "LOGIC_PLAYER_POS", offset = 8, size = 4, signed = true, op = "ge", value = -690 }
+timeout = 300
 
 [[step]]
 checkpoint = "vent-released"
@@ -31,6 +75,7 @@ kind = "not_flat"
 kind = "ram"
 sym = "LOGIC_PLAYER_POS"
 offset = 8
+size = 4
 signed = true
 op = "between"
 value = -709

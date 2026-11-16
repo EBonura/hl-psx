@@ -4,9 +4,14 @@
 # their middle, so reading the lightmap only under each corner left some of them (the digits
 # above all) with no change at all when the light came on, and the others with a faint one.
 #
-# Runs on a probe disc built by scripts/panel-proof.sh from tests/probes/hazard-panels.txt (a
-# probe disc boots the room named by L1 and the pad's low byte, so no menu): the probe stands
-# the player in front of the wall and switches the seven lights on in turn, 60 map ticks apart.
+# Runs on the probe disc that scripts/gate.sh builds from tests/probes/gate.txt and keeps in
+# dist/probe (a probe disc boots the room named by L1 and the pad's low byte, so no menu): the
+# probe stands the player in front of the wall and switches the seven lights on in turn, 60 map
+# ticks apart. Why a probe disc and not the shipping one: the lights come on when a target
+# of the range falls, which on the shipping disc means walking to the range and hitting seven
+# targets; this journey tests how a lit plate is drawn, which does not depend on how its light
+# was switched. Broken (a style gain of zero in Map::retick_lightstyles) every plate stays as it
+# was and the journey fails on all seven.
 # Each digit waits for LIGHTSTYLE_ACTIVE_MASK to take its bit (the t0a0b style slots: darkrooml
 # 2, rangel 5 and targ2a 6 start on, 100; then targ1score 7, targ2score 8, targ3score 9,
 # targ4score 12, targ5score 11, targ6score 10, targ7score 24), gives the lit frame a moment to
@@ -16,8 +21,8 @@
 
 name = "hl-hazard-panels"
 title = "Half-Life: the Hazard Course number panels light up"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
+disc = ["dist/probe/hl-psx.cue"]
+symbols = [".hlpsx/probe/hl-psx.map"]
 pad = "analog"
 max_ticks = 6000
 

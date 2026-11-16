@@ -2,7 +2,7 @@
 
 Retail order: c1a0c, c1a1, c1a1a, c1a1f, c1a1b, c1a1c, c1a1d (c1a1c also leads on to c1a2, Office Complex). The chapter title is shown on arrival in c1a0c. Method and evidence kinds: [README.md](README.md).
 
-Chapter result: c1a0c, c1a1 and c1a1a are traversed by the chain, which arrives in c1a1f. None of c1a1f, c1a1b, c1a1c or c1a1d has a journey that plays the map yet. `tests/unstick-vent.toml` and `tests/present-cap.toml` replay a recorded playtest tape into c1a1b for two narrow checks (a hull embedded in the vent clip slab; display flip spacing) and are not segment journeys. The open-loop draft for c1a1 in `inbound-anomalous.route` after its `@stop` does not reach the exit (it ends at (263, 802) after 1,584 ticks).
+Chapter result: c1a0c, c1a1 and c1a1a are traversed by the chain, which arrives in c1a1f. None of c1a1f, c1a1b, c1a1c or c1a1d has a journey that plays the map yet. `tests/present-cap.toml` replays a recorded playtest tape for a narrow check (display flip spacing; the tape is the old playtest, which since the scripted-death landing no longer reaches the vent) and `tests/unstick-vent.toml` stands the player at the c1a1b vent mouth on the probe disc (a hull embedded in the vent clip slab); neither is a segment journey. The open-loop draft for c1a1 in `inbound-anomalous.route` after its `@stop` does not reach the exit (it ends at (263, 802) after 1,584 ticks).
 
 State column: `fixed` = a commit or CHANGELOG entry on main fixes it; `limit-recorded` = a LIMITS-*.md file records it; `limit-claimed` = the inventory calls it a PS1 limit but no LIMITS file lists it (a bug under the completion standard until it is written down with evidence); `limit-unrecorded` = same, and no code comment records it either; `open` = the 10-15 inventory read the SDK and the port and found a difference that nobody has re-checked on this build.
 
@@ -245,7 +245,7 @@ Play order 16 of 103, room id 14. Exits: c1a1c@c1a1bc[], c1a1f@c1a1b[].
 
 Original contents: 17 actors, 9 scripted sequences or sentences, 17 multi_managers, 29 triggers, 3 buttons, 10 doors. Classes: infodecal 43, ambient_generic 26, func_breakable 18, func_pendulum 17, multi_manager 17, func_wall 16, func_pushable 14, env_beam 13, info_target 13, func_illusionary 11, path_corner 11, env_glow 10 ....
 
-Journey: none for the segment. Two narrow replays of a recorded playtest tape enter c1a1b (`tests/unstick-vent.toml`, `tests/present-cap.toml`).
+Journey: none for the segment. `tests/unstick-vent.toml` uses the probe disc at the vent mouth; `tests/present-cap.toml` replays the old recorded tape, which no longer reaches the vent.
 
 Static entity contract (`hl-census map c1a1b`, current main):
 

@@ -1,0 +1,26 @@
+# Probe disc for the journeys that need a state a player cannot reach on demand
+# (tests/hazard-panels.toml and tests/unstick-vent.toml; scripts/gate.sh builds it and runs them).
+# One section per map, picked by the map that starts. A probe disc boots the room the held buttons
+# name: L1 plus the room id in the low byte of the pad.
+#
+# t0a0b, the shooting range (room 98): the player stands in front of the wall of seven numbered
+# score panels (HL x -2612, y 632..728, z -148..-50) and each score light is switched on in turn,
+# the way the range's multi_managers do when a target falls (`fire` runs the same switch as a
+# trigger's target would).
+map t0a0b
+0 god 1
+30 tp -2480 680 -128 180 0 700
+31 view 180 0
+100 fire targ1score on
+160 fire targ2score on
+220 fire targ3score on
+280 fire targ4score on
+340 fire targ5score on
+400 fire targ6score on
+460 fire targ7score on
+
+# c1a1b, the vent mouth (room 14): the player is put where a playtest sank a standing hull into the
+# clip slab (HL x -511, y -718, z -180), facing +y.
+map c1a1b
+0 god 1
+30 tp -511 -718 -180 90 0

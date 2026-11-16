@@ -1,0 +1,5 @@
+# Journeys that run on the probe disc (scripts/gate.sh builds it from tests/probes/gate.txt) and
+# not on the shipping disc: each needs a state a player cannot reach on demand. One file name per
+# line. Their `disc` and `symbols` already name dist/probe and .hlpsx/probe.
+hazard-panels.toml
+unstick-vent.toml
