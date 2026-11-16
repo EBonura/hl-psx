@@ -378,7 +378,7 @@ fn dependency_graph(
     }
     Ok(serde_json::to_value(graph)?)
 }
-fn dependencies(repository: &Path, platform: &Path) -> Result<serde_json::Value> {
+fn dependencies(repository: &Path) -> Result<serde_json::Value> {
     Ok(serde_json::json!({
         "bsp": dependency_graph(repository, &repository.join("host/hl-bsp/Cargo.toml"), "hl-bsp")?,
         "content": dependency_graph(repository, &repository.join("host/hl-content/Cargo.toml"), "hl-content")?,
@@ -423,8 +423,8 @@ pub(super) fn verify_reuse(repository: &Path, platform: &Path) -> Result<Option<
     if original_recipe != current_recipe {
         return Err("cook inputs changed; compatible reuse rejected".into());
     }
-    let original_dependencies = dependencies(&snapshot, &original_platform)?;
-    let current_dependencies = dependencies(repository, platform)?;
+    let original_dependencies = dependencies(&snapshot)?;
+    let current_dependencies = dependencies(repository)?;
     if original_dependencies != current_dependencies {
         return Err(
             "cook dependency resolution or features changed; compatible reuse rejected".into(),
