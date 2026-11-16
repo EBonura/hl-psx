@@ -9,8 +9,10 @@
 # through the menu by scripts/mapnav.sh, the same maps `pgo --script` profiles) and
 # binds all of them to the link map in one layout, so no map is favoured.
 #
-# Steps: delete game/pgo/hl-psx.layout, `cargo hl-build pack` (a link without a
-# layout), run this, then `cargo hl-build pack` again: the build places the
+# Steps: delete game/pgo/hl-psx.layout, `cargo hl-build pack --without-intro` (a link
+# without a layout, and a disc that boots straight to the title menu the map navigation
+# expects; the game executable is the same with or without the intro), run this, then
+# `cargo hl-build pack` again: the build places the
 # functions with the layout and links twice. A layout that no longer binds to
 # the code fails the build (the SDK's `place` names the unbound functions
 # and gates at 98% bound with no single function over 1% of the profile left out),
