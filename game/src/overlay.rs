@@ -17,13 +17,7 @@ impl Tail for OverlayTail {
 }
 
 /// A flat triangle through a translucent blend mode, captured when armed.
-pub fn fx_tri_flat_blended(
-    verts: [(i16, i16); 3],
-    r: u8,
-    g: u8,
-    b: u8,
-    blend_mode: BlendMode,
-) {
+pub fn fx_tri_flat_blended(verts: [(i16, i16); 3], r: u8, g: u8, b: u8, blend_mode: BlendMode) {
     fx::tri_flat_blended::<OverlayTail>(verts, r, g, b, blend_mode);
 }
 
