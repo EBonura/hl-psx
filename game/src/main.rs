@@ -859,7 +859,6 @@ const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
 /// Camera pose snapshot at a simulation tick: position, eye height, yaw,
 /// pitch. Decoupled presentation interpolates the view between the last two
 /// of these while the 20 Hz simulation is untouched.
-#[cfg(feature = "decoupled-present")]
 #[derive(Clone, Copy)]
 struct TickCamera {
     pos: [i32; 3],
@@ -867,14 +866,12 @@ struct TickCamera {
     yaw: u16,
     pitch: i16,
 }
-#[cfg(feature = "decoupled-present")]
 static mut CAM_PREV: TickCamera = TickCamera {
     pos: [0; 3],
     view_h: 0,
     yaw: 0,
     pitch: 0,
 };
-#[cfg(feature = "decoupled-present")]
 static mut CAM_CUR: TickCamera = TickCamera {
     pos: [0; 3],
     view_h: 0,
@@ -885,7 +882,6 @@ static mut CAM_CUR: TickCamera = TickCamera {
 /// simulation's `IMPACT_RNG` must not advance with presented-frame count, or
 /// a faster renderer would replay a different combat sequence from the same
 /// input tape.
-#[cfg(feature = "decoupled-present")]
 static mut VIEW_RNG: LcgRng = LcgRng::new(0x5649_4557);
 
 /// Tram render pose (ride offset + visible yaw) at the last two simulation
@@ -893,12 +889,9 @@ static mut VIEW_RNG: LcgRng = LcgRng::new(0x5649_4557);
 /// a sim-stepped car against a lerped eye jitters by up to a tick of travel
 /// every presented frame AND thrashes the tram packet-cache key, which only
 /// matches when the car-to-camera transform is bit-stable.
-#[cfg(feature = "decoupled-present")]
 static mut TRAM_POSE_PREV: ([i32; 3], u16) = ([0; 3], 0);
-#[cfg(feature = "decoupled-present")]
 static mut TRAM_POSE_CUR: ([i32; 3], u16) = ([0; 3], 0);
 
-#[cfg(feature = "decoupled-present")]
 #[inline(never)]
 unsafe fn tick_tram_snapshot(off: [i32; 3], yaw: u16) {
     let jump = (off[0] - TRAM_POSE_CUR.0[0]).abs()
@@ -914,7 +907,6 @@ unsafe fn tick_tram_snapshot(off: [i32; 3], yaw: u16) {
 
 /// Tram pose `phase_q12` of the way between the last two ticks; same arc
 /// rules as [`interpolated_camera`] so car and eye move together.
-#[cfg(feature = "decoupled-present")]
 #[inline(never)]
 unsafe fn interpolated_tram_pose(phase_q12: i32) -> ([i32; 3], u16) {
     let t = phase_q12.clamp(0, 4096);
@@ -933,7 +925,6 @@ unsafe fn interpolated_tram_pose(phase_q12: i32) -> ([i32; 3], u16) {
 
 /// Record the post-tick camera pose. A teleport-sized jump snaps instead of
 /// smearing a one-tick swoosh across the interpolation window.
-#[cfg(feature = "decoupled-present")]
 #[inline(never)]
 unsafe fn tick_camera_snapshot(pos: [i32; 3], view_h: i32, yaw: u16, pitch: i16) {
     let snap = TickCamera {
@@ -952,7 +943,6 @@ unsafe fn tick_camera_snapshot(pos: [i32; 3], view_h: i32, yaw: u16, pitch: i16)
 /// View pose for a render `phase_q12` of the way from the previous tick's
 /// camera to the current one. Yaw takes the shortest arc on the 4096-unit
 /// circle; everything else is a straight lerp.
-#[cfg(feature = "decoupled-present")]
 #[inline(never)]
 unsafe fn interpolated_camera(phase_q12: i32) -> TickCamera {
     let t = phase_q12.clamp(0, 4096);
@@ -5264,28 +5254,8 @@ fn scale12_vec(v: [i32; 3], s: i32) -> [i32; 3] {
     [scale12(v[0], s), scale12(v[1], s), scale12(v[2], s)]
 }
 
-#[cfg(not(feature = "decoupled-present"))]
-#[inline]
-fn vblank_reached(now: u32, target: u32) -> bool {
-    now.wrapping_sub(target) < 0x8000_0000
-}
 
-#[cfg(not(feature = "decoupled-present"))]
-#[inline]
-fn wait_until_vblank(target: u32) {
-    while !vblank_reached(interrupts::vblank_count(), target) {}
-}
 
-#[cfg(not(feature = "decoupled-present"))]
-fn wait_vblank_edge() -> u32 {
-    let entry = interrupts::vblank_count();
-    loop {
-        let now = interrupts::vblank_count();
-        if now != entry {
-            return now;
-        }
-    }
-}
 
 #[inline]
 fn dist2_3(a: [i32; 3], b: [i32; 3]) -> i32 {
@@ -34962,34 +34932,9 @@ mod stackprobe {
     }
 }
 
-/// The retail BIOS and warm-boot environments do not guarantee that COP2 is
-/// enabled when control reaches PSX.EXE. Enable the GTE explicitly before the
-/// first scene setup command; relying on inherited COP0 Status.CU2 left the
-/// game at a black screen in DuckStation's clean boot environment.
-#[cfg(target_arch = "mips")]
-#[inline(always)]
-fn enable_cop2() {
-    let mut status: u32;
-    unsafe {
-        // The nop is the load delay: mfc0 returns its value one instruction late, and without it
-        // the `or` below reads whatever $8 held before (a stale value with SR.IsC set isolated the cache).
-        core::arch::asm!("mfc0 $8, $12", "nop", lateout("$8") status, options(nomem, nostack));
-        status |= 0x4000_0000;
-        core::arch::asm!(
-            "mtc0 $8, $12",
-            "nop",
-            "nop",
-            "nop",
-            in("$8") status,
-            options(nostack, nomem, preserves_flags),
-        );
-    }
-}
-
 #[no_mangle]
 #[optimize(size)]
 fn main() {
-    enable_cop2();
     unsafe {
         init_pvs_link_sentinels();
         init_data_defaults();
@@ -37085,7 +37030,6 @@ fn play(
     interrupts::install_vblank_counter();
     // The one present path: the frame loop below hands each finished frame to it and starts
     // the next with it. The GPU is idle here (every swap above waited for it).
-    #[cfg(feature = "decoupled-present")]
     let mut frame = psx_goldsrc::present::FramePresent::new();
     // Gameplay ticks at SIM_VBLANKS on the shared psx-tick clock, with every
     // owed tick caught up before the next render.
@@ -37093,7 +37037,6 @@ fn play(
         psx_tick::TickConfig::new(psx_tick::TickRate::every_vblanks(SIM_VBLANKS as u16)),
         interrupts::vblank_count().wrapping_add(SIM_VBLANKS),
     );
-    #[cfg(feature = "decoupled-present")]
     unsafe {
         // Seed both interpolation poses with the spawn camera so the first
         // presented frames do not sweep in from stale coordinates.
@@ -37112,8 +37055,6 @@ fn play(
 
     // A frame has been built and submitted but not yet handed to the presenter (the decoupled
     // build keeps that in `frame`).
-    #[cfg(not(feature = "decoupled-present"))]
-    let mut present_pending = false;
 
     diag_stage(0x0430, "FIRST FRAME");
     // Only the live pad's resume path continues the loop by label.
@@ -37122,8 +37063,6 @@ fn play(
         // Decoupled presentation free-runs: the present path already fences on
         // a VBlank edge, so removing this wait caps rendering at 60 Hz while
         // simulation ticks keep firing on their unchanged 20 Hz schedule below.
-        #[cfg(not(feature = "decoupled-present"))]
-        wait_until_vblank(sim_clock.next_due());
         let mut ticks_this_visual = 0u16;
         while sim_clock.due(interrupts::vblank_count()) {
             telemetry::frame_begin(telemetry_frame);
@@ -39509,7 +39448,6 @@ fn play(
             sim_frame_no = sim_frame_no.wrapping_add(1);
             unsafe { record_prop_anim_clips(&m, sim_frame_no) };
             ticks_this_visual = ticks_this_visual.saturating_add(1);
-            #[cfg(feature = "decoupled-present")]
             unsafe {
                 tick_camera_snapshot(player.pos, view_h_cur, yaw, pitch);
                 tick_tram_snapshot(ride_off, tram_yaw_render);
