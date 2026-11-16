@@ -5,13 +5,6 @@
 
 [[exception]]
 program = "hl-psx"
-kind = "cop0-asm"
-item = "game/src/main.rs"
-count = 2
-remove = "unscheduled"
-
-[[exception]]
-program = "hl-psx"
 kind = "register-literal"
 item = "game/src/main.rs"
 count = 2
