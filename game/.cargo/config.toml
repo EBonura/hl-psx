@@ -14,3 +14,8 @@ build-std-features = ["compiler-builtins-mem"]
 
 # The delay-slot filler flags (-disable-mips-df-*) come from the SDK's tools/sdk-examples.mk,
 # added by the build driver (host/hl-build). A bare `cargo build` here does not carry them.
+
+[env]
+# The successor-block delay-slot search and the profiled layout leave 18 to 25 loads in delay
+# slots, past the SDK default of 96 trampoline words.
+PSX_HAZARD_TRAMPOLINE_WORDS = "256"
