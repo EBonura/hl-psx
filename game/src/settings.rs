@@ -99,14 +99,14 @@ pub fn bright(v: u8) -> u8 {
 /// come straight out of the RAM left above `.bss` -- to save a jump on a path
 /// that runs twice per map.
 #[inline(never)]
-#[link_section = ".hlpsx_cold.brightness"]
+#[link_section = ".psx_cold.brightness"]
 pub fn bright_cold(v: u8) -> u8 {
     bright(v)
 }
 
 #[optimize(size)]
 #[inline(never)]
-#[link_section = ".hlpsx_cold.brightness"]
+#[link_section = ".psx_cold.brightness"]
 fn bright_curve(v: u8, mix: i16) -> u8 {
     let x = v as i32;
     // sqrt(255 * x) is 255 * sqrt(x / 255) without leaving integers; the dark

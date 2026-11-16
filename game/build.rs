@@ -1754,10 +1754,7 @@ fn main() {
     // image can reach by `cargo hl-build stack` (emulator watermark over the
     // campaign maps plus a static call-graph bound). The title menu, intro and
     // ending keep their mutually exclusive scratch frames out of main so they do
-    // not inflate main's permanent frame. Generate the derivative in OUT_DIR so
-    // the pinned SDK remains pristine and an upstream linker-layout change fails
-    // loudly rather than being patched blindly.
-    let sdk_linker = fs::read_to_string(&ld).expect("read PSoXide linker script");
+    // not inflate main's permanent frame. The SDK script is used as it is.
     // `HLPSX_STACK_RESERVE` overrides the reservation for a build that is
     // only profiled, never shipped (hl-build's PGO collect link). A link-only
     // input: the code and its addresses do not change.
@@ -1781,15 +1778,8 @@ fn main() {
         Ok(reserve) if !reserve.is_empty() => Some(reserve),
         _ => committed.map(|bytes| bytes.to_string()),
     };
-    // Rare renderer extensions live outside `.text.*` so enabling one does
-    // not shift the PS1's cache-sensitive world loop. Keep the custom bucket
-    // inside the executable text output, but deliberately after ordinary code.
-    const SDK_TEXT: &str = "        *(.text .text.*);";
-    const HLPSX_TEXT: &str = "        *(.text .text.*);\n        *(.hlpsx_cold .hlpsx_cold.*);";
-    assert_eq!(sdk_linker.matches(SDK_TEXT).count(), 1);
-    let linker = sdk_linker.replace(SDK_TEXT, HLPSX_TEXT);
-    let hlpsx_ld = out_dir.join("hl-psx.ld");
-    fs::write(&hlpsx_ld, linker).expect("write hl-psx linker script");
+    // Rare renderer extensions live in `.psx_cold.*`, which the SDK script places after all
+    // other code, so enabling one does not shift the cache-sensitive world loop.
 
     // `-T` selects the linker script; `--oformat=binary` dumps a flat PSX-EXE
     // image (the script lays out the executable header) instead of an ELF.
@@ -1798,7 +1788,7 @@ fn main() {
         fs::write(&stack_ld, format!("STACK_RESERVE_OVERRIDE = {reserve};\n")).expect("write stack reserve script");
         println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
     }
-    println!("cargo:rustc-link-arg=-T{}", hlpsx_ld.display());
+    println!("cargo:rustc-link-arg=-T{}", ld.display());
     // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to
     // symbolize emulator PC profiles. Same code at the same addresses; it
     // does not boot.
