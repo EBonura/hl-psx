@@ -121,16 +121,85 @@ pub fn check_fit(game: &GameImage) -> Result<()> {
     Ok(())
 }
 
+/// Where the intro is compiled: a fixed directory, not the checkout. Cargo hashes a path
+/// dependency outside the workspace root by its absolute path, and that hash seeds every crate
+/// disambiguator and so reorders the code, so the same sources built in two clones gave two
+/// intro executables (and two receipts, and two discs). The sources and a clone of the hydrated
+/// SDK are mirrored under this root and built there. `HLPSX_INTRO_STAGE` moves it.
+const INTRO_STAGE: &str = "/tmp/hl-psx-intro-stage-v1";
+
+fn intro_stage() -> PathBuf {
+    env::var_os("HLPSX_INTRO_STAGE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(INTRO_STAGE))
+}
+
+/// Mirror `intro/` and the hydrated SDK under the stage and return the stage's `intro/`.
+fn stage_intro(repository: &Path, psoxide: &Path) -> Result<(PathBuf, PathBuf)> {
+    let root = intro_stage();
+    let (staged_intro, staged_sdk) = (root.join("intro"), root.join("psoxide"));
+    fs::create_dir_all(&root)?;
+    // Sources: replace wholesale (small); keep `target/` so cargo stays incremental.
+    fs::create_dir_all(&staged_intro)?;
+    for entry in ["Cargo.toml", "Cargo.lock", "build.rs"] {
+        fs::copy(repository.join("intro").join(entry), staged_intro.join(entry))?;
+    }
+    for dir in ["src", ".cargo"] {
+        let target = staged_intro.join(dir);
+        if target.exists() {
+            fs::remove_dir_all(&target)?;
+        }
+        copy_tree(&repository.join("intro").join(dir), &target)?;
+    }
+    // The SDK: the hydration receipt says which components the tree holds; clone it again only
+    // when that differs.
+    let receipt = |dir: &Path| fs::read(dir.join(".components-receipt.json")).ok();
+    if receipt(&staged_sdk).is_none() || receipt(&staged_sdk) != receipt(psoxide) {
+        if staged_sdk.exists() {
+            fs::remove_dir_all(&staged_sdk)?;
+        }
+        // An APFS clone costs nothing; a plain copy is the fallback on any other volume.
+        if !Command::new("cp")
+            .arg("-cR")
+            .arg(psoxide)
+            .arg(&staged_sdk)
+            .status()?
+            .success()
+        {
+            let _ = fs::remove_dir_all(&staged_sdk);
+            run(
+                Command::new("cp").arg("-R").arg(psoxide).arg(&staged_sdk),
+                "mirror the hydrated SDK for the intro build",
+            )?;
+        }
+    }
+    Ok((staged_intro, staged_sdk))
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Compile the intro for this game image: the chain loader checks the
 /// game's payload checksum, so the build carries it.
 pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<PathBuf> {
-    let intro = repository.join("intro");
+    let (intro, staged_sdk) = stage_intro(repository, psoxide)?;
     let map = dir(repository).join("hl-intro.map");
     let mut command = Command::new(cargo());
     command
         .current_dir(&intro)
         .args(["build", "--release"])
-        .env("PSOXIDE", psoxide)
+        .env("PSOXIDE", &staged_sdk)
         .env("HL_INTRO_LOAD_ADDR", format!("{LOAD_ADDR:#x}"))
         .env("HL_INTRO_GAME_FNV", format!("{:x}", game.fnv))
         .env("HLPSX_LINK_MAP", &map);
@@ -156,7 +225,7 @@ pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<Pa
             .arg(&map),
         "prove hl-intro.exe free of load-delay hazards",
     )?;
-    crate::stamp_receipt(psoxide, &intro, &exe, None)?;
+    crate::stamp_receipt(psoxide, &repository.join("intro"), &exe, None)?;
     Ok(exe)
 }
 
