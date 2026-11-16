@@ -1,4 +1,4 @@
-# psoxide-pgo source: f3247b9143268b95f0930b768531272f896ad941
+# psoxide-pgo source: c1c9d97b170e9fdca17d998214551d54b416c60b
 # psoxide-pgo file: d55c9c640bc5621018aca028ab0ee77b1b51f545 game/src/cdstream.rs
 # psoxide-pgo file: 974e22803230ffebb8a05a9b1600b5e006d001ff game/src/env_blood.rs
 # psoxide-pgo file: 63ae100bbd80bf5c3e92cc07465b97077f9a1e68 game/src/env_bubbles.rs
@@ -7,7 +7,7 @@
 # psoxide-pgo file: b33b38f6ffa096cc025080dbe4ff2a371d459732 game/src/hev.rs
 # psoxide-pgo file: 5ddf01731628e947aa57ddb4063e5e50c62b97b7 game/src/hud.rs
 # psoxide-pgo file: d91c283764c54bedd732d6b961606381b79f6afc game/src/logic_state.rs
-# psoxide-pgo file: d2b7b041f5a7fb16b1307f3542232a1204f258b4 game/src/main.rs
+# psoxide-pgo file: 26637645ac572cc895fcfe347015db92491d8b91 game/src/main.rs
 # psoxide-pgo file: 6a13ddcf47eba4615d71602225c102958c80bff5 game/src/map.rs
 # psoxide-pgo file: 7e84d796c1b873f2af17ea1ac72e325be620242c game/src/map_catalog.rs
 # psoxide-pgo file: a5c909fe4f23f197ab61f4b735fa939036aafd31 game/src/mapsnap.rs
@@ -26,33 +26,33 @@
 # psoxide-pgo file: 0414fac4159e2a08ae04efb5aaf9cb6d002e6ce2 game/src/trigger_rules.rs
 # psoxide-pgo file: a62c6446777b3d2f51ab78638772a1f9cbbd7516 game/src/vram.rs
 # psoxide-pgo file: 4771f622892287b48c584c9e4e1fefe3a4cb4388 game/src/weaponbox.rs
-# psoxide-pgo func: 21902 21904 8 <hl_psx::Arsenal>::ammo_mode
-# psoxide-pgo func: 21846 21847 8 <hl_psx::Arsenal>::any_weapon
-# psoxide-pgo func: 21892 21893 8 <hl_psx::Arsenal>::clip_display
-# psoxide-pgo func: 21851 21852 8 <hl_psx::Arsenal>::def
-# psoxide-pgo func: 21740 21741 8 <hl_psx::Arsenal>::new
-# psoxide-pgo func: 21855 21856 8 <hl_psx::Arsenal>::owns
-# psoxide-pgo func: 21897 21898 8 <hl_psx::Arsenal>::reserve_display
-# psoxide-pgo func: 21915 21988 8 <hl_psx::Arsenal>::tick
-# psoxide-pgo func: 15228 15229 8 <hl_psx::CameraVisibility>::actor_bounds
-# psoxide-pgo func: 15197 15214 8 <hl_psx::CameraVisibility>::box_bounds
-# psoxide-pgo func: 15198 15201 8 <hl_psx::CameraVisibility>::box_bounds::{closure#0} @hl_psx
-# psoxide-pgo func: 15223 15224 8 <hl_psx::CameraVisibility>::known_leaf
-# psoxide-pgo func: 15218 15219 8 <hl_psx::CameraVisibility>::leaf
-# psoxide-pgo func: 15153 15157 8 <hl_psx::CameraVisibility>::view_center
-# psoxide-pgo func: 15162 15163 8 <hl_psx::CameraVisibility>::view_sphere
-# psoxide-pgo func: 15172 15174 8 <hl_psx::CameraVisibility>::world_sphere_gte
-# psoxide-pgo func: 3373 3374 8 <hl_psx::EmitPolicy>::blend
-# psoxide-pgo func: 3362 3365 8 <hl_psx::EmitPolicy>::for_face
-# psoxide-pgo func: 3337 3353 8 <hl_psx::EmitPolicy>::from_surface
-# psoxide-pgo func: 3398 3399 8 <hl_psx::EmitPolicy>::tram_grid
-# psoxide-pgo func: 3378 3379 8 <hl_psx::EmitPolicy>::wave
-# psoxide-pgo func: 3424 3425 8 <hl_psx::EmitPolicy>::with_far_key
-# psoxide-pgo func: 3413 3417 8 <hl_psx::EmitPolicy>::with_local_depth
-# psoxide-pgo func: 3434 3435 8 <hl_psx::EmitPolicy>::with_tram_grid
-# psoxide-pgo func: 3404 3405 8 <hl_psx::EmitPolicy>::with_underwater_blend
-# psoxide-pgo func: 32871 32884 8 <hl_psx::ModelPacketWriter>::push
-# psoxide-pgo func: 2883 2883 8 <hl_psx::WorldProjectionKey as core::cmp::PartialEq>::eq
+# psoxide-pgo func: 21895 21897 8 <hl_psx::Arsenal>::ammo_mode
+# psoxide-pgo func: 21839 21840 8 <hl_psx::Arsenal>::any_weapon
+# psoxide-pgo func: 21885 21886 8 <hl_psx::Arsenal>::clip_display
+# psoxide-pgo func: 21844 21845 8 <hl_psx::Arsenal>::def
+# psoxide-pgo func: 21733 21734 8 <hl_psx::Arsenal>::new
+# psoxide-pgo func: 21848 21849 8 <hl_psx::Arsenal>::owns
+# psoxide-pgo func: 21890 21891 8 <hl_psx::Arsenal>::reserve_display
+# psoxide-pgo func: 21908 21981 8 <hl_psx::Arsenal>::tick
+# psoxide-pgo func: 15221 15222 8 <hl_psx::CameraVisibility>::actor_bounds
+# psoxide-pgo func: 15190 15207 8 <hl_psx::CameraVisibility>::box_bounds
+# psoxide-pgo func: 15191 15194 8 <hl_psx::CameraVisibility>::box_bounds::{closure#0} @hl_psx
+# psoxide-pgo func: 15216 15217 8 <hl_psx::CameraVisibility>::known_leaf
+# psoxide-pgo func: 15211 15212 8 <hl_psx::CameraVisibility>::leaf
+# psoxide-pgo func: 15146 15150 8 <hl_psx::CameraVisibility>::view_center
+# psoxide-pgo func: 15155 15156 8 <hl_psx::CameraVisibility>::view_sphere
+# psoxide-pgo func: 15165 15167 8 <hl_psx::CameraVisibility>::world_sphere_gte
+# psoxide-pgo func: 3366 3367 8 <hl_psx::EmitPolicy>::blend
+# psoxide-pgo func: 3355 3358 8 <hl_psx::EmitPolicy>::for_face
+# psoxide-pgo func: 3330 3346 8 <hl_psx::EmitPolicy>::from_surface
+# psoxide-pgo func: 3391 3392 8 <hl_psx::EmitPolicy>::tram_grid
+# psoxide-pgo func: 3371 3372 8 <hl_psx::EmitPolicy>::wave
+# psoxide-pgo func: 3417 3418 8 <hl_psx::EmitPolicy>::with_far_key
+# psoxide-pgo func: 3406 3410 8 <hl_psx::EmitPolicy>::with_local_depth
+# psoxide-pgo func: 3427 3428 8 <hl_psx::EmitPolicy>::with_tram_grid
+# psoxide-pgo func: 3397 3398 8 <hl_psx::EmitPolicy>::with_underwater_blend
+# psoxide-pgo func: 32864 32877 8 <hl_psx::ModelPacketWriter>::push
+# psoxide-pgo func: 2876 2876 8 <hl_psx::WorldProjectionKey as core::cmp::PartialEq>::eq
 # psoxide-pgo func: 51 55 2 <hl_psx::env_bubbles::Scheduler>::tick
 # psoxide-pgo func: 116 122 3 <hl_psx::env_funnel::Burst>::advance
 # psoxide-pgo func: 105 106 5 <hl_psx::hev::Suit>::clear_queue
@@ -117,87 +117,87 @@
 # psoxide-pgo func: 2268 2269 15 <hl_psx::phys::Player>::vertical_velocity_q6
 # psoxide-pgo func: 849 850 15 <hl_psx::phys::WaterJumpState>::new
 # psoxide-pgo func: 89 90 24 <hl_psx::trigger_rules::DeadGlobals<32>>::clear @hl_psx
-# psoxide-pgo func: 35274 35282 8 hl_psx::account_streamed_chunk
-# psoxide-pgo func: 15842 15843 8 hl_psx::actor_line_clear
-# psoxide-pgo func: 3957 3958 8 hl_psx::ai_reacquire
-# psoxide-pgo func: 5939 5944 8 hl_psx::aim_rotation
-# psoxide-pgo func: 7190 7191 8 hl_psx::axial_brush_angles_q8
-# psoxide-pgo func: 1980 1986 8 hl_psx::begin_loading
-# psoxide-pgo func: 27026 27030 8 hl_psx::cache_projected_vert
-# psoxide-pgo func: 27162 27163 8 hl_psx::cached_world_uv_words
-# psoxide-pgo func: 26334 26353 8 hl_psx::camera_leaf
+# psoxide-pgo func: 35267 35275 8 hl_psx::account_streamed_chunk
+# psoxide-pgo func: 15835 15836 8 hl_psx::actor_line_clear
+# psoxide-pgo func: 3950 3951 8 hl_psx::ai_reacquire
+# psoxide-pgo func: 5932 5937 8 hl_psx::aim_rotation
+# psoxide-pgo func: 7183 7184 8 hl_psx::axial_brush_angles_q8
+# psoxide-pgo func: 1973 1979 8 hl_psx::begin_loading
+# psoxide-pgo func: 27019 27023 8 hl_psx::cache_projected_vert
+# psoxide-pgo func: 27155 27156 8 hl_psx::cached_world_uv_words
+# psoxide-pgo func: 26327 26346 8 hl_psx::camera_leaf
 # psoxide-pgo func: 32 33 0 hl_psx::cdstream::target::invalidate_cache
 # psoxide-pgo func: 41 45 0 hl_psx::cdstream::target::load_chunk_decompressed
 # psoxide-pgo func: 36 38 0 hl_psx::cdstream::target::prime_persistent_entries
-# psoxide-pgo func: 3054 3057 8 hl_psx::clear_group_bits
-# psoxide-pgo func: 21286 21508 8 hl_psx::collect_pickups
-# psoxide-pgo func: 21315 21315 8 hl_psx::collect_pickups::{closure#0} @hl_psx
-# psoxide-pgo func: 21319 21319 8 hl_psx::collect_pickups::{closure#1} @hl_psx
-# psoxide-pgo func: 21320 21320 8 hl_psx::collect_pickups::{closure#2} @hl_psx
-# psoxide-pgo func: 14875 14878 8 hl_psx::culled
-# psoxide-pgo func: 14885 14886 8 hl_psx::culled_gte
-# psoxide-pgo func: 14901 14903 8 hl_psx::culled_soft
-# psoxide-pgo func: 22295 22311 8 hl_psx::decay_combat_fx
-# psoxide-pgo func: 5261 5265 8 hl_psx::dist2_3
-# psoxide-pgo func: 15684 15687 8 hl_psx::dist2_xz
-# psoxide-pgo func: 10305 10306 8 hl_psx::door_auto_returns
-# psoxide-pgo func: 4395 4396 8 hl_psx::dot12
-# psoxide-pgo func: 4400 4401 8 hl_psx::dot12_q5
-# psoxide-pgo func: 4406 4407 8 hl_psx::dot_plane
-# psoxide-pgo func: 33129 33147 8 hl_psx::draw_billboard
-# psoxide-pgo func: 32893 33089 8 hl_psx::draw_model
-# psoxide-pgo func: 2018 2021 8 hl_psx::draw_next_loading_screen
-# psoxide-pgo func: 34703 34875 8 hl_psx::draw_viewmodel
-# psoxide-pgo func: 34676 34696 8 hl_psx::draw_vm_tri
-# psoxide-pgo func: 33160 33173 8 hl_psx::emit_billboard
-# psoxide-pgo func: 33188 33215 8 hl_psx::emit_billboard_rgb
-# psoxide-pgo func: 3707 3723 8 hl_psx::emit_packet_of
-# psoxide-pgo func: 30669 30767 8 hl_psx::emit_proj_fast
-# psoxide-pgo func: 30678 30678 8 hl_psx::emit_proj_fast::{closure#0} @hl_psx
-# psoxide-pgo func: 31135 31231 8 hl_psx::emit_proj_fast_tri
-# psoxide-pgo func: 31144 31144 8 hl_psx::emit_proj_fast_tri::{closure#0} @hl_psx
-# psoxide-pgo func: 35760 35915 8 hl_psx::emit_pvs_entry
-# psoxide-pgo func: 35934 35961 8 hl_psx::emit_pvs_walk
-# psoxide-pgo func: 27783 27934 8 hl_psx::emit_soft_cell
-# psoxide-pgo func: 27802 27802 8 hl_psx::emit_soft_cell::{closure#0} @hl_psx
-# psoxide-pgo func: 27803 27803 8 hl_psx::emit_soft_cell::{closure#1} @hl_psx
-# psoxide-pgo func: 27804 27804 8 hl_psx::emit_soft_cell::{closure#2} @hl_psx
-# psoxide-pgo func: 27815 27819 8 hl_psx::emit_soft_cell::{closure#3} @hl_psx
-# psoxide-pgo func: 27839 27839 8 hl_psx::emit_soft_cell::{closure#5} @hl_psx
-# psoxide-pgo func: 27630 27755 8 hl_psx::emit_soft_quad_split
-# psoxide-pgo func: 31482 31632 8 hl_psx::emit_submodel_face
-# psoxide-pgo func: 31523 31523 8 hl_psx::emit_submodel_face::{closure#0} @hl_psx
-# psoxide-pgo func: 31526 31526 8 hl_psx::emit_submodel_face::{closure#2} @hl_psx
-# psoxide-pgo func: 31307 31323 8 hl_psx::emit_submodel_loop_tri
-# psoxide-pgo func: 31327 31343 8 hl_psx::emit_submodel_loop_tri_projected
-# psoxide-pgo func: 31265 31303 8 hl_psx::emit_submodel_tri
-# psoxide-pgo func: 32321 32390 8 hl_psx::emit_world_face_patches
-# psoxide-pgo func: 31765 31788 8 hl_psx::emit_world_loop_tri
-# psoxide-pgo func: 27246 27251 8 hl_psx::emplace_packet::<psx_gpu::prim::QuadTexturedGouraud, hl_psx::try_emit_quad_ctx::{closure#3}> @hl_psx
-# psoxide-pgo func: 27246 27251 8 hl_psx::emplace_packet::<psx_gpu::prim::TriTexturedGouraud, hl_psx::push_tri_uv_words_packed::{closure#0}> @hl_psx
-# psoxide-pgo func: 7077 7103 8 hl_psx::ent_draw_offset
-# psoxide-pgo func: 26850 26858 8 hl_psx::entity_uses_live_pvs
+# psoxide-pgo func: 3047 3050 8 hl_psx::clear_group_bits
+# psoxide-pgo func: 21279 21501 8 hl_psx::collect_pickups
+# psoxide-pgo func: 21308 21308 8 hl_psx::collect_pickups::{closure#0} @hl_psx
+# psoxide-pgo func: 21312 21312 8 hl_psx::collect_pickups::{closure#1} @hl_psx
+# psoxide-pgo func: 21313 21313 8 hl_psx::collect_pickups::{closure#2} @hl_psx
+# psoxide-pgo func: 14868 14871 8 hl_psx::culled
+# psoxide-pgo func: 14878 14879 8 hl_psx::culled_gte
+# psoxide-pgo func: 14894 14896 8 hl_psx::culled_soft
+# psoxide-pgo func: 22288 22304 8 hl_psx::decay_combat_fx
+# psoxide-pgo func: 5254 5258 8 hl_psx::dist2_3
+# psoxide-pgo func: 15677 15680 8 hl_psx::dist2_xz
+# psoxide-pgo func: 10298 10299 8 hl_psx::door_auto_returns
+# psoxide-pgo func: 4388 4389 8 hl_psx::dot12
+# psoxide-pgo func: 4393 4394 8 hl_psx::dot12_q5
+# psoxide-pgo func: 4399 4400 8 hl_psx::dot_plane
+# psoxide-pgo func: 33122 33140 8 hl_psx::draw_billboard
+# psoxide-pgo func: 32886 33082 8 hl_psx::draw_model
+# psoxide-pgo func: 2011 2014 8 hl_psx::draw_next_loading_screen
+# psoxide-pgo func: 34696 34868 8 hl_psx::draw_viewmodel
+# psoxide-pgo func: 34669 34689 8 hl_psx::draw_vm_tri
+# psoxide-pgo func: 33153 33166 8 hl_psx::emit_billboard
+# psoxide-pgo func: 33181 33208 8 hl_psx::emit_billboard_rgb
+# psoxide-pgo func: 3700 3716 8 hl_psx::emit_packet_of
+# psoxide-pgo func: 30662 30760 8 hl_psx::emit_proj_fast
+# psoxide-pgo func: 30671 30671 8 hl_psx::emit_proj_fast::{closure#0} @hl_psx
+# psoxide-pgo func: 31128 31224 8 hl_psx::emit_proj_fast_tri
+# psoxide-pgo func: 31137 31137 8 hl_psx::emit_proj_fast_tri::{closure#0} @hl_psx
+# psoxide-pgo func: 35753 35908 8 hl_psx::emit_pvs_entry
+# psoxide-pgo func: 35927 35954 8 hl_psx::emit_pvs_walk
+# psoxide-pgo func: 27776 27927 8 hl_psx::emit_soft_cell
+# psoxide-pgo func: 27795 27795 8 hl_psx::emit_soft_cell::{closure#0} @hl_psx
+# psoxide-pgo func: 27796 27796 8 hl_psx::emit_soft_cell::{closure#1} @hl_psx
+# psoxide-pgo func: 27797 27797 8 hl_psx::emit_soft_cell::{closure#2} @hl_psx
+# psoxide-pgo func: 27808 27812 8 hl_psx::emit_soft_cell::{closure#3} @hl_psx
+# psoxide-pgo func: 27832 27832 8 hl_psx::emit_soft_cell::{closure#5} @hl_psx
+# psoxide-pgo func: 27623 27748 8 hl_psx::emit_soft_quad_split
+# psoxide-pgo func: 31475 31625 8 hl_psx::emit_submodel_face
+# psoxide-pgo func: 31516 31516 8 hl_psx::emit_submodel_face::{closure#0} @hl_psx
+# psoxide-pgo func: 31519 31519 8 hl_psx::emit_submodel_face::{closure#2} @hl_psx
+# psoxide-pgo func: 31300 31316 8 hl_psx::emit_submodel_loop_tri
+# psoxide-pgo func: 31320 31336 8 hl_psx::emit_submodel_loop_tri_projected
+# psoxide-pgo func: 31258 31296 8 hl_psx::emit_submodel_tri
+# psoxide-pgo func: 32314 32383 8 hl_psx::emit_world_face_patches
+# psoxide-pgo func: 31758 31781 8 hl_psx::emit_world_loop_tri
+# psoxide-pgo func: 27239 27244 8 hl_psx::emplace_packet::<psx_gpu::prim::QuadTexturedGouraud, hl_psx::try_emit_quad_ctx::{closure#3}> @hl_psx
+# psoxide-pgo func: 27239 27244 8 hl_psx::emplace_packet::<psx_gpu::prim::TriTexturedGouraud, hl_psx::push_tri_uv_words_packed::{closure#0}> @hl_psx
+# psoxide-pgo func: 7070 7096 8 hl_psx::ent_draw_offset
+# psoxide-pgo func: 26843 26851 8 hl_psx::entity_uses_live_pvs
 # psoxide-pgo func: 25 26 1 hl_psx::env_blood::advance_lifetime
 # psoxide-pgo func: 95 97 2 hl_psx::env_bubbles::advance_lifetime
 # psoxide-pgo func: 61 63 2 hl_psx::env_bubbles::advance_position
 # psoxide-pgo func: 35 37 4 hl_psx::env_funnel_fx::tick
-# psoxide-pgo func: 3465 3469 8 hl_psx::face_needs_generic_emit
-# psoxide-pgo func: 7122 7139 8 hl_psx::fan_angle_q12
-# psoxide-pgo func: 7252 7254 8 hl_psx::fan_collision_disabled
-# psoxide-pgo func: 7106 7111 8 hl_psx::fan_logic_index
-# psoxide-pgo func: 7143 7148 8 hl_psx::fan_rotation
-# psoxide-pgo func: 796 797 8 hl_psx::far_view
-# psoxide-pgo func: 19130 19184 8 hl_psx::find_barney_target
-# psoxide-pgo func: 19191 19221 8 hl_psx::find_scientist_threat
-# psoxide-pgo func: 1372 1410 8 hl_psx::finish_deferred_overlays
-# psoxide-pgo func: 1377 1377 8 hl_psx::finish_deferred_overlays::{closure#0} @hl_psx
-# psoxide-pgo func: 1382 1383 8 hl_psx::finish_deferred_overlays::{closure#1} @hl_psx
-# psoxide-pgo func: 1405 1405 8 hl_psx::finish_deferred_overlays::{closure#2} @hl_psx
-# psoxide-pgo func: 29848 29858 8 hl_psx::finish_world_affine_candidates
-# psoxide-pgo func: 26995 27016 8 hl_psx::fix_projected_vertex
-# psoxide-pgo func: 30598 30627 8 hl_psx::flashlight_model_shade
-# psoxide-pgo func: 29106 29120 8 hl_psx::fog_rgb_word_no_flash
-# psoxide-pgo func: 29173 29180 8 hl_psx::fog_world_rgb
+# psoxide-pgo func: 3458 3462 8 hl_psx::face_needs_generic_emit
+# psoxide-pgo func: 7115 7132 8 hl_psx::fan_angle_q12
+# psoxide-pgo func: 7245 7247 8 hl_psx::fan_collision_disabled
+# psoxide-pgo func: 7099 7104 8 hl_psx::fan_logic_index
+# psoxide-pgo func: 7136 7141 8 hl_psx::fan_rotation
+# psoxide-pgo func: 789 790 8 hl_psx::far_view
+# psoxide-pgo func: 19123 19177 8 hl_psx::find_barney_target
+# psoxide-pgo func: 19184 19214 8 hl_psx::find_scientist_threat
+# psoxide-pgo func: 1365 1403 8 hl_psx::finish_deferred_overlays
+# psoxide-pgo func: 1370 1370 8 hl_psx::finish_deferred_overlays::{closure#0} @hl_psx
+# psoxide-pgo func: 1375 1376 8 hl_psx::finish_deferred_overlays::{closure#1} @hl_psx
+# psoxide-pgo func: 1398 1398 8 hl_psx::finish_deferred_overlays::{closure#2} @hl_psx
+# psoxide-pgo func: 29841 29851 8 hl_psx::finish_world_affine_candidates
+# psoxide-pgo func: 26988 27009 8 hl_psx::fix_projected_vertex
+# psoxide-pgo func: 30591 30620 8 hl_psx::flashlight_model_shade
+# psoxide-pgo func: 29099 29113 8 hl_psx::fog_rgb_word_no_flash
+# psoxide-pgo func: 29166 29173 8 hl_psx::fog_world_rgb
 # psoxide-pgo func: 266 267 5 hl_psx::hev::actor_kind
 # psoxide-pgo func: 283 289 5 hl_psx::hev::block_at
 # psoxide-pgo func: 381 382 5 hl_psx::hev::clear_queue
@@ -205,18 +205,18 @@
 # psoxide-pgo func: 239 240 5 hl_psx::hev::set_kind
 # psoxide-pgo func: 294 295 5 hl_psx::hev::spu_bytes
 # psoxide-pgo func: 157 178 6 hl_psx::hud::upload
-# psoxide-pgo func: 2839 2843 8 hl_psx::invalidate_weapon_tri_cache
-# psoxide-pgo func: 6486 6487 8 hl_psx::is_chapter_arrival
-# psoxide-pgo func: 31441 31454 8 hl_psx::is_intro_tram_floor_quad
-# psoxide-pgo func: 6858 6889 8 hl_psx::ladder_touch
-# psoxide-pgo func: 8670 8671 8 hl_psx::launch_landmark_origin
-# psoxide-pgo func: 35308 35315 8 hl_psx::load_accounted_map_chunk
-# psoxide-pgo func: 4761 4790 8 hl_psx::load_resident_viewmodels
-# psoxide-pgo func: 35297 35305 8 hl_psx::load_streamed_chunk
-# psoxide-pgo func: 12957 12969 8 hl_psx::logic_fire_door_close_target
-# psoxide-pgo func: 8609 8613 8 hl_psx::logic_manager_has_pending_events
-# psoxide-pgo func: 13172 13364 8 hl_psx::logic_pre_tick
-# psoxide-pgo func: 12906 12953 8 hl_psx::logic_process_events
+# psoxide-pgo func: 2832 2836 8 hl_psx::invalidate_weapon_tri_cache
+# psoxide-pgo func: 6479 6480 8 hl_psx::is_chapter_arrival
+# psoxide-pgo func: 31434 31447 8 hl_psx::is_intro_tram_floor_quad
+# psoxide-pgo func: 6851 6882 8 hl_psx::ladder_touch
+# psoxide-pgo func: 8663 8664 8 hl_psx::launch_landmark_origin
+# psoxide-pgo func: 35301 35308 8 hl_psx::load_accounted_map_chunk
+# psoxide-pgo func: 4754 4783 8 hl_psx::load_resident_viewmodels
+# psoxide-pgo func: 35290 35298 8 hl_psx::load_streamed_chunk
+# psoxide-pgo func: 12950 12962 8 hl_psx::logic_fire_door_close_target
+# psoxide-pgo func: 8602 8606 8 hl_psx::logic_manager_has_pending_events
+# psoxide-pgo func: 13165 13357 8 hl_psx::logic_pre_tick
+# psoxide-pgo func: 12899 12946 8 hl_psx::logic_process_events
 # psoxide-pgo func: 327 329 7 hl_psx::logic_state::event_caller
 # psoxide-pgo func: 303 312 7 hl_psx::logic_state::event_meta
 # psoxide-pgo func: 830 831 7 hl_psx::logic_state::pack_pendulum_phase
@@ -227,11 +227,11 @@
 # psoxide-pgo func: 733 787 7 hl_psx::logic_state::rotating_tick
 # psoxide-pgo func: 687 688 7 hl_psx::logic_state::tick_reached
 # psoxide-pgo func: 271 273 7 hl_psx::logic_state::unpack_landmark_axis
-# psoxide-pgo func: 8475 8480 8 hl_psx::logic_take_tracktrain_command
-# psoxide-pgo func: 13118 13130 8 hl_psx::logic_tick_pendulum
-# psoxide-pgo func: 13043 13061 8 hl_psx::logic_tick_rotating
-# psoxide-pgo func: 6717 6719 8 hl_psx::logic_valid_brush
-# psoxide-pgo func: 12090 12091 8 hl_psx::maker_delay
+# psoxide-pgo func: 8468 8473 8 hl_psx::logic_take_tracktrain_command
+# psoxide-pgo func: 13111 13123 8 hl_psx::logic_tick_pendulum
+# psoxide-pgo func: 13036 13054 8 hl_psx::logic_tick_rotating
+# psoxide-pgo func: 6710 6712 8 hl_psx::logic_valid_brush
+# psoxide-pgo func: 12083 12084 8 hl_psx::maker_delay
 # psoxide-pgo func: 146 150 9 hl_psx::map::q5_to_world_nearest
 # psoxide-pgo func: 121 122 9 hl_psx::map::rd_i16
 # psoxide-pgo func: 135 136 9 hl_psx::map::rd_i16_aligned
@@ -253,28 +253,28 @@
 # psoxide-pgo func: 182 187 11 hl_psx::mapsnap::rollback_to_entry
 # psoxide-pgo func: 72 73 11 hl_psx::mapsnap::slot
 # psoxide-pgo func: 249 250 8 hl_psx::model_capacity
-# psoxide-pgo func: 1138 1139 8 hl_psx::model_def
-# psoxide-pgo func: 4421 4422 8 hl_psx::model_local_scale
-# psoxide-pgo func: 4426 4428 8 hl_psx::model_local_scale_and_shift
-# psoxide-pgo func: 4412 4413 8 hl_psx::model_local_to_world_q12
+# psoxide-pgo func: 1131 1132 8 hl_psx::model_def
+# psoxide-pgo func: 4414 4415 8 hl_psx::model_local_scale
+# psoxide-pgo func: 4419 4421 8 hl_psx::model_local_scale_and_shift
+# psoxide-pgo func: 4405 4406 8 hl_psx::model_local_to_world_q12
 # psoxide-pgo func: 243 244 8 hl_psx::model_ptr
-# psoxide-pgo func: 4445 4446 8 hl_psx::model_unscale_depth
+# psoxide-pgo func: 4438 4439 8 hl_psx::model_unscale_depth
 # psoxide-pgo func: 64 69 12 hl_psx::monster_voice::voiced
 # psoxide-pgo func: 13 14 13 hl_psx::monsterjump::airborne
 # psoxide-pgo func: 10 11 13 hl_psx::monsterjump::environment_eligible
 # psoxide-pgo func: 147 149 14 hl_psx::music::poll
-# psoxide-pgo func: 30435 30461 8 hl_psx::native_affine_patch_mask
-# psoxide-pgo func: 27106 27116 8 hl_psx::next_proj_token
-# psoxide-pgo func: 30634 30645 8 hl_psx::off_display::<3> @hl_psx
-# psoxide-pgo func: 30634 30645 8 hl_psx::off_display::<4> @hl_psx
-# psoxide-pgo func: 573 588 8 hl_psx::outward_point
-# psoxide-pgo func: 574 574 8 hl_psx::outward_point::{closure#0} @hl_psx
-# psoxide-pgo func: 7213 7214 8 hl_psx::pendulum_accel_q19
-# psoxide-pgo func: 7225 7226 8 hl_psx::pendulum_angle_q12
-# psoxide-pgo func: 7258 7260 8 hl_psx::pendulum_collision_disabled
-# psoxide-pgo func: 7218 7219 8 hl_psx::pendulum_phase_q19
-# psoxide-pgo func: 7230 7235 8 hl_psx::pendulum_rotation
-# psoxide-pgo func: 13091 13096 8 hl_psx::pendulum_state
+# psoxide-pgo func: 30428 30454 8 hl_psx::native_affine_patch_mask
+# psoxide-pgo func: 27099 27109 8 hl_psx::next_proj_token
+# psoxide-pgo func: 30627 30638 8 hl_psx::off_display::<3> @hl_psx
+# psoxide-pgo func: 30627 30638 8 hl_psx::off_display::<4> @hl_psx
+# psoxide-pgo func: 566 581 8 hl_psx::outward_point
+# psoxide-pgo func: 567 567 8 hl_psx::outward_point::{closure#0} @hl_psx
+# psoxide-pgo func: 7206 7207 8 hl_psx::pendulum_accel_q19
+# psoxide-pgo func: 7218 7219 8 hl_psx::pendulum_angle_q12
+# psoxide-pgo func: 7251 7253 8 hl_psx::pendulum_collision_disabled
+# psoxide-pgo func: 7211 7212 8 hl_psx::pendulum_phase_q19
+# psoxide-pgo func: 7223 7228 8 hl_psx::pendulum_rotation
+# psoxide-pgo func: 13084 13089 8 hl_psx::pendulum_state
 # psoxide-pgo func: 116 117 15 hl_psx::phys::axial_dot_q5
 # psoxide-pgo func: 62 63 15 hl_psx::phys::base_xz
 # psoxide-pgo func: 1837 1839 15 hl_psx::phys::clear_player_touches
@@ -300,67 +300,67 @@
 # psoxide-pgo func: 46 47 15 hl_psx::phys::set_gravity_scale
 # psoxide-pgo func: 76 77 15 hl_psx::phys::set_longjump
 # psoxide-pgo func: 1498 1528 15 hl_psx::phys::trace_all
-# psoxide-pgo func: 35963 41344 8 hl_psx::play
-# psoxide-pgo func: 37022 37022 8 hl_psx::play::{closure#11} @hl_psx
-# psoxide-pgo func: 38236 38237 8 hl_psx::play::{closure#15} @hl_psx
-# psoxide-pgo func: 39543 39543 8 hl_psx::play::{closure#16} @hl_psx
-# psoxide-pgo func: 41016 41016 8 hl_psx::play::{closure#18} @hl_psx
-# psoxide-pgo func: 37020 37020 8 hl_psx::play::{closure#9} @hl_psx
+# psoxide-pgo func: 35956 41293 8 hl_psx::play
+# psoxide-pgo func: 37015 37015 8 hl_psx::play::{closure#11} @hl_psx
+# psoxide-pgo func: 38229 38230 8 hl_psx::play::{closure#15} @hl_psx
+# psoxide-pgo func: 39531 39531 8 hl_psx::play::{closure#16} @hl_psx
+# psoxide-pgo func: 40978 40978 8 hl_psx::play::{closure#18} @hl_psx
+# psoxide-pgo func: 37013 37013 8 hl_psx::play::{closure#9} @hl_psx
 # psoxide-pgo func: 186 187 16 hl_psx::player_rules::compass_fade
 # psoxide-pgo func: 100 106 16 hl_psx::player_rules::duck_window_next
 # psoxide-pgo func: 212 234 16 hl_psx::player_rules::step_tick
 # psoxide-pgo func: 245 250 16 hl_psx::player_rules::use_phase
-# psoxide-pgo func: 21252 21263 8 hl_psx::player_touches_pickup
-# psoxide-pgo func: 27049 27101 8 hl_psx::proj_quad_verts
-# psoxide-pgo func: 27144 27147 8 hl_psx::proj_submodel_vert
-# psoxide-pgo func: 27034 27037 8 hl_psx::proj_vert
-# psoxide-pgo func: 32676 32765 8 hl_psx::project_hmd7_model_inner
-# psoxide-pgo func: 32610 32624 8 hl_psx::project_hmd7_triangle_words
-# psoxide-pgo func: 22253 22267 8 hl_psx::project_world_point
-# psoxide-pgo func: 2624 2629 8 hl_psx::projected_soa_get
-# psoxide-pgo func: 2634 2637 8 hl_psx::projected_soa_set
-# psoxide-pgo func: 3992 3996 8 hl_psx::prop_ai_set_target_visible
-# psoxide-pgo func: 4015 4016 8 hl_psx::prop_attack_cooldown
-# psoxide-pgo func: 4020 4022 8 hl_psx::prop_attack_cooldown_set
-# psoxide-pgo func: 4026 4029 8 hl_psx::prop_attack_cooldown_tick
-# psoxide-pgo func: 1032 1041 8 hl_psx::prop_authored_tilt
-# psoxide-pgo func: 1011 1012 8 hl_psx::prop_body_value
-# psoxide-pgo func: 3940 3942 8 hl_psx::prop_hotlist_count
-# psoxide-pgo func: 1173 1174 8 hl_psx::prop_is_combat_hostile
-# psoxide-pgo func: 15823 15824 8 hl_psx::prop_is_human
-# psoxide-pgo func: 15813 15814 8 hl_psx::prop_is_scientist
-# psoxide-pgo func: 4048 4049 8 hl_psx::prop_is_talking
-# psoxide-pgo func: 14377 14396 8 hl_psx::prop_mouth_open
-# psoxide-pgo func: 15412 15418 8 hl_psx::prop_render_radius
-# psoxide-pgo func: 15772 15805 8 hl_psx::prop_render_transform
-# psoxide-pgo func: 4001 4002 8 hl_psx::prop_scientist_flag
-# psoxide-pgo func: 4006 4010 8 hl_psx::prop_scientist_set_flag
-# psoxide-pgo func: 15295 15296 8 hl_psx::prop_target
-# psoxide-pgo func: 27256 27298 8 hl_psx::push_tri_uv_words_packed
-# psoxide-pgo func: 27271 27282 8 hl_psx::push_tri_uv_words_packed::{closure#0} @hl_psx
-# psoxide-pgo func: 26367 26368 8 hl_psx::pvs_cam_leaf_load
-# psoxide-pgo func: 26372 26373 8 hl_psx::pvs_cam_leaf_store
-# psoxide-pgo func: 18319 18322 8 hl_psx::pvs_entry_kind
-# psoxide-pgo func: 3600 3605 8 hl_psx::pvs_entry_sealed
-# psoxide-pgo func: 26761 26770 8 hl_psx::pvs_leaf_visible
+# psoxide-pgo func: 21245 21256 8 hl_psx::player_touches_pickup
+# psoxide-pgo func: 27042 27094 8 hl_psx::proj_quad_verts
+# psoxide-pgo func: 27137 27140 8 hl_psx::proj_submodel_vert
+# psoxide-pgo func: 27027 27030 8 hl_psx::proj_vert
+# psoxide-pgo func: 32669 32758 8 hl_psx::project_hmd7_model_inner
+# psoxide-pgo func: 32603 32617 8 hl_psx::project_hmd7_triangle_words
+# psoxide-pgo func: 22246 22260 8 hl_psx::project_world_point
+# psoxide-pgo func: 2617 2622 8 hl_psx::projected_soa_get
+# psoxide-pgo func: 2627 2630 8 hl_psx::projected_soa_set
+# psoxide-pgo func: 3985 3989 8 hl_psx::prop_ai_set_target_visible
+# psoxide-pgo func: 4008 4009 8 hl_psx::prop_attack_cooldown
+# psoxide-pgo func: 4013 4015 8 hl_psx::prop_attack_cooldown_set
+# psoxide-pgo func: 4019 4022 8 hl_psx::prop_attack_cooldown_tick
+# psoxide-pgo func: 1025 1034 8 hl_psx::prop_authored_tilt
+# psoxide-pgo func: 1004 1005 8 hl_psx::prop_body_value
+# psoxide-pgo func: 3933 3935 8 hl_psx::prop_hotlist_count
+# psoxide-pgo func: 1166 1167 8 hl_psx::prop_is_combat_hostile
+# psoxide-pgo func: 15816 15817 8 hl_psx::prop_is_human
+# psoxide-pgo func: 15806 15807 8 hl_psx::prop_is_scientist
+# psoxide-pgo func: 4041 4042 8 hl_psx::prop_is_talking
+# psoxide-pgo func: 14370 14389 8 hl_psx::prop_mouth_open
+# psoxide-pgo func: 15405 15411 8 hl_psx::prop_render_radius
+# psoxide-pgo func: 15765 15798 8 hl_psx::prop_render_transform
+# psoxide-pgo func: 3994 3995 8 hl_psx::prop_scientist_flag
+# psoxide-pgo func: 3999 4003 8 hl_psx::prop_scientist_set_flag
+# psoxide-pgo func: 15288 15289 8 hl_psx::prop_target
+# psoxide-pgo func: 27249 27291 8 hl_psx::push_tri_uv_words_packed
+# psoxide-pgo func: 27264 27275 8 hl_psx::push_tri_uv_words_packed::{closure#0} @hl_psx
+# psoxide-pgo func: 26360 26361 8 hl_psx::pvs_cam_leaf_load
+# psoxide-pgo func: 26365 26366 8 hl_psx::pvs_cam_leaf_store
+# psoxide-pgo func: 18312 18315 8 hl_psx::pvs_entry_kind
+# psoxide-pgo func: 3593 3598 8 hl_psx::pvs_entry_sealed
+# psoxide-pgo func: 26754 26763 8 hl_psx::pvs_leaf_visible
 # psoxide-pgo func: 17 18 17 hl_psx::render::close_inv_q12
 # psoxide-pgo func: 11 12 17 hl_psx::render::projection_h
 # psoxide-pgo func: 25 26 17 hl_psx::render::quad_outside_vertical
 # psoxide-pgo func: 7 8 17 hl_psx::render::set_projection_h
-# psoxide-pgo func: 3504 3506 8 hl_psx::reset_emit_policy
-# psoxide-pgo func: 7240 7244 8 hl_psx::rotating_local_center
-# psoxide-pgo func: 12982 12987 8 hl_psx::rotating_state
-# psoxide-pgo func: 5248 5249 8 hl_psx::scale12
-# psoxide-pgo func: 5253 5254 8 hl_psx::scale12_vec
+# psoxide-pgo func: 3497 3499 8 hl_psx::reset_emit_policy
+# psoxide-pgo func: 7233 7237 8 hl_psx::rotating_local_center
+# psoxide-pgo func: 12975 12980 8 hl_psx::rotating_state
+# psoxide-pgo func: 5241 5242 8 hl_psx::scale12
+# psoxide-pgo func: 5246 5247 8 hl_psx::scale12_vec
 # psoxide-pgo func: 153 154 18 hl_psx::scientist_logic::hello_duration_ticks
-# psoxide-pgo func: 19837 19842 8 hl_psx::scientist_ordinal
-# psoxide-pgo func: 3040 3042 8 hl_psx::scratch_bit
-# psoxide-pgo func: 3046 3050 8 hl_psx::scratch_bit_assign
-# psoxide-pgo func: 2641 2642 8 hl_psx::scratch_get
-# psoxide-pgo func: 2650 2655 8 hl_psx::scratch_set
-# psoxide-pgo func: 3480 3492 8 hl_psx::set_emit_cached_face
-# psoxide-pgo func: 3473 3476 8 hl_psx::set_emit_face
-# psoxide-pgo func: 26989 26991 8 hl_psx::set_view_fix
+# psoxide-pgo func: 19830 19835 8 hl_psx::scientist_ordinal
+# psoxide-pgo func: 3033 3035 8 hl_psx::scratch_bit
+# psoxide-pgo func: 3039 3043 8 hl_psx::scratch_bit_assign
+# psoxide-pgo func: 2634 2635 8 hl_psx::scratch_get
+# psoxide-pgo func: 2643 2648 8 hl_psx::scratch_set
+# psoxide-pgo func: 3473 3485 8 hl_psx::set_emit_cached_face
+# psoxide-pgo func: 3466 3469 8 hl_psx::set_emit_face
+# psoxide-pgo func: 26982 26984 8 hl_psx::set_view_fix
 # psoxide-pgo func: 170 172 19 hl_psx::settings::apply_all
 # psoxide-pgo func: 161 167 19 hl_psx::settings::apply_audio
 # psoxide-pgo func: 154 157 19 hl_psx::settings::apply_display
@@ -379,92 +379,92 @@
 # psoxide-pgo func: 535 537 20 hl_psx::sfx::trace
 # psoxide-pgo func: 462 463 20 hl_psx::sfx::update_map_loops
 # psoxide-pgo func: 399 400 20 hl_psx::sfx::voice_ticks
-# psoxide-pgo func: 27760 27772 8 hl_psx::soft_cell_mid
+# psoxide-pgo func: 27753 27765 8 hl_psx::soft_cell_mid
 # psoxide-pgo func: 337 354 21 hl_psx::species::idle_think
 # psoxide-pgo func: 330 331 21 hl_psx::species::idle_thinks
-# psoxide-pgo func: 30923 31033 8 hl_psx::split_examine
-# psoxide-pgo func: 30940 30943 8 hl_psx::split_examine::{closure#0} @hl_psx
-# psoxide-pgo func: 30946 30952 8 hl_psx::split_examine::{closure#1} @hl_psx
-# psoxide-pgo func: 31008 31008 8 hl_psx::split_examine::{closure#2} @hl_psx
-# psoxide-pgo func: 30877 30878 8 hl_psx::split_level
-# psoxide-pgo func: 31038 31072 8 hl_psx::split_walk_entry
+# psoxide-pgo func: 30916 31026 8 hl_psx::split_examine
+# psoxide-pgo func: 30933 30936 8 hl_psx::split_examine::{closure#0} @hl_psx
+# psoxide-pgo func: 30939 30945 8 hl_psx::split_examine::{closure#1} @hl_psx
+# psoxide-pgo func: 31001 31001 8 hl_psx::split_examine::{closure#2} @hl_psx
+# psoxide-pgo func: 30870 30871 8 hl_psx::split_level
+# psoxide-pgo func: 31031 31065 8 hl_psx::split_walk_entry
 # psoxide-pgo func: 282 293 22 hl_psx::sprite::def
 # psoxide-pgo func: 277 278 22 hl_psx::sprite::n_sprites
-# psoxide-pgo func: 4097 4100 8 hl_psx::sprite_is_visible
-# psoxide-pgo func: 4104 4115 8 hl_psx::sprite_set_visible
-# psoxide-pgo func: 6224 6231 8 hl_psx::standalone_room_starts_with_hev
-# psoxide-pgo func: 3573 3592 8 hl_psx::static_brush_cacheable
-# psoxide-pgo func: 13101 13104 8 hl_psx::store_pendulum_state
-# psoxide-pgo func: 12992 12996 8 hl_psx::store_rotating_state
-# psoxide-pgo func: 3727 3730 8 hl_psx::sway_uv
-# psoxide-pgo func: 3734 3739 8 hl_psx::sway_uv3
-# psoxide-pgo func: 3010 3013 8 hl_psx::tex_anim_tick
-# psoxide-pgo func: 1577 1578 8 hl_psx::tex_slot_ptr
-# psoxide-pgo func: 20299 20442 8 hl_psx::tick_barney
-# psoxide-pgo func: 25410 25442 8 hl_psx::tick_debris
-# psoxide-pgo func: 25621 25626 8 hl_psx::tick_explosions
-# psoxide-pgo func: 20959 21202 8 hl_psx::tick_props
-# psoxide-pgo func: 20482 20651 8 hl_psx::tick_scientist
-# psoxide-pgo func: 12410 12466 8 hl_psx::tick_screen_fx
-# psoxide-pgo func: 18686 18816 8 hl_psx::tick_trains
-# psoxide-pgo func: 6712 6713 8 hl_psx::time_reached
-# psoxide-pgo func: 18417 18418 8 hl_psx::train_corner_teleports
-# psoxide-pgo func: 18412 18413 8 hl_psx::train_corner_wait_for_trigger
-# psoxide-pgo func: 18423 18427 8 hl_psx::train_corner_wait_ticks
-# psoxide-pgo func: 18432 18434 8 hl_psx::train_cycle_start
-# psoxide-pgo func: 5768 5775 8 hl_psx::train_hud_position
-# psoxide-pgo func: 18374 18375 8 hl_psx::train_logic_index
-# psoxide-pgo func: 18442 18451 8 hl_psx::train_next_corner
-# psoxide-pgo func: 18451 18451 8 hl_psx::train_next_corner::{closure#0} @hl_psx
-# psoxide-pgo func: 5576 5582 8 hl_psx::tram_authored_heading_q28
-# psoxide-pgo func: 27302 27320 8 hl_psx::tram_cache_capture_tri
+# psoxide-pgo func: 4090 4093 8 hl_psx::sprite_is_visible
+# psoxide-pgo func: 4097 4108 8 hl_psx::sprite_set_visible
+# psoxide-pgo func: 6217 6224 8 hl_psx::standalone_room_starts_with_hev
+# psoxide-pgo func: 3566 3585 8 hl_psx::static_brush_cacheable
+# psoxide-pgo func: 13094 13097 8 hl_psx::store_pendulum_state
+# psoxide-pgo func: 12985 12989 8 hl_psx::store_rotating_state
+# psoxide-pgo func: 3720 3723 8 hl_psx::sway_uv
+# psoxide-pgo func: 3727 3732 8 hl_psx::sway_uv3
+# psoxide-pgo func: 3003 3006 8 hl_psx::tex_anim_tick
+# psoxide-pgo func: 1570 1571 8 hl_psx::tex_slot_ptr
+# psoxide-pgo func: 20292 20435 8 hl_psx::tick_barney
+# psoxide-pgo func: 25403 25435 8 hl_psx::tick_debris
+# psoxide-pgo func: 25614 25619 8 hl_psx::tick_explosions
+# psoxide-pgo func: 20952 21195 8 hl_psx::tick_props
+# psoxide-pgo func: 20475 20644 8 hl_psx::tick_scientist
+# psoxide-pgo func: 12403 12459 8 hl_psx::tick_screen_fx
+# psoxide-pgo func: 18679 18809 8 hl_psx::tick_trains
+# psoxide-pgo func: 6705 6706 8 hl_psx::time_reached
+# psoxide-pgo func: 18410 18411 8 hl_psx::train_corner_teleports
+# psoxide-pgo func: 18405 18406 8 hl_psx::train_corner_wait_for_trigger
+# psoxide-pgo func: 18416 18420 8 hl_psx::train_corner_wait_ticks
+# psoxide-pgo func: 18425 18427 8 hl_psx::train_cycle_start
+# psoxide-pgo func: 5761 5768 8 hl_psx::train_hud_position
+# psoxide-pgo func: 18367 18368 8 hl_psx::train_logic_index
+# psoxide-pgo func: 18435 18444 8 hl_psx::train_next_corner
+# psoxide-pgo func: 18444 18444 8 hl_psx::train_next_corner::{closure#0} @hl_psx
+# psoxide-pgo func: 5569 5575 8 hl_psx::tram_authored_heading_q28
+# psoxide-pgo func: 27295 27313 8 hl_psx::tram_cache_capture_tri
 # psoxide-pgo func: 194 196 23 hl_psx::tram_logic::add_camera_step_q16
 # psoxide-pgo func: 384 388 23 hl_psx::tram_logic::rider_motion_decision
 # psoxide-pgo func: 220 221 23 hl_psx::tram_logic::visible_yaw_q12
 # psoxide-pgo func: 229 230 23 hl_psx::tram_logic::world_rotation_angle_q8
-# psoxide-pgo func: 5567 5571 8 hl_psx::tram_reference_waypoint
-# psoxide-pgo func: 5783 5787 8 hl_psx::tram_should_carry_player
-# psoxide-pgo func: 5328 5335 8 hl_psx::tram_step_for_speed
-# psoxide-pgo func: 5590 5591 8 hl_psx::tram_world_rotation
-# psoxide-pgo func: 30775 30785 8 hl_psx::tri_fits_gpu
-# psoxide-pgo func: 28520 28873 8 hl_psx::try_emit_quad_ctx
-# psoxide-pgo func: 28564 28564 8 hl_psx::try_emit_quad_ctx::{closure#0} @hl_psx
-# psoxide-pgo func: 28649 28651 8 hl_psx::try_emit_quad_ctx::{closure#1} @hl_psx
-# psoxide-pgo func: 28817 28818 8 hl_psx::try_emit_quad_ctx::{closure#2} @hl_psx
-# psoxide-pgo func: 28823 28837 8 hl_psx::try_emit_quad_ctx::{closure#3} @hl_psx
-# psoxide-pgo func: 26356 26357 8 hl_psx::valid_pvs_leaf
-# psoxide-pgo func: 4321 4323 8 hl_psx::view_rotation
-# psoxide-pgo func: 4332 4359 8 hl_psx::view_rotation_roll
-# psoxide-pgo func: 33920 33926 8 hl_psx::viewmodel_anim_finished
-# psoxide-pgo func: 4795 4802 8 hl_psx::viewmodel_for
-# psoxide-pgo func: 34650 34653 8 hl_psx::viewmodel_offset
-# psoxide-pgo func: 34651 34651 8 hl_psx::viewmodel_offset::{closure#0} @hl_psx
-# psoxide-pgo func: 33948 33950 8 hl_psx::viewmodel_otz
-# psoxide-pgo func: 33932 33938 8 hl_psx::viewmodel_rot
-# psoxide-pgo func: 34662 34668 8 hl_psx::vm_normal_shade
-# psoxide-pgo func: 4721 4749 8 hl_psx::vm_switch_pump
-# psoxide-pgo func: 1693 1694 8 hl_psx::vm_tail_capacity_words
+# psoxide-pgo func: 5560 5564 8 hl_psx::tram_reference_waypoint
+# psoxide-pgo func: 5776 5780 8 hl_psx::tram_should_carry_player
+# psoxide-pgo func: 5321 5328 8 hl_psx::tram_step_for_speed
+# psoxide-pgo func: 5583 5584 8 hl_psx::tram_world_rotation
+# psoxide-pgo func: 30768 30778 8 hl_psx::tri_fits_gpu
+# psoxide-pgo func: 28513 28866 8 hl_psx::try_emit_quad_ctx
+# psoxide-pgo func: 28557 28557 8 hl_psx::try_emit_quad_ctx::{closure#0} @hl_psx
+# psoxide-pgo func: 28642 28644 8 hl_psx::try_emit_quad_ctx::{closure#1} @hl_psx
+# psoxide-pgo func: 28810 28811 8 hl_psx::try_emit_quad_ctx::{closure#2} @hl_psx
+# psoxide-pgo func: 28816 28830 8 hl_psx::try_emit_quad_ctx::{closure#3} @hl_psx
+# psoxide-pgo func: 26349 26350 8 hl_psx::valid_pvs_leaf
+# psoxide-pgo func: 4314 4316 8 hl_psx::view_rotation
+# psoxide-pgo func: 4325 4352 8 hl_psx::view_rotation_roll
+# psoxide-pgo func: 33913 33919 8 hl_psx::viewmodel_anim_finished
+# psoxide-pgo func: 4788 4795 8 hl_psx::viewmodel_for
+# psoxide-pgo func: 34643 34646 8 hl_psx::viewmodel_offset
+# psoxide-pgo func: 34644 34644 8 hl_psx::viewmodel_offset::{closure#0} @hl_psx
+# psoxide-pgo func: 33941 33943 8 hl_psx::viewmodel_otz
+# psoxide-pgo func: 33925 33931 8 hl_psx::viewmodel_rot
+# psoxide-pgo func: 34655 34661 8 hl_psx::vm_normal_shade
+# psoxide-pgo func: 4714 4742 8 hl_psx::vm_switch_pump
+# psoxide-pgo func: 1686 1687 8 hl_psx::vm_tail_capacity_words
 # psoxide-pgo func: 431 435 25 hl_psx::vram::rect_fits_vram
 # psoxide-pgo func: 173 179 25 hl_psx::vram::reset_allocators
 # psoxide-pgo func: 354 428 25 hl_psx::vram::upload_one
 # psoxide-pgo func: 193 204 25 hl_psx::vram::upload_tex_chunk_raw
 # psoxide-pgo func: 148 149 25 hl_psx::vram::vm_checkpoint
-# psoxide-pgo func: 612 619 8 hl_psx::warp_cell_edge_over
-# psoxide-pgo func: 3156 3162 8 hl_psx::water_ent
-# psoxide-pgo func: 3167 3168 8 hl_psx::water_ent_count
-# psoxide-pgo func: 6790 6844 8 hl_psx::water_state
-# psoxide-pgo func: 21661 21662 8 hl_psx::wdef_of
-# psoxide-pgo func: 2815 2816 8 hl_psx::weapon_projected_ptrs
-# psoxide-pgo func: 2826 2827 8 hl_psx::weapon_tri_indices_ptr
-# psoxide-pgo func: 2821 2822 8 hl_psx::weapon_tri_records_ptr
-# psoxide-pgo func: 21666 21670 8 hl_psx::weapon_viewmodel
+# psoxide-pgo func: 605 612 8 hl_psx::warp_cell_edge_over
+# psoxide-pgo func: 3149 3155 8 hl_psx::water_ent
+# psoxide-pgo func: 3160 3161 8 hl_psx::water_ent_count
+# psoxide-pgo func: 6783 6837 8 hl_psx::water_state
+# psoxide-pgo func: 21654 21655 8 hl_psx::wdef_of
+# psoxide-pgo func: 2808 2809 8 hl_psx::weapon_projected_ptrs
+# psoxide-pgo func: 2819 2820 8 hl_psx::weapon_tri_indices_ptr
+# psoxide-pgo func: 2814 2815 8 hl_psx::weapon_tri_records_ptr
+# psoxide-pgo func: 21659 21663 8 hl_psx::weapon_viewmodel
 # psoxide-pgo func: 38 39 26 hl_psx::weaponbox::is_removed
 # psoxide-pgo func: 19 25 26 hl_psx::weaponbox::original_id
 # psoxide-pgo func: 73 75 26 hl_psx::weaponbox::touches
 # psoxide-pgo func: 75 76 26 hl_psx::weaponbox::touches::{closure#0} @hl_psx
-# psoxide-pgo func: 26304 26321 8 hl_psx::world_order_key
-# psoxide-pgo func: 27122 27139 8 hl_psx::world_projection_token
-hl_psx::play:7372221:0
+# psoxide-pgo func: 26297 26314 8 hl_psx::world_order_key
+# psoxide-pgo func: 27115 27132 8 hl_psx::world_projection_token
+hl_psx::play:7371320:0
  0: 1
  9: hl_psx::settings::apply_all:14
   1: hl_psx::settings::apply_display:5
@@ -480,11 +480,11 @@ hl_psx::play:7372221:0
    2: 2
    3: 2
    5: psx_spu::set_main_volume:3
+    1: <psx_spu::Volume>::register_bits:2
+     1: 2
     1: psx_spu::write_reg16:1
      7: core::ptr::write_volatile::<u16> @hl_psx:1
       11: 1
-    1: <psx_spu::Volume>::register_bits:2
-     1: 2
  15: 2
  22: <[&str]>::get::<usize> @hl_psx:2
   4: <usize as core::slice::index::SliceIndex<[&str]>>::get @hl_psx:2
@@ -607,14 +607,14 @@ hl_psx::play:7372221:0
        1: <core::result::Result<&[u8; 4], core::array::TryFromSliceError>>::copied @hl_psx:1
         7: 1
     6: 2
-    6: <[u8] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:1
-     1.1: <core::ops::range::Range<usize> as core::slice::index::SliceIndex<[u8]>>::index @hl_psx:1
-      2: <usize>::checked_sub:1
-       6: 1
     6: <[u8] as core::cmp::PartialEq<[u8; 4]>>::eq @hl_psx:1
      2: <[u8; 4] as core::cmp::PartialEq>::eq @hl_psx:1
       1: <u8 as core::array::equality::SpecArrayEq<u8, 4>>::spec_eq @hl_psx:1
        4: 1
+    6: <[u8] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:1
+     1.1: <core::ops::range::Range<usize> as core::slice::index::SliceIndex<[u8]>>::index @hl_psx:1
+      2: <usize>::checked_sub:1
+       6: 1
   10: hl_psx::sfx::mute_room_effect:2
    1: psx_spu::stop_reverb:2
     1: psx_spu::set_reverb_depth:1
@@ -632,34 +632,34 @@ hl_psx::play:7372221:0
     1: <core::result::Result<&[u8; 4], core::array::TryFromSliceError>>::copied @hl_psx:1
      7: 1
  173: hl_psx::load_accounted_map_chunk:5
+  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:1
+   2: 1
   6: hl_psx::load_streamed_chunk:3
    2: hl_psx::cdstream::target::load_chunk_decompressed:2
     2: 1
     3: 1
    3: 1
-  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:1
-   2: 1
   7: hl_psx::account_streamed_chunk:1
    7: 1
  182: 1
  195: hl_psx::load_accounted_map_chunk:6
+  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:1
+   2: 1
   6: hl_psx::load_streamed_chunk:4
    2: hl_psx::cdstream::target::load_chunk_decompressed:4
     2: 1
     3: 3
-  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:1
-   2: 1
   7: hl_psx::account_streamed_chunk:1
    7: <u32>::saturating_add:1
     1: 1
  213: hl_psx::load_accounted_map_chunk:9
+  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:1
+   2: 1
   6: hl_psx::load_streamed_chunk:4
    2: hl_psx::cdstream::target::load_chunk_decompressed:3
     2: 1
     3: 2
    3: 1
-  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:1
-   2: 1
   7: hl_psx::account_streamed_chunk:4
    7: <u32>::saturating_add:2
     1: 2
@@ -671,6 +671,9 @@ hl_psx::play:7372221:0
  228: hl_psx::draw_next_loading_screen:1
   2: 1
  230: hl_psx::load_accounted_map_chunk:11
+  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:3
+   1: 1
+   2: 2
   6: hl_psx::load_streamed_chunk:5
    2: hl_psx::cdstream::target::load_chunk_decompressed:3
     2: 1
@@ -679,16 +682,13 @@ hl_psx::play:7372221:0
    3: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad>>::is_none @hl_psx:1
     1: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad>>::is_some @hl_psx:1
      1: 1
-  6: <core::option::Option<psx_goldsrc::chunk_stream::ChunkLoad> as core::ops::try_trait::Try>::branch @hl_psx:3
-   1: 1
-   2: 2
   7: hl_psx::account_streamed_chunk:3
    7: <u32>::saturating_add:1
     1: 1
    8: 2
- 254: <usize>::next_multiple_of:1
-  1: 1
  254: <usize>::div_ceil:1
+  1: 1
+ 254: <usize>::next_multiple_of:1
   1: 1
  257: hl_psx::draw_next_loading_screen:3
   1: 2
@@ -1008,10 +1008,10 @@ hl_psx::play:7372221:0
     4: 2
     4: <psx_asset::hmd8::Model>::clip_count:1
      1: 1
-    4: <usize>::saturating_sub:2
-     1: 2
     4: <usize as core::cmp::Ord>::min @hl_psx:4
      4: 4
+    4: <usize>::saturating_sub:2
+     1: 2
     5: 2
     5: psx_asset::hmd8::fits:2
      1: 2
@@ -1132,10 +1132,10 @@ hl_psx::play:7372221:0
  1340: <u32>::wrapping_sub:496
   1: 496
  1342.1: 485
- 1344: <u32>::saturating_sub:483
-  1: 483
  1344: <u32 as core::cmp::Ord>::max @hl_psx:490
   4.24: 490
+ 1344: <u32>::saturating_sub:483
+  1: 483
  1348: 454
  1355: 411
  1355: <psx_goldsrc::semantic_input::Sample>::held:465
@@ -1338,10 +1338,10 @@ hl_psx::play:7372221:0
       1: 2
     10: hl_psx::logic_state::pendulum_accelerate:3
      15: 1
-     16: <i32>::abs:1
-      4: 1
      16: <i32 as core::cmp::Ord>::max @hl_psx:1
       4.2: 1
+     16: <i32>::abs:1
+      4: 1
     28: hl_psx::logic_state::pendulum_think_index:249
      1: 249
     29: hl_psx::logic_state::pendulum_heartbeat_ticks:670
@@ -1364,10 +1364,10 @@ hl_psx::play:7372221:0
      14: 109
      15: 110
      15.3: 60
-     16: <i32>::abs:115
-      4: 115
      16: <i32 as core::cmp::Ord>::max @hl_psx:117
       4.2: 117
+     16: <i32>::abs:115
+      4: 115
      17: 84
      17: <i32 as core::cmp::Ord>::clamp:108
       9: 108
@@ -1404,11 +1404,11 @@ hl_psx::play:7372221:0
   79: 3
   80.1: 5
   81: 3
+  81: <u16>::wrapping_add:3
+   1.1: 3
   81: hl_psx::maker_delay:4
    1: <u16 as core::cmp::Ord>::min @hl_psx:4
     4: 4
-  81: <u16>::wrapping_add:3
-   1.1: 3
   82: 3
   99: 3359
   100: 3465
@@ -1585,6 +1585,8 @@ hl_psx::play:7372221:0
   44: 335
   45: 301
   46: 322
+  46: <i32 as core::cmp::Ord>::max @hl_psx:331
+   4.2: 331
   46: psx_math::int32::isqrt_i32:11343
    1: 319
    4: psx_math::int32::isqrt_u32:11024
@@ -1592,8 +1594,6 @@ hl_psx::play:7372221:0
     6.1: 2862
     7: 2838
     13: 2858
-  46: <i32 as core::cmp::Ord>::max @hl_psx:331
-   4.2: 331
   50: <u16 as core::cmp::Ord>::max @hl_psx:311
    4.4: 311
   50.1: 331
@@ -2186,10 +2186,10 @@ hl_psx::play:7372221:0
  2719: 491
  2720: 485
  2721: 456
- 2723: hl_psx::phys::gravity_scale:464
-  1: 464
  2723: <i32 as core::cmp::Ord>::clamp:475
   9.36: 475
+ 2723: hl_psx::phys::gravity_scale:464
+  1: 464
  2724: hl_psx::settings::skill:912
   1: 427
   1: <usize as core::cmp::Ord>::min @hl_psx:485
@@ -2664,23 +2664,23 @@ hl_psx::play:7372221:0
    4: 449
   4.1: 433
  3504: 459
- 3525: 437
- 3525: <psx_tick::FixedClock>::phase_q12:1763
+ 3524: 437
+ 3524: <psx_tick::FixedClock>::phase_q12:1763
   1: <u32>::wrapping_sub:466
    1: 466
   3: 439
   6: 433
   6.3: 425
- 3525: psx_rt::interrupts::vblank_count:443
+ 3524: psx_rt::interrupts::vblank_count:443
   4.2: core::ptr::read_volatile::<u32> @hl_psx:443
    11.2: 443
- 3531: 414
- 3532: 429
- 3539: 444
- 3544: 465
- 3559: 457
- 3561: 422
- 3561: <psx_gte_core::math::Mat3I16>::rotate_y:2191
+ 3529: 414
+ 3530: 429
+ 3535: 444
+ 3540: 465
+ 3555: 457
+ 3557: 422
+ 3557: <psx_gte_core::math::Mat3I16>::rotate_y:2191
   1: psx_gte_core::transform::cos_1_3_12:1305
    2: <u16>::wrapping_add:446
     1: 446
@@ -2690,24 +2690,24 @@ hl_psx::play:7372221:0
   2: psx_gte_core::transform::sin_1_3_12:886
    1.1: 438
    1.3: 448
- 3561: <u16>::wrapping_sub:448
+ 3557: <u16>::wrapping_sub:448
   1: 448
- 3563: 459
- 3566: 447
- 3566: <i32 as core::cmp::Ord>::clamp:866
+ 3559: 459
+ 3562: 447
+ 3562: <i32 as core::cmp::Ord>::clamp:866
   9.9: 447
   11.9: 419
- 3572: 465
- 3572: <i32 as core::cmp::Ord>::clamp:450
+ 3568: 465
+ 3568: <i32 as core::cmp::Ord>::clamp:450
   9.12: 450
- 3573: 448
- 3574: 439
- 3575: 9
- 3575: <u16 as core::cmp::Ord>::max @hl_psx:10
+ 3569: 448
+ 3570: 439
+ 3571: 9
+ 3571: <u16 as core::cmp::Ord>::max @hl_psx:10
   4.9: 10
- 3575.4: 7
- 3583: 7
- 3583: hl_psx::play::{closure#16} @hl_psx:36
+ 3571.4: 7
+ 3576: 7
+ 3576: hl_psx::play::{closure#16} @hl_psx:36
   0: 5
   0: <psx_fx::rng::LcgRng>::next:22
    1: 9
@@ -2716,18 +2716,18 @@ hl_psx::play:7372221:0
    1: <u32>::wrapping_mul:7
     1: 7
   0.3: 9
- 3584: 7
- 3584: hl_psx::play::{closure#16} @hl_psx:16
+ 3577: 7
+ 3577: hl_psx::play::{closure#16} @hl_psx:16
   0: <psx_fx::rng::LcgRng>::next:6
    1: <u32>::wrapping_add:2
     1: 2
    1: <u32>::wrapping_mul:4
     1: 4
   0.3: 10
- 3585: <i32 as core::cmp::Ord>::clamp:7
+ 3578: <i32 as core::cmp::Ord>::clamp:7
   9.15: 7
- 3586: 6
- 3586: hl_psx::play::{closure#16} @hl_psx:40
+ 3579: 6
+ 3579: hl_psx::play::{closure#16} @hl_psx:40
   0: 4
   0: <psx_fx::rng::LcgRng>::next:21
    1: 6
@@ -2737,14 +2737,14 @@ hl_psx::play:7372221:0
     1: 7
   0.1: 8
   0.3: 7
- 3590: 436
- 3591: psx_gte::scene::set_projection_plane:468
+ 3583: 436
+ 3584: psx_gte::scene::set_projection_plane:468
   65468: 468
- 3592: hl_psx::render::set_projection_h:455
+ 3585: hl_psx::render::set_projection_h:455
   1: <psx_goldsrc::render::FullView>::set_projection_h:455
    1: 455
- 3593: 439
- 3594: psx_gte::scene::load_rotation:4351
+ 3586: 439
+ 3587: psx_gte::scene::load_rotation:4351
   1: 453
   2: 438
   3: 463
@@ -2755,38 +2755,38 @@ hl_psx::play:7372221:0
   12.2: 444
   12.3: 434
   12.4: 407
- 3595: 445
- 3596: 449
- 3596: hl_psx::dot12:456
+ 3588: 445
+ 3589: 449
+ 3589: hl_psx::dot12:456
   1: 456
- 3597: 419
- 3597: hl_psx::dot12:475
+ 3590: 419
+ 3590: hl_psx::dot12:475
   1: 475
- 3598: 444
- 3598: hl_psx::dot12:463
+ 3591: 444
+ 3591: hl_psx::dot12:463
   1: 463
- 3600: psx_gte::scene::load_translation:1308
+ 3593: psx_gte::scene::load_translation:1308
   65502.7: 435
   65502.8: 445
   65502.9: 428
- 3601: hl_psx::set_view_fix:924
+ 3594: hl_psx::set_view_fix:924
   1: 475
   2: 449
- 3606: 437
- 3606.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:454
+ 3599: 437
+ 3599.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:454
   1.4: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:454
    1.2: 454
- 3607.1: hl_psx::project_world_point:3
+ 3600.1: hl_psx::project_world_point:3
   1: hl_psx::dot12:1
    1: 1
   8.3: 1
   10: 1
- 3623: 419
- 3626: <u16>::wrapping_add:456
+ 3613: 419
+ 3616: <u16>::wrapping_add:456
   1.1: 456
- 3627: 445
- 3631: 454
- 3631: hl_psx::world_projection_token:3906
+ 3617: 445
+ 3621: 454
+ 3621: hl_psx::world_projection_token:3906
   6: 463
   12: 448
   12: <hl_psx::WorldProjectionKey as core::cmp::PartialEq>::eq:1210
@@ -2807,13 +2807,13 @@ hl_psx::play:7372221:0
    5: 1
   16: 311
   17: 268
- 3644: psx_goldsrc::driver::with::<(), hl_psx::play::{closure#17}> @hl_psx:450
+ 3634: psx_goldsrc::driver::with::<(), hl_psx::play::{closure#17}> @hl_psx:450
   2.1: 450
- 3659: 437
- 3659: <psx_goldsrc::present::FramePresent>::is_pending:453
+ 3648: 437
+ 3648: <psx_goldsrc::present::FramePresent>::is_pending:453
   1: 453
- 3662: 455
- 3666: <psx_gpu::ot::OrderingTable<640>>::clear @hl_psx:42915
+ 3651: 455
+ 3655: <psx_gpu::ot::OrderingTable<640>>::clear @hl_psx:42915
   7: <psx_gpu::ot::OrderingTable<640>>::clear_software @hl_psx:42915
    8: core::ptr::write::<u32> @hl_psx:448
     23: 448
@@ -2823,116 +2823,116 @@ hl_psx::play:7372221:0
     23.1: 2914
    55: <*mut u32>::add @hl_psx:2930
     34.2: 2930
- 3667: <psx_gpu::ot::OrderingTable<1>>::clear @hl_psx:435
+ 3656: <psx_gpu::ot::OrderingTable<1>>::clear @hl_psx:435
   7.1: <psx_gpu::ot::OrderingTable<1>>::clear_software @hl_psx:435
    8: core::ptr::write::<u32> @hl_psx:435
     23: 435
- 3668: <psx_gpu::ot::OrderingTable<1>>::clear @hl_psx:457
+ 3657: <psx_gpu::ot::OrderingTable<1>>::clear @hl_psx:457
   7.2: <psx_gpu::ot::OrderingTable<1>>::clear_software @hl_psx:457
    8: core::ptr::write::<u32> @hl_psx:457
     23: 457
- 3669: 452
- 3674: hl_psx::cdstream::target::invalidate_cache:460
+ 3658: 452
+ 3663: hl_psx::cdstream::target::invalidate_cache:460
   1: <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::invalidate_cache @hl_psx:460
    1: 460
- 3677: hl_psx::tex_anim_tick:1302
+ 3666: hl_psx::tex_anim_tick:1302
   1: 449
   2: 419
   2: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::map::<(&[u8], &[u8]), hl_psx::tex_anim_tick::{closure#0}> @hl_psx:434
    5: <core::iter::adapters::map::Map<core::ops::range::Range<usize>, hl_psx::tex_anim_tick::{closure#0}>>::new @hl_psx:434
     1: 434
- 3678: hl_psx::map::tex_anim_select:438
+ 3667: hl_psx::map::tex_anim_select:438
   1: 438
- 3685: <psx_engine::render::PrimitivePacketArena>::new::<1432> @hl_psx:479
+ 3674: <psx_engine::render::PrimitivePacketArena>::new::<1432> @hl_psx:479
   2: 479
- 3686: 418
- 3687: 436
- 3689: 406
- 3696: 469
- 3698: 452
- 3699: 461
- 3708: 447
- 3708: hl_psx::pvs_cam_leaf_load:441
+ 3675: 418
+ 3676: 436
+ 3678: 406
+ 3685: 469
+ 3687: 452
+ 3688: 461
+ 3697: 447
+ 3697: hl_psx::pvs_cam_leaf_load:441
   1: core::ptr::read_volatile::<i32> @hl_psx:441
    11: 441
- 3709: 441
- 3711: 442
- 3712: 443
- 3712: hl_psx::valid_pvs_leaf:451
+ 3698: 441
+ 3700: 442
+ 3701: 443
+ 3701: hl_psx::valid_pvs_leaf:451
   1: 451
- 3714: 457
- 3714.4: 447
- 3714.4: <hl_psx::map::Map>::leaf_liquid:1285
+ 3703: 457
+ 3703.4: 447
+ 3703.4: <hl_psx::map::Map>::leaf_liquid:1285
   6: 437
   7: 424
   7: hl_psx::map::rd_u16:424
    1: 424
- 3715: 398
- 3720: 424
- 3720: hl_psx::pvs_cam_leaf_load:451
+ 3704: 398
+ 3709: 424
+ 3709: hl_psx::pvs_cam_leaf_load:451
   1: core::ptr::read_volatile::<i32> @hl_psx:451
    11: 451
- 3725: 428
- 3730: 461
- 3738: 436
- 3741: 443
- 3746: 456
- 3747: 406
- 3748: 427
- 3748.3: 433
- 3750.1: 445
- 3751: 450
- 3763: 17
- 3764: 19
- 3767: 16
- 3767: <hl_psx::map::Map>::paired_pvs:41
+ 3714: 428
+ 3719: 461
+ 3727: 436
+ 3730: 443
+ 3735: 456
+ 3736: 406
+ 3737: 427
+ 3737.3: 433
+ 3739.1: 445
+ 3740: 450
+ 3752: 17
+ 3753: 19
+ 3756: 16
+ 3756: <hl_psx::map::Map>::paired_pvs:41
   1: 23
   2: hl_psx::map::rd_u32:18
    3: 18
- 3779: 20
- 3784: 23
- 3784.1: 12
- 3787: 25
- 3799: 483
- 3825: 449
- 3828.1: 442
- 3829: 437
- 3829.1: 448
- 3830: 451
- 3831: hl_psx::reset_emit_policy:2226
+ 3768: 20
+ 3773: 23
+ 3773.1: 12
+ 3776: 25
+ 3788: 483
+ 3813: 449
+ 3814.1: 442
+ 3815: 437
+ 3815.1: 448
+ 3816: 451
+ 3817: hl_psx::reset_emit_policy:2226
   1: 430
   2: <hl_psx::map::Map>::reset_dynamic_face:1796
    2: 427
    3: 447
    4: 477
    5: 445
- 3838: 421
- 3839: 459
- 3840: 451
- 3848: 432
- 3850: 432
- 3851: 449
- 3852: 1
- 3853: 1
- 3853: <u16 as core::cmp::Ord>::min @hl_psx:1
+ 3824: 421
+ 3825: 459
+ 3826: 451
+ 3834: 432
+ 3836: 432
+ 3837: 449
+ 3838: 1
+ 3839: 1
+ 3839: <u16 as core::cmp::Ord>::min @hl_psx:1
   4.15: 1
- 3858: 1
- 3862: 435
- 3863: 422
- 3863.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:80510
+ 3844: 1
+ 3848: 435
+ 3849: 422
+ 3849.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:80510
   1.5: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:80510
    1.3: 80510
- 3864: 80714
- 3864.1: 80600
- 3865: <hl_psx::map::Map>::cooked_group_plane:987252
+ 3850: 80714
+ 3850.1: 80600
+ 3851: <hl_psx::map::Map>::cooked_group_plane:987252
   1: 80766
   1: hl_psx::map::rd_i16_aligned:161587
    1: hl_psx::map::rd_u16_aligned:161587
-    2: <*const u8>::add @hl_psx:80912
-     34: 80912
     2: <*const u16>::read @hl_psx:80675
      5: core::ptr::read::<u16> @hl_psx:80675
       39: 80675
+    2: <*const u8>::add @hl_psx:80912
+     34: 80912
   3: 80328
   8: 81005
   10: hl_psx::map::rd_i16_aligned:80246
@@ -2954,11 +2954,11 @@ hl_psx::play:7372221:0
     1: 33242
   20: 47653
   21: 21176
- 3866: 80531
- 3866: hl_psx::dot_plane:81440
+ 3852: 80531
+ 3852: hl_psx::dot_plane:81440
   1: 81440
- 3867: 31257
- 3868: hl_psx::scratch_bit_assign:196958
+ 3853: 31257
+ 3854: hl_psx::scratch_bit_assign:196958
   1: <*mut u32>::add @hl_psx:49223
    34: 49223
   2: 49436
@@ -2966,7 +2966,7 @@ hl_psx::play:7372221:0
    5: core::ptr::read::<u32> @hl_psx:49189
     39: 49189
   4: 49110
- 3868.1: hl_psx::scratch_bit_assign:157870
+ 3854.1: hl_psx::scratch_bit_assign:157870
   1: <*mut u32>::add @hl_psx:31623
    34: 31623
   2: 31539
@@ -2977,167 +2977,167 @@ hl_psx::play:7372221:0
   4: <*mut u32>::write @hl_psx:31467
    5: core::ptr::write::<u32> @hl_psx:31467
     23: 31467
- 3869.3: 49000
- 3870: 45
- 3870.1: 46
- 3871.1: 114
- 3872: 16
- 3873: 118
- 3873.1: 118
- 3874: 19
- 3877.1: 17
- 3879: 11
- 3880: 13
- 3881: 11
- 3883: 13
- 3883: hl_psx::dot12:18
-  1: 18
- 3883: <i32 as core::cmp::Ord>::max @hl_psx:13
+ 3855.3: 49000
+ 3856: 45
+ 3856.1: 46
+ 3857.1: 114
+ 3858: 16
+ 3859: 118
+ 3859.1: 118
+ 3860: 19
+ 3863.1: 17
+ 3865: 11
+ 3866: 13
+ 3867: 11
+ 3869: 13
+ 3869: <i32 as core::cmp::Ord>::max @hl_psx:13
   4.15: 13
- 3884: 17
- 3884: <psx_goldsrc::pvs_faces::PvsFaceRec>::set_band:11
-  1: 11
- 3884: <i32 as core::cmp::Ord>::min @hl_psx:12
+ 3869: hl_psx::dot12:18
+  1: 18
+ 3870: 17
+ 3870: <i32 as core::cmp::Ord>::min @hl_psx:12
   4.38: 12
- 3889.1: 101
- 3889.1: hl_psx::pvs_entry_sealed:410
+ 3870: <psx_goldsrc::pvs_faces::PvsFaceRec>::set_band:11
+  1: 11
+ 3875.1: 101
+ 3875.1: hl_psx::pvs_entry_sealed:410
   1: 112
   4.1: 98
   5: 97
   5.1: 103
- 3892: 99
- 3893.1: 103
- 3895: 85
- 3896: 101
- 3897: 111
- 3899: 98
- 3899: hl_psx::dot12:105
-  1: 105
- 3899: <i32 as core::cmp::Ord>::max @hl_psx:102
+ 3878: 99
+ 3879.1: 103
+ 3881: 85
+ 3882: 101
+ 3883: 111
+ 3885: 98
+ 3885: <i32 as core::cmp::Ord>::max @hl_psx:102
   4.19: 102
- 3900: 82
- 3900: <i32 as core::cmp::Ord>::min @hl_psx:91
+ 3885: hl_psx::dot12:105
+  1: 105
+ 3886: 82
+ 3886: <i32 as core::cmp::Ord>::min @hl_psx:91
   4.42: 91
- 3901: <psx_goldsrc::pvs_faces::PvsFaceRec>::set_band:99
+ 3887: <psx_goldsrc::pvs_faces::PvsFaceRec>::set_band:99
   1.1: 99
- 3909: hl_psx::pvs_entry_kind:98
+ 3895: hl_psx::pvs_entry_kind:98
   3: 98
- 3916.1: 102
- 3920: 430
- 3924.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:15
+ 3902.1: 102
+ 3906: 430
+ 3910.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:15
   1.6: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:15
    1.4: 9
    1.6: <usize as core::cmp::PartialOrd>::lt:6
     0.17: 6
- 3925.1: 7
- 3926: 5
- 3928: 2
- 3929: <[u16]>::copy_from_slice @hl_psx:1
+ 3911.1: 7
+ 3912: 5
+ 3914: 2
+ 3915: <[u16]>::copy_from_slice @hl_psx:1
   5: core::slice::copy_from_slice_impl::<u16> @hl_psx:1
    23: core::ptr::copy_nonoverlapping::<u16> @hl_psx:1
     21: 1
- 3930.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:57
+ 3916.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:57
   1.7: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:57
    1.5: 57
- 3931: hl_psx::scratch_bit:249
+ 3917: hl_psx::scratch_bit:249
   1: <*mut u32>::add @hl_psx:79
    34: 79
   1: <*mut u32>::read @hl_psx:79
    5: core::ptr::read::<u32> @hl_psx:79
     39: 79
   2: 91
- 3934: 49
- 3934.1: 40
- 3935: 38
- 3935.1: 45
- 3936.1: 120
- 3938: 119
- 3938.1: 122
- 3939: 92
- 3939: hl_psx::pvs_entry_sealed:447
+ 3920: 49
+ 3920.1: 40
+ 3921: 38
+ 3921.1: 45
+ 3922.1: 120
+ 3924: 119
+ 3924.1: 122
+ 3925: 92
+ 3925: hl_psx::pvs_entry_sealed:447
   1: 118
   4.1: 111
   5: 100
   5.1: 118
- 3942: 85
- 3943: <psx_goldsrc::pvs_faces::PvsFaceRec>::band:87
+ 3928: 85
+ 3929: <psx_goldsrc::pvs_faces::PvsFaceRec>::band:87
   1: 87
- 3943.1: 104
- 3950: 98
- 3950: hl_psx::pvs_entry_kind:114
+ 3929.1: 104
+ 3936: 98
+ 3936: hl_psx::pvs_entry_kind:114
   3: 114
- 3951.1: 114
- 3952: 103
- 3952.1: 88
- 3953.1: 109
- 3954: 97
- 3966: <*mut hl_psx::PvsWalkCtx>::write @hl_psx:448
+ 3937.1: 114
+ 3938: 103
+ 3938.1: 88
+ 3939.1: 109
+ 3940: 97
+ 3952: <*mut hl_psx::PvsWalkCtx>::write @hl_psx:448
   5: core::ptr::write::<hl_psx::PvsWalkCtx> @hl_psx:448
    23: 448
- 3973: hl_psx::far_view:433
+ 3959: hl_psx::far_view:433
   1: 433
- 3979.1: 442
- 3980: 462
- 3984: 1
- 3984.1: 3
- 3985: 2
- 3985.1: 5
- 3986: 2
- 3990: <usize as core::cmp::Ord>::min @hl_psx:3
+ 3965.1: 442
+ 3966: 462
+ 3970: 1
+ 3970.1: 3
+ 3971: 2
+ 3971.1: 5
+ 3972: 2
+ 3976: <usize as core::cmp::Ord>::min @hl_psx:3
   4.34: 3
- 3995: 423
- 3995.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:49061
+ 3981: 423
+ 3981.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:49061
   1.8: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:49061
    1.13: 49061
- 3996: 80393
- 3996: hl_psx::scratch_bit:241391
+ 3982: 80393
+ 3982: hl_psx::scratch_bit:241391
   1: <*mut u32>::add @hl_psx:80483
    34: 80483
   1: <*mut u32>::read @hl_psx:80435
    5: core::ptr::read::<u32> @hl_psx:80435
     39: 80435
   2: 80473
- 3999: 49156
- 3999.1: 49070
- 4000: 49289
- 4003: 49052
- 4003.1: 49427
- 4010: 439
- 4013: hl_psx::reset_emit_policy:2175
+ 3985: 49156
+ 3985.1: 49070
+ 3986: 49289
+ 3989: 49052
+ 3989.1: 49427
+ 3996: 439
+ 3999: hl_psx::reset_emit_policy:2175
   1: 425
   2: <hl_psx::map::Map>::reset_dynamic_face:1750
    2: 439
    3: 433
    4: 436
    5: 442
- 4015: hl_psx::finish_world_affine_candidates:681
+ 4001: hl_psx::finish_world_affine_candidates:681
   1: 432
   10: 249
- 4103: 433
- 4103.2: 427
- 4104: 451
- 4104: <psx_engine::render::PrimitivePacketArena>::remaining:1279
+ 4089: 433
+ 4089.2: 427
+ 4090: 451
+ 4090: <psx_engine::render::PrimitivePacketArena>::remaining:1279
   1: 392
-  1: <usize>::saturating_sub:459
-   1: 459
   1: <psx_engine::render::PrimitivePacketArena>::capacity:428
    1: 428
- 4118: 444
- 4131: hl_psx::clear_group_bits:471
+  1: <usize>::saturating_sub:459
+   1: 459
+ 4104: 444
+ 4117: hl_psx::clear_group_bits:471
   3: <*mut u32>::write @hl_psx:471
    5: core::ptr::write::<u32> @hl_psx:471
     23: 471
- 4132: 459
- 4135: 433
- 4140: <usize>::div_ceil:859
+ 4118: 459
+ 4121: 433
+ 4126: <usize as core::cmp::Ord>::min @hl_psx:470
+  4.17: 470
+ 4126: <usize>::div_ceil:859
   1.1: 408
   3.3: 451
- 4140: <usize as core::cmp::Ord>::min @hl_psx:470
-  4.17: 470
- 4142.1: 444
- 4143.1: 440
- 4147.1: 885
- 4148.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:51650
+ 4128.1: 444
+ 4129.1: 440
+ 4133.1: 885
+ 4134.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:51650
   1.9: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:51650
    1.9: 25128
    1.9: <usize as core::cmp::PartialOrd>::lt:653
@@ -3145,26 +3145,26 @@ hl_psx::play:7372221:0
    4.9: <usize as core::iter::range::Step>::forward_unchecked:25869
     2.9: <usize>::unchecked_add:25869
      12.9: 25869
- 4149: 25823
- 4149.1: 12872
- 4149.2: 13017
- 4152: 13639
- 4152.2: 13687
- 4152.3: 13682
- 4156: 13626
- 4156.1: 13729
- 4157: 13636
- 4158: 12953
- 4159: psx_goldsrc::visibility_logic::pvs_visible_now:8629
+ 4135: 25823
+ 4135.1: 12872
+ 4135.2: 13017
+ 4138: 13639
+ 4138.2: 13687
+ 4138.3: 13682
+ 4142: 13626
+ 4142.1: 13729
+ 4143: 13636
+ 4144: 12953
+ 4145: psx_goldsrc::visibility_logic::pvs_visible_now:8629
   5: 8629
- 4160: hl_psx::entity_uses_live_pvs:56448
+ 4146: hl_psx::entity_uses_live_pvs:56448
   1: 12970
   4.1: 12199
   5: 12248
   8: 11718
   8.1: 7313
- 4167: 6472
- 4167: hl_psx::static_brush_cacheable:34248
+ 4153: 6472
+ 4153: hl_psx::static_brush_cacheable:34248
   3: 6655
   5: <i32>::abs:794
    4: 284
@@ -3181,12 +3181,12 @@ hl_psx::play:7372221:0
   18: 6405
   18.1: 417
   19: 5985
- 4168: 710
- 4168.1: 708
- 4172.1: 6587
- 4172.4: 6653
- 4175: 5930
- 4176: hl_psx::ent_draw_offset:27154
+ 4154: 710
+ 4154.1: 708
+ 4158.1: 6587
+ 4158.4: 6653
+ 4161: 5930
+ 4162: hl_psx::ent_draw_offset:27154
   1.2: 5950
   2: 64
   2.1: 93
@@ -3202,12 +3202,12 @@ hl_psx::play:7372221:0
   17: 1867
   22: 448
   24: 3567
- 4177: 3504
- 4179.1: 5840
- 4180: 5882
- 4186.1: 174
- 4187: 165
- 4187: hl_psx::fan_angle_q12:1417
+ 4163: 3504
+ 4165.1: 5840
+ 4166: 5882
+ 4172.1: 174
+ 4173: 165
+ 4173: hl_psx::fan_angle_q12:1417
   1.1: 173
   2: hl_psx::fan_logic_index:363
    4.1: 187
@@ -3220,10 +3220,10 @@ hl_psx::play:7372221:0
   11: 162
   13: 159
   17: 180
- 4187.1: hl_psx::fan_rotation:184
+ 4173.1: hl_psx::fan_rotation:184
   2: 184
- 4188: 189
- 4188: hl_psx::rotating_local_center:1254
+ 4174: 189
+ 4174: hl_psx::rotating_local_center:1254
   1: 178
   2: 186
   2: hl_psx::dot12:195
@@ -3234,15 +3234,15 @@ hl_psx::play:7372221:0
   4: 164
   4: hl_psx::dot12:180
    1: 180
- 4190: 120
- 4190: hl_psx::pendulum_angle_q12:197
+ 4176: 120
+ 4176: hl_psx::pendulum_angle_q12:197
   1: 85
   1: hl_psx::pendulum_phase_q19:112
    1.1: 112
- 4190.1: hl_psx::pendulum_rotation:207
+ 4176.1: hl_psx::pendulum_rotation:207
   1: 98
   2: 109
- 4190.2: hl_psx::rotating_local_center:712
+ 4176.2: hl_psx::rotating_local_center:712
   1: 115
   2: 75
   2: hl_psx::dot12:112
@@ -3253,26 +3253,26 @@ hl_psx::play:7372221:0
   4: 90
   4: hl_psx::dot12:102
    1: 102
- 4191.5: 263
- 4192.1: 275
- 4193: 264
- 4194: 254
- 4195: 278
- 4195: hl_psx::dot12:264
+ 4177.5: 263
+ 4178.1: 275
+ 4179: 264
+ 4180: 254
+ 4181: 278
+ 4181: hl_psx::dot12:264
   1: 264
- 4196: 263
- 4196: hl_psx::dot12:273
+ 4182: 263
+ 4182: hl_psx::dot12:273
   1: 273
- 4197: 269
- 4197: hl_psx::dot12:272
+ 4183: 269
+ 4183: hl_psx::dot12:272
   1: 272
- 4200: 5210
- 4201: 5369
- 4202: 5340
- 4203: 5292
- 4206: 5363
- 4210: 173
- 4210: <hl_psx::CameraVisibility>::box_bounds:2864
+ 4186: 5210
+ 4187: 5369
+ 4188: 5340
+ 4189: 5292
+ 4192: 5363
+ 4196: 173
+ 4196: <hl_psx::CameraVisibility>::box_bounds:2864
   7: <hl_psx::CameraVisibility>::view_center:492
    2: 150
    4: 182
@@ -3295,20 +3295,20 @@ hl_psx::play:7372221:0
    1: 124
   13.1: 136
   17: 88
+  17: <i32 as core::cmp::Ord>::max @hl_psx:90
+   4.4: 90
   17: <i32>::abs:195
    4: 108
    4.3: 87
-  17: <i32 as core::cmp::Ord>::max @hl_psx:90
-   4.4: 90
   17.1: 122
   17.3: 76
   17.4: 106
- 4212: 5662
- 4214: 5749
- 4219: 1879
- 4220: 226
- 4224: 1686
- 4251: hl_psx::fan_angle_q12:192
+ 4198: 5662
+ 4200: 5749
+ 4205: 1879
+ 4206: 226
+ 4210: 1686
+ 4237: hl_psx::fan_angle_q12:192
   1.1: 25
   2: hl_psx::fan_logic_index:63
    4.1: 32
@@ -3321,14 +3321,14 @@ hl_psx::play:7372221:0
   11: 16
   13: 19
   17: 18
- 4253: hl_psx::pendulum_angle_q12:92
+ 4239: hl_psx::pendulum_angle_q12:92
   1: 46
   1: hl_psx::pendulum_phase_q19:46
    1.1: 46
- 4255.1: 119
- 4259: 118
- 4260: 25
- 4260: hl_psx::fan_rotation:121
+ 4241.1: 119
+ 4245: 118
+ 4246: 25
+ 4246: hl_psx::fan_rotation:121
   2: 26
   4: <psx_gte_core::math::Mat3I16>::rotate_z:10
    1: psx_gte_core::transform::cos_1_3_12:4
@@ -3344,9 +3344,9 @@ hl_psx::play:7372221:0
     1.3: 11
    3: 27
    4: 18
- 4261.2: 123
- 4262: 43
- 4262: hl_psx::pendulum_rotation:324
+ 4247.2: 123
+ 4248: 43
+ 4248: hl_psx::pendulum_rotation:324
   1: 32
   2: 50
   5: 52
@@ -3358,8 +3358,8 @@ hl_psx::play:7372221:0
     1.3: 46
    3: 51
    4: 43
- 4264: 115
- 4266: <psx_gte_core::math::Mat3I16>::mul:1243
+ 4250: 115
+ 4252: <psx_gte_core::math::Mat3I16>::mul:1243
   4.1: 117
   5: 190
   5: psx_gte_core::transform::clamp_i32_to_i16:186
@@ -3371,35 +3371,35 @@ hl_psx::play:7372221:0
     1: 193
    4.3: 193
    7: 178
- 4267: psx_gte::scene::load_rotation:852
+ 4253: psx_gte::scene::load_rotation:852
   12: 171
   12.1: 167
   12.2: 178
   12.3: 164
   12.4: 172
- 4271: 176
- 4273: hl_psx::dot12:192
+ 4257: 176
+ 4259: hl_psx::dot12:192
   1: 192
- 4274: hl_psx::dot12:190
+ 4260: hl_psx::dot12:190
   1: 190
- 4275: hl_psx::dot12:187
+ 4261: hl_psx::dot12:187
   1: 187
- 4277: psx_gte::scene::load_translation:506
+ 4263: psx_gte::scene::load_translation:506
   65502.4: 166
   65502.16: 168
   65502.17: 172
- 4278: hl_psx::set_view_fix:357
+ 4264: hl_psx::set_view_fix:357
   1: 190
   2: 167
- 4279: hl_psx::next_proj_token:523
+ 4265: hl_psx::next_proj_token:523
   2: 184
   2: <u16>::wrapping_add:176
    1: 176
   3: 158
   5: 2
   8: 3
- 4280: 188
- 4280: <hl_psx::map::Map>::submodel:1838
+ 4266: 188
+ 4266: <hl_psx::map::Map>::submodel:1838
   1: 178
   3: 178
   3: hl_psx::map::rd_u32:808
@@ -3415,34 +3415,34 @@ hl_psx::play:7372221:0
    4: 183
    5: 160
    7: 185
- 4281: hl_psx::reset_emit_policy:878
+ 4267: hl_psx::reset_emit_policy:878
   1: 166
   2: <hl_psx::map::Map>::reset_dynamic_face:712
    2: 169
    3: 172
    4: 179
    5: 192
- 4282: 153
- 4282.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:7506
+ 4268: 153
+ 4268.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:7506
   1.10: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:7506
    1.10: 3737
    1.10: <usize as core::cmp::PartialOrd>::lt:3769
     0.32: 3769
- 4283: 3757
- 4283: psx_goldsrc::visibility_logic::brush_packet_blend:3764
+ 4269: 3757
+ 4269: psx_goldsrc::visibility_logic::brush_packet_blend:3764
   1: 3764
- 4283.1: hl_psx::set_emit_face:22510
+ 4269.1: hl_psx::set_emit_face:22510
   1: 3676
-  2: <hl_psx::EmitPolicy>::with_underwater_blend:3747
-   1: 3747
   2: <hl_psx::EmitPolicy>::for_face:11341
    1: <hl_psx::EmitPolicy>::from_surface:11341
     7: 3755
     13: 3804
     14: 3782
+  2: <hl_psx::EmitPolicy>::with_underwater_blend:3747
+   1: 3747
   3: 3746
- 4284: 3780
- 4284: <hl_psx::map::Map>::face_tris:22127
+ 4270: 3780
+ 4270: <hl_psx::map::Map>::face_tris:22127
   2: <*const u8>::add @hl_psx:3659
    34: 3659
   4: 3700
@@ -3456,15 +3456,15 @@ hl_psx::play:7372221:0
    0.1: <*const u8>::read @hl_psx:3636
     5.2: core::ptr::read::<u8> @hl_psx:3636
      39: 3636
- 4285: 3731
- 4295: hl_psx::reset_emit_policy:855
+ 4271: 3731
+ 4281: hl_psx::reset_emit_policy:855
   1: 170
   2: <hl_psx::map::Map>::reset_dynamic_face:685
    2: 187
    3: 158
    4: 179
    5: 161
- 4296: psx_gte::scene::load_rotation:1685
+ 4282: psx_gte::scene::load_rotation:1685
   1: 171
   2: 153
   3: 182
@@ -3475,24 +3475,24 @@ hl_psx::play:7372221:0
   12.2: 155
   12.3: 178
   12.4: 175
- 4297: hl_psx::set_view_fix:369
+ 4283: hl_psx::set_view_fix:369
   1: 179
   2: 190
- 4301: 1721
- 4311: psx_gte::scene::load_translation:3028
+ 4287: 1721
+ 4297: psx_gte::scene::load_translation:3028
   65502.6: 1005
   65502.20: 1001
   65502.21: 1022
- 4312: hl_psx::set_view_fix:2077
+ 4298: hl_psx::set_view_fix:2077
   1: 1047
   2: 1030
- 4318: 1023
- 4318.6: 954
- 4319: hl_psx::map::tex_anim_select:1033
+ 4304: 1023
+ 4304.6: 954
+ 4305: hl_psx::map::tex_anim_select:1033
   1: 1033
- 4321: 1037
- 4322: 981
- 4322.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:61940
+ 4307: 1037
+ 4308: 981
+ 4308.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:61940
   1.11: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:61940
    1.11: 20655
    1.11: <usize as core::cmp::PartialOrd>::lt:20590
@@ -3500,25 +3500,17 @@ hl_psx::play:7372221:0
    4.11: <usize as core::iter::range::Step>::forward_unchecked:20695
     2.11: <usize>::unchecked_add:20695
      12.11: 20695
- 4323: 20710
- 4324: <hl_psx::map::Map>::face_plane_cooked:46813
-  1: <hl_psx::map::Map>::face_group:14556
-   1: 3680
-   1: <*const u8>::add @hl_psx:3568
-    34: 3568
-   3: 3611
-   3: <*const u8>::read @hl_psx:3697
-    5: core::ptr::read::<u8> @hl_psx:3697
-     39: 3697
+ 4309: 20710
+ 4310: <hl_psx::map::Map>::face_plane_cooked:46813
   1: <hl_psx::map::Map>::cooked_group_plane:32257
    1: 3573
    1: hl_psx::map::rd_i16_aligned:7253
     1: hl_psx::map::rd_u16_aligned:7253
-     2: <*const u8>::add @hl_psx:3642
-      34: 3642
      2: <*const u16>::read @hl_psx:3611
       5: core::ptr::read::<u16> @hl_psx:3611
        39: 3611
+     2: <*const u8>::add @hl_psx:3642
+      34: 3642
    2: 3487
    3: 3636
    8: 3618
@@ -3532,17 +3524,25 @@ hl_psx::play:7372221:0
       5.2: core::ptr::read::<u16> @hl_psx:3489
        39.1: 3489
    20: 3586
- 4325: 3603
- 4333: 17018
- 4333: <hl_psx::map::Map>::face_group:51186
+  1: <hl_psx::map::Map>::face_group:14556
+   1: 3680
+   1: <*const u8>::add @hl_psx:3568
+    34: 3568
+   3: 3611
+   3: <*const u8>::read @hl_psx:3697
+    5: core::ptr::read::<u8> @hl_psx:3697
+     39: 3697
+ 4311: 3603
+ 4319: 17018
+ 4319: <hl_psx::map::Map>::face_group:51186
   1: <*const u8>::add @hl_psx:17066
    34: 17066
   3: 17227
   3: <*const u8>::read @hl_psx:16893
    5: core::ptr::read::<u8> @hl_psx:16893
     39: 16893
- 4334: 17013
- 4334: hl_psx::scratch_bit:67840
+ 4320: 17013
+ 4320: hl_psx::scratch_bit:67840
   1: 16942
   1: <*mut u32>::add @hl_psx:17143
    34: 17143
@@ -3550,20 +3550,20 @@ hl_psx::play:7372221:0
    5: core::ptr::read::<u32> @hl_psx:16872
     39: 16872
   2: 16883
- 4335: hl_psx::scratch_bit_assign:21703
+ 4321: hl_psx::scratch_bit_assign:21703
   4: 10922
   4: <*mut u32>::write @hl_psx:10781
    5: core::ptr::write::<u32> @hl_psx:10781
     23: 10781
- 4336: <hl_psx::map::Map>::cooked_group_plane:137422
+ 4322: <hl_psx::map::Map>::cooked_group_plane:137422
   1: 10933
   1: hl_psx::map::rd_i16_aligned:21710
    1: hl_psx::map::rd_u16_aligned:21710
-    2: <*const u8>::add @hl_psx:10928
-     34: 10928
     2: <*const u16>::read @hl_psx:10782
      5: core::ptr::read::<u16> @hl_psx:10782
       39: 10782
+    2: <*const u8>::add @hl_psx:10928
+     34: 10928
   3: 10931
   8: 10984
   10: hl_psx::map::rd_i16_aligned:10953
@@ -3585,32 +3585,32 @@ hl_psx::play:7372221:0
     1: 4710
   20: 10862
   21: 2182
- 4337: 10777
- 4337: hl_psx::dot_plane:11065
+ 4323: 10777
+ 4323: hl_psx::dot_plane:11065
   1: 11065
- 4337.1: hl_psx::scratch_bit_assign:32675
+ 4323.1: hl_psx::scratch_bit_assign:32675
   1: <*mut u32>::add @hl_psx:10950
    34: 10950
   3: <*mut u32>::read @hl_psx:10696
    5: core::ptr::read::<u32> @hl_psx:10696
     39: 10696
   4: 11029
- 4339: 10739
- 4339: hl_psx::scratch_bit:16947
+ 4325: 10739
+ 4325: hl_psx::scratch_bit:16947
   1: <*mut u32>::read @hl_psx:6162
    5: core::ptr::read::<u32> @hl_psx:6162
     39: 6162
   2: 10785
- 4340: <hl_psx::map::Map>::face_tris:26191
+ 4326: <hl_psx::map::Map>::face_tris:26191
   4: 8708
   4: <hl_psx::map::Map>::face_tris::{closure#0} @hl_psx:17483
    0: 8767
    0.1: <*const u8>::read @hl_psx:8716
     5.2: core::ptr::read::<u8> @hl_psx:8716
      39: 8716
- 4342: <u32>::saturating_add:8830
+ 4328: <u32>::saturating_add:8830
   1: 8830
- 4346: <hl_psx::map::Map>::face_bounds:47222
+ 4332: <hl_psx::map::Map>::face_bounds:47222
   2: <*const u8>::add @hl_psx:9487
    34: 9487
   5: 9519
@@ -3622,7 +3622,7 @@ hl_psx::play:7372221:0
    0.2: <*const u8>::read @hl_psx:9448
     5.4: core::ptr::read::<u8> @hl_psx:9448
      39: 9448
- 4348: <hl_psx::CameraVisibility>::world_sphere_gte:48691
+ 4334: <hl_psx::CameraVisibility>::world_sphere_gte:48691
   1: psx_gte::scene::transform_vertex_scheduled:9501
    3: psx_gte::scene::transform_vertex_mips:9501
     11: 9501
@@ -3638,66 +3638,66 @@ hl_psx::play:7372221:0
     8: <i32>::abs:3715
      4.3: 3715
     8.1: 3652
- 4355: <hl_psx::map::Map>::face_tris:5537
+ 4341: <hl_psx::map::Map>::face_tris:5537
   4: 2757
   4: <hl_psx::map::Map>::face_tris::{closure#0} @hl_psx:2780
    0: 2780
- 4357: 2812
- 4357: psx_goldsrc::visibility_logic::brush_packet_blend:2845
+ 4343: 2812
+ 4343: psx_goldsrc::visibility_logic::brush_packet_blend:2845
   1.1: 2845
- 4357.1: hl_psx::set_emit_face:16459
+ 4343.1: hl_psx::set_emit_face:16459
   1: 2680
-  2: <hl_psx::EmitPolicy>::with_underwater_blend:2812
-   1: 2812
   2: <hl_psx::EmitPolicy>::for_face:8169
    1: <hl_psx::EmitPolicy>::from_surface:8169
     7: 2505
     13: 2829
     14: 2835
+  2: <hl_psx::EmitPolicy>::with_underwater_blend:2812
+   1: 2812
   3: 2798
- 4358: 2840
- 4358: <hl_psx::map::Map>::face_is_loop:8258
+ 4344: 2840
+ 4344: <hl_psx::map::Map>::face_is_loop:8258
   2: 2707
   4: <*const u8>::add @hl_psx:2802
    34: 2802
   5: <*const u8>::read @hl_psx:2749
    5: core::ptr::read::<u8> @hl_psx:2749
     39: 2749
- 4358.1: 216
- 4358.2: 2594
- 4359: 2655
- 4362: <hl_psx::map::Map>::face_tex:2538
+ 4344.1: 216
+ 4344.2: 2594
+ 4345: 2655
+ 4348: <hl_psx::map::Map>::face_tex:2538
   5: <*const u8>::read @hl_psx:2538
    5: core::ptr::read::<u8> @hl_psx:2538
     39: 2538
- 4372: 238
- 4386: hl_psx::reset_emit_policy:5034
+ 4358: 238
+ 4372: hl_psx::reset_emit_policy:5034
   1: 1031
   2: <hl_psx::map::Map>::reset_dynamic_face:4003
    2: 1018
    3: 985
    4: 1011
    5: 989
- 4387: hl_psx::map::tex_anim_select:966
+ 4373: hl_psx::map::tex_anim_select:966
   1: 966
- 4390: 714
- 4392: 666
- 4392: hl_psx::dot12:733
+ 4376: 714
+ 4378: 666
+ 4378: hl_psx::dot12:733
   1: 733
- 4393: 683
- 4393: hl_psx::dot12:689
+ 4379: 683
+ 4379: hl_psx::dot12:689
   1: 689
- 4394: 713
- 4394: hl_psx::dot12:726
+ 4380: 713
+ 4380: hl_psx::dot12:726
   1: 726
- 4396: psx_gte::scene::load_translation:2081
+ 4382: psx_gte::scene::load_translation:2081
   65502.5: 712
   65502.18: 669
   65502.19: 700
- 4397: hl_psx::set_view_fix:1430
+ 4383: hl_psx::set_view_fix:1430
   1: 733
   2: 697
- 4398: hl_psx::next_proj_token:2090
+ 4384: hl_psx::next_proj_token:2090
   2: 691
   2: <u16>::wrapping_add:679
    1: 679
@@ -3705,8 +3705,8 @@ hl_psx::play:7372221:0
   3.3: 9
   5: 3
   8: 2
- 4399: 708
- 4399: <hl_psx::map::Map>::submodel:7534
+ 4385: 708
+ 4385: <hl_psx::map::Map>::submodel:7534
   1: 681
   3: 692
   3: hl_psx::map::rd_u32:3464
@@ -3722,21 +3722,21 @@ hl_psx::play:7372221:0
    4: 668
    5: 660
    7: 690
- 4400: hl_psx::reset_emit_policy:3477
+ 4386: hl_psx::reset_emit_policy:3477
   1: 677
   2: <hl_psx::map::Map>::reset_dynamic_face:2800
    2: 692
    3: 707
    4: 712
    5: 689
- 4404: 713
- 4404.3: 95
- 4405: hl_psx::map::tex_anim_select:674
+ 4390: 713
+ 4390.3: 95
+ 4391: hl_psx::map::tex_anim_select:674
   1: 674
- 4406: 699
- 4407: 682
- 4408: 645
- 4408.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:25977
+ 4392: 699
+ 4393: 682
+ 4394: 645
+ 4394.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:25977
   1.12: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:25977
    1.12: 8634
    1.12: <usize as core::cmp::PartialOrd>::lt:8684
@@ -3744,42 +3744,37 @@ hl_psx::play:7372221:0
    4.12: <usize as core::iter::range::Step>::forward_unchecked:8659
     2.12: <usize>::unchecked_add:8659
      12.12: 8659
- 4409: 8719
- 4409: psx_goldsrc::visibility_logic::brush_packet_blend:8919
+ 4395: 8719
+ 4395: psx_goldsrc::visibility_logic::brush_packet_blend:8919
   1.2: 8919
- 4409.1: hl_psx::set_emit_face:52492
+ 4395.1: hl_psx::set_emit_face:52492
   1: 8745
-  2: <hl_psx::EmitPolicy>::with_underwater_blend:8720
-   1: 8720
   2: <hl_psx::EmitPolicy>::for_face:26235
    1: <hl_psx::EmitPolicy>::from_surface:26235
     7: 8722
     13: 8770
     14: 8743
+  2: <hl_psx::EmitPolicy>::with_underwater_blend:8720
+   1: 8720
   3: 8792
- 4410: 8710
- 4410: <hl_psx::map::Map>::face_tris:17538
+ 4396: 8710
+ 4396: <hl_psx::map::Map>::face_tris:17538
   2: <*const u8>::add @hl_psx:8824
    34: 8824
   4: <hl_psx::map::Map>::face_tris::{closure#0} @hl_psx:8714
    0: <*const u8>::read @hl_psx:8714
     5: core::ptr::read::<u8> @hl_psx:8714
      39: 8714
- 4411: <hl_psx::map::Map>::face_plane_cooked:120523
-  1: <hl_psx::map::Map>::face_group:17550
-   3: 8784
-   3: <*const u8>::read @hl_psx:8766
-    5: core::ptr::read::<u8> @hl_psx:8766
-     39: 8766
+ 4397: <hl_psx::map::Map>::face_plane_cooked:120523
   1: <hl_psx::map::Map>::cooked_group_plane:102973
    1: 8863
    1: hl_psx::map::rd_i16_aligned:17374
     1: hl_psx::map::rd_u16_aligned:17374
-     2: <*const u8>::add @hl_psx:8720
-      34: 8720
      2: <*const u16>::read @hl_psx:8654
       5: core::ptr::read::<u16> @hl_psx:8654
        39: 8654
+     2: <*const u8>::add @hl_psx:8720
+      34: 8720
    3: 8694
    8: 8693
    10: hl_psx::map::rd_i16_aligned:8639
@@ -3801,13 +3796,18 @@ hl_psx::play:7372221:0
      1: 3324
    20: 8700
    21: 3066
- 4414: 7371
- 4417: 8699
- 4417: hl_psx::dot_plane:8978
+  1: <hl_psx::map::Map>::face_group:17550
+   3: 8784
+   3: <*const u8>::read @hl_psx:8766
+    5: core::ptr::read::<u8> @hl_psx:8766
+     39: 8766
+ 4400: 7371
+ 4403: 8699
+ 4403: hl_psx::dot_plane:8978
   1: 8978
- 4418: <u32>::saturating_add:4707
+ 4404: <u32>::saturating_add:4707
   1: 4707
- 4421: <hl_psx::map::Map>::face_bounds:31851
+ 4407: <hl_psx::map::Map>::face_bounds:31851
   5: 4014
   5: <hl_psx::map::Map>::face_bounds::{closure#0} @hl_psx:15844
    0: 4006
@@ -3827,34 +3827,34 @@ hl_psx::play:7372221:0
      39: 3969
     5.7: core::ptr::read::<u8> @hl_psx:3997
      39: 3997
- 4422: 4034
- 4423: 4074
- 4426: 1994
- 4436: 658
- 4437: hl_psx::reset_emit_policy:3549
+ 4408: 4034
+ 4409: 4074
+ 4412: 1994
+ 4422: 658
+ 4423: hl_psx::reset_emit_policy:3549
   1: 706
   2: <hl_psx::map::Map>::reset_dynamic_face:2843
    2: 753
    3: 716
    4: 690
    5: 684
- 4438: hl_psx::map::tex_anim_select:675
+ 4424: hl_psx::map::tex_anim_select:675
   1: 675
- 4442: 431
- 4445.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:467
+ 4428: 431
+ 4431.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:467
   1.13: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:467
    1.6: 467
- 4446.1: 459
- 4456: 450
- 4458: hl_psx::reset_emit_policy:209
+ 4432.1: 459
+ 4442: 450
+ 4444: hl_psx::reset_emit_policy:209
   1: 39
   2: <hl_psx::map::Map>::reset_dynamic_face:170
    2: 45
    3: 46
    4: 41
    5: 38
- 4465: 53
- 4468: hl_psx::tram_world_rotation:357
+ 4450: 53
+ 4451: hl_psx::tram_world_rotation:357
   1: <psx_gte_core::math::Mat3I16>::rotate_y:265
    1: psx_gte_core::transform::cos_1_3_12:130
     2: <u16>::wrapping_add:47
@@ -3870,63 +3870,63 @@ hl_psx::play:7372221:0
    1: 45
    1: <u16>::wrapping_sub:47
     1: 47
- 4469: 47
- 4471: 60
- 4472: 38
- 4473: 41
+ 4452: 47
+ 4454: 60
+ 4455: 38
+ 4456: 41
+ 4459: 47
+ 4460: 50
+ 4461: 47
+ 4464: 39
+ 4465: 43
+ 4466: 43
+ 4472: 43
+ 4473: 31
+ 4474: 49
  4476: 47
- 4477: 50
- 4478: 47
- 4481: 39
- 4482: 43
- 4483: 43
- 4489: 43
- 4490: 31
- 4491: 49
- 4493: 47
- 4494: 33
- 4494: hl_psx::dot12:51
+ 4477: 33
+ 4477: hl_psx::dot12:51
   1: 51
- 4498: 31
- 4498: hl_psx::dot12:50
+ 4481: 31
+ 4481: hl_psx::dot12:50
   1: 50
- 4502: 41
- 4502: hl_psx::dot12:61
+ 4485: 41
+ 4485: hl_psx::dot12:61
   1: 61
- 4507: 45
- 4508: 48
- 4508: hl_psx::dot12:60
+ 4490: 45
+ 4491: 48
+ 4491: hl_psx::dot12:60
   1: 60
- 4508.1: hl_psx::dot12:51
+ 4491.1: hl_psx::dot12:51
   1: 51
- 4509: 50
- 4509: hl_psx::dot12:60
+ 4492: 50
+ 4492: hl_psx::dot12:60
   1: 60
- 4509.1: hl_psx::dot12:56
+ 4492.1: hl_psx::dot12:56
   1: 56
- 4510: 46
- 4510: hl_psx::dot12:51
+ 4493: 46
+ 4493: hl_psx::dot12:51
   1: 51
- 4510.1: hl_psx::dot12:60
+ 4493.1: hl_psx::dot12:60
   1: 60
- 4513: 49
- 4514: 33
- 4514: <[[i16; 3]; 3] as core::cmp::PartialEq>::eq @hl_psx:35
+ 4496: 49
+ 4497: 33
+ 4497: <[[i16; 3]; 3] as core::cmp::PartialEq>::eq @hl_psx:35
   1.5: <[i16; 3] as core::array::equality::SpecArrayEq<[i16; 3], 3>>::spec_eq @hl_psx:35
    4.9: 35
- 4515: 26
- 4515: <[i32; 3] as core::cmp::PartialEq>::eq @hl_psx:23
+ 4498: 26
+ 4498: <[i32; 3] as core::cmp::PartialEq>::eq @hl_psx:23
   1.6: <i32 as core::array::equality::SpecArrayEq<i32, 3>>::spec_eq @hl_psx:23
    4.10: 23
- 4516: <[i32; 3] as core::cmp::PartialEq>::eq @hl_psx:17
+ 4499: <[i32; 3] as core::cmp::PartialEq>::eq @hl_psx:17
   1.7: <i32 as core::array::equality::SpecArrayEq<i32, 3>>::spec_eq @hl_psx:17
    4.11: 17
- 4517.1: 9
- 4517.3: 9
- 4520.1: 213
- 4521: 212
- 4528: 215
- 4529: <psx_gpu::frame::OtFrame<640>>::add_raw @hl_psx:1064
+ 4500.1: 9
+ 4500.3: 9
+ 4503.1: 213
+ 4504: 212
+ 4511: 215
+ 4512: <psx_gpu::frame::OtFrame<640>>::add_raw @hl_psx:1064
   2.1: <psx_gpu::ot::OrderingTable<640>>::link @hl_psx:1064
    5: <usize as core::cmp::Ord>::min @hl_psx:209
     4: 209
@@ -3938,12 +3938,12 @@ hl_psx::play:7372221:0
      12: 219
      14: 216
      15: 203
- 4530: 213
- 4530.1: 202
- 4531.1: 210
- 4534: 209
- 4537: 16
- 4539: psx_gte::scene::load_rotation:294
+ 4513: 213
+ 4513.1: 202
+ 4514.1: 210
+ 4517: 209
+ 4520: 16
+ 4522: psx_gte::scene::load_rotation:294
   1: 33
   2: 35
   3: 35
@@ -3953,31 +3953,31 @@ hl_psx::play:7372221:0
   12.2: 22
   12.3: 27
   12.4: 36
- 4540: psx_gte::scene::load_translation:101
+ 4523: psx_gte::scene::load_translation:101
   65502.2: 31
   65502.12: 35
   65502.13: 35
- 4541: hl_psx::set_view_fix:78
+ 4524: hl_psx::set_view_fix:78
   1: 42
   2: 36
- 4542: hl_psx::next_proj_token:118
+ 4525: hl_psx::next_proj_token:118
   2: 39
   2: <u16>::wrapping_add:38
    1: 38
   3: 39
   5: 1
   8: 1
- 4543: 35
- 4544: 35
- 4545: 35
- 4546: 22
- 4547: 36
- 4552: hl_psx::clear_group_bits:35
+ 4526: 35
+ 4527: 35
+ 4528: 35
+ 4529: 22
+ 4530: 36
+ 4535: hl_psx::clear_group_bits:35
   3: <*mut u32>::write @hl_psx:35
    5: core::ptr::write::<u32> @hl_psx:35
     23: 35
- 4553: 32
- 4553.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:19580
+ 4536: 32
+ 4536.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:19580
   1.14: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:19580
    1.7: 6571
    1.14: <usize as core::cmp::PartialOrd>::lt:6567
@@ -3985,11 +3985,9 @@ hl_psx::play:7372221:0
    4.14: <usize as core::iter::range::Step>::forward_unchecked:6442
     2.14: <usize>::unchecked_add:6442
      12.7: 6442
- 4554: hl_psx::set_emit_face:92356
+ 4537: hl_psx::set_emit_face:92356
   1: 6555
   2: 6579
-  2: <hl_psx::EmitPolicy>::with_underwater_blend:6646
-   1: 6646
   2: <hl_psx::EmitPolicy>::for_face:65997
    1: <hl_psx::EmitPolicy>::from_surface:32993
     13: 6643
@@ -4007,9 +4005,11 @@ hl_psx::play:7372221:0
       39: 6646
    3: <hl_psx::map::Map>::face_translucent:6604
     1: 6604
+  2: <hl_psx::EmitPolicy>::with_underwater_blend:6646
+   1: 6646
   3: 6579
- 4555: 6650
- 4555: <hl_psx::map::Map>::face_tris:33002
+ 4538: 6650
+ 4538: <hl_psx::map::Map>::face_tris:33002
   2: <*const u8>::add @hl_psx:6566
    34: 6566
   4: <hl_psx::map::Map>::face_tris::{closure#0} @hl_psx:26436
@@ -4022,13 +4022,13 @@ hl_psx::play:7372221:0
    0.1: <*const u8>::read @hl_psx:6728
     5.2: core::ptr::read::<u8> @hl_psx:6728
      39: 6728
- 4556: <hl_psx::map::Map>::face_group:13025
+ 4539: <hl_psx::map::Map>::face_group:13025
   3: 6526
   3: <*const u8>::read @hl_psx:6499
    5: core::ptr::read::<u8> @hl_psx:6499
     39: 6499
- 4557: 6575
- 4557: hl_psx::scratch_bit:26502
+ 4540: 6575
+ 4540: hl_psx::scratch_bit:26502
   1: 6596
   1: <*mut u32>::add @hl_psx:6692
    34: 6692
@@ -4036,26 +4036,21 @@ hl_psx::play:7372221:0
    5: core::ptr::read::<u32> @hl_psx:6583
     39: 6583
   2: 6631
- 4558: hl_psx::scratch_bit_assign:4927
+ 4541: hl_psx::scratch_bit_assign:4927
   4: 2483
   4: <*mut u32>::write @hl_psx:2444
    5: core::ptr::write::<u32> @hl_psx:2444
     23: 2444
- 4559: <hl_psx::map::Map>::face_plane_cooked:37152
-  1: <hl_psx::map::Map>::face_group:5082
-   3: 2585
-   3: <*const u8>::read @hl_psx:2497
-    5: core::ptr::read::<u8> @hl_psx:2497
-     39: 2497
+ 4542: <hl_psx::map::Map>::face_plane_cooked:37152
   1: <hl_psx::map::Map>::cooked_group_plane:32070
    1: 2546
    1: hl_psx::map::rd_i16_aligned:5122
     1: hl_psx::map::rd_u16_aligned:5122
-     2: <*const u8>::add @hl_psx:2556
-      34: 2556
      2: <*const u16>::read @hl_psx:2566
       5: core::ptr::read::<u16> @hl_psx:2566
        39: 2566
+     2: <*const u8>::add @hl_psx:2556
+      34: 2556
    3: 2646
    8: 2580
    10: hl_psx::map::rd_i16_aligned:2533
@@ -4077,10 +4072,15 @@ hl_psx::play:7372221:0
      1: 747
    20: 2543
    21: 699
- 4560: 2509
- 4560: hl_psx::dot_plane:2593
+  1: <hl_psx::map::Map>::face_group:5082
+   3: 2585
+   3: <*const u8>::read @hl_psx:2497
+    5: core::ptr::read::<u8> @hl_psx:2497
+     39: 2497
+ 4543: 2509
+ 4543: hl_psx::dot_plane:2593
   1: 2593
- 4560.1: hl_psx::scratch_bit_assign:10004
+ 4543.1: hl_psx::scratch_bit_assign:10004
   1: <*mut u32>::add @hl_psx:2547
    34: 2547
   3: <*mut u32>::read @hl_psx:2420
@@ -4090,23 +4090,23 @@ hl_psx::play:7372221:0
   4: <*mut u32>::write @hl_psx:2548
    5: core::ptr::write::<u32> @hl_psx:2548
     23: 2548
- 4562: 6629
- 4562: hl_psx::scratch_bit:10668
+ 4545: 6629
+ 4545: hl_psx::scratch_bit:10668
   1: <*mut u32>::read @hl_psx:4035
    5: core::ptr::read::<u32> @hl_psx:4035
     39: 4035
   2: 6633
- 4563: <u32>::saturating_add:3332
+ 4546: <u32>::saturating_add:3332
   1: 3332
- 4566: 3302
- 4577: 33
- 4578: 40
- 4579: 18
- 4581: 25
- 4582: 28
- 4583: 27
- 4584: 22
- 4587: psx_gte::scene::load_rotation:438
+ 4549: 3302
+ 4560: 33
+ 4561: 40
+ 4562: 18
+ 4564: 25
+ 4565: 28
+ 4566: 27
+ 4567: 22
+ 4570: psx_gte::scene::load_rotation:438
   1: 43
   2: 46
   3: 48
@@ -4117,18 +4117,18 @@ hl_psx::play:7372221:0
   12.2: 48
   12.3: 45
   12.4: 41
- 4588: hl_psx::set_view_fix:96
+ 4571: hl_psx::set_view_fix:96
   1: 52
   2: 44
- 4589: hl_psx::reset_emit_policy:236
+ 4572: hl_psx::reset_emit_policy:236
   1: 43
   2: <hl_psx::map::Map>::reset_dynamic_face:193
    2: 58
    3: 45
    4: 47
    5: 43
- 4598: 451
- 4602: psx_gte::scene::load_rotation:4327
+ 4581: 451
+ 4585: psx_gte::scene::load_rotation:4327
   1: 426
   2: 418
   3: 411
@@ -4139,62 +4139,62 @@ hl_psx::play:7372221:0
   12.2: 447
   12.3: 399
   12.4: 450
- 4603: psx_gte::scene::load_translation:1351
+ 4586: psx_gte::scene::load_translation:1351
   65502.1: 453
   65502.10: 465
   65502.11: 433
- 4606: 406
- 4606: <usize as core::cmp::Ord>::min @hl_psx:455
+ 4589: 406
+ 4589: <usize as core::cmp::Ord>::min @hl_psx:455
   4.19: 455
- 4616: hl_psx::vm_tail_capacity_words:896
+ 4599: hl_psx::vm_tail_capacity_words:896
   1: 451
   1: <usize>::saturating_sub:445
    1: 445
- 4617: <usize>::saturating_sub:425
+ 4600: <usize>::saturating_sub:425
   1: 425
- 4618: <psx_engine::render::PrimitivePacketArena>::remaining_words:1751
+ 4601: <psx_engine::render::PrimitivePacketArena>::remaining_words:1751
+  1: <psx_engine::render::PrimitivePacketArena>::remaining:1328
+   1.1: 453
+   1.1: <psx_engine::render::PrimitivePacketArena>::capacity:439
+    1.1: 439
+   1.1: <usize>::saturating_sub:436
+    1: 436
   1: <usize>::saturating_mul:423
    1: <usize>::checked_mul:423
     2: core::intrinsics::unlikely:423
      1: 423
-  1: <psx_engine::render::PrimitivePacketArena>::remaining:1328
-   1.1: 453
-   1.1: <usize>::saturating_sub:436
-    1: 436
-   1.1: <psx_engine::render::PrimitivePacketArena>::capacity:439
-    1.1: 439
- 4619: 414
- 4620: 445
- 4621: 305
- 4623: 168
- 4626: 300
- 4628: hl_psx::model_ptr:311
+ 4602: 414
+ 4603: 445
+ 4604: 305
+ 4606: 168
+ 4609: 300
+ 4611: <*mut u32>::add @hl_psx:306
+  34: 306
+ 4611: hl_psx::model_ptr:311
   1: <*mut u32>::add @hl_psx:311
    34: 311
- 4628: <*mut u32>::add @hl_psx:306
-  34: 306
- 4631: <core::option::Option<psx_engine::render::PrimitivePacketWordReservation>>::as_mut @hl_psx:168
+ 4614: <core::option::Option<psx_engine::render::PrimitivePacketWordReservation>>::as_mut @hl_psx:168
   1: 168
- 4632: <psx_engine::render::PrimitivePacketWordReservation>::words_mut:565
+ 4615: <psx_engine::render::PrimitivePacketWordReservation>::words_mut:565
   2: 130
   5: 142
   5: <*mut psx_engine::render::PrimitivePacketSlot>::add @hl_psx:151
    34.1: 151
   8: 142
- 4637: 457
- 4642: 445
- 4642: <usize as core::cmp::Ord>::min @hl_psx:446
+ 4620: 457
+ 4625: 445
+ 4625: <usize as core::cmp::Ord>::min @hl_psx:446
   4.21: 446
- 4643.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:10844
+ 4626.1: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::next @hl_psx:10844
   1.15: <core::ops::range::Range<usize> as core::iter::range::RangeIteratorImpl>::spec_next @hl_psx:10844
    1.8: 419
    1.15: <usize as core::cmp::PartialOrd>::lt:10425
     0.24: 10425
- 4644.1: 10759
- 4648.1: 8691
- 4651: 8492
- 4652: 8561
- 4652: hl_psx::prop_render_transform:120891
+ 4627.1: 10759
+ 4631.1: 8691
+ 4634: 8492
+ 4635: 8561
+ 4635: hl_psx::prop_render_transform:120891
   2.1: 8734
   3: 8438
   5: 8760
@@ -4210,22 +4210,22 @@ hl_psx::play:7372221:0
    4.9: 8516
   32.3: 8514
   33: 8559
- 4654: <usize as core::cmp::Ord>::min @hl_psx:8681
+ 4637: <usize as core::cmp::Ord>::min @hl_psx:8681
   4.29: 8681
- 4654.2: 8751
- 4655: 8712
- 4658: 8367
- 4658.1: 8599
- 4659: 8345
- 4666: 8566
- 4669: 298
- 4671: hl_psx::prop_render_radius:17621
+ 4637.2: 8751
+ 4638: 8712
+ 4641: 8367
+ 4641.1: 8599
+ 4642: 8345
+ 4649: 8566
+ 4652: 298
+ 4654: hl_psx::prop_render_radius:17621
   3: 8624
   3.2: 305
   6: hl_psx::model_def:8692
    1.2: 8692
- 4675: 1276
- 4675: <hl_psx::CameraVisibility>::actor_bounds:43749
+ 4658: 1276
+ 4658: <hl_psx::CameraVisibility>::actor_bounds:43749
   1: 8704
   1: <hl_psx::CameraVisibility>::known_leaf:33721
    1: 8378
@@ -4234,27 +4234,27 @@ hl_psx::play:7372221:0
     9: 8296
    1.2: 8620
   1.2: 1324
- 4680.1: 225
- 4681: 231
- 4682: 191
- 4682: <u32>::wrapping_add:186
+ 4663.1: 225
+ 4664: 231
+ 4665: 191
+ 4665: <u32>::wrapping_add:186
   1.2: 186
- 4684.1: 49
- 4685.1: 42
- 4686: 52
- 4688.1: 210
- 4692: 130
- 4693: 168
- 4694: 29
- 4694.2: 32
- 4696: 33
- 4704: hl_psx::prop_body_value:150
+ 4667.1: 49
+ 4668.1: 42
+ 4669: 52
+ 4671.1: 210
+ 4675: 130
+ 4676: 168
+ 4677: 29
+ 4677.2: 32
+ 4679: 33
+ 4687: hl_psx::prop_body_value:150
   1: 150
- 4706: hl_psx::prop_is_human:139
+ 4689: hl_psx::prop_is_human:139
   1: hl_psx::prop_is_scientist:139
    1: 139
- 4707: 44
- 4707: hl_psx::prop_mouth_open:685
+ 4690: 44
+ 4690: hl_psx::prop_mouth_open:685
   1: hl_psx::prop_is_talking:227
    1: 131
    1: hl_psx::time_reached:48
@@ -4283,30 +4283,30 @@ hl_psx::play:7372221:0
   14.2: 20
   18: 19
   19.1: 16
- 4713: 175
- 4713: <[hl_psx::vram::TexSlot; 176] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:187
+ 4696: 175
+ 4696: <[hl_psx::vram::TexSlot; 176] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:187
   1.1: <[hl_psx::vram::TexSlot] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:187
    1.11: <core::ops::range::Range<usize> as core::slice::index::SliceIndex<[hl_psx::vram::TexSlot]>>::index @hl_psx:187
     2: <usize>::checked_sub:187
      6: 187
- 4721: 198
- 4721.4: 171
- 4725: 187
- 4729: 173
- 4730: 156
- 4736: 172
- 4736: <psx_asset::hmd8::Model>::has_tracks:162
+ 4704: 198
+ 4704.4: 171
+ 4708: 187
+ 4712: 173
+ 4713: 156
+ 4719: 172
+ 4719: <psx_asset::hmd8::Model>::has_tracks:162
   1: 162
- 4738: 190
- 4739: 171
- 4739.2: 1
- 4740: 3
- 4745: 180
- 4749.2: 186
- 4754: hl_psx::flashlight_model_shade:186
+ 4721: 190
+ 4722: 171
+ 4722.2: 1
+ 4723: 3
+ 4728: 180
+ 4732.2: 186
+ 4737: hl_psx::flashlight_model_shade:186
   1: 186
- 4760: 190
- 4771: hl_psx::prop_authored_tilt:1071
+ 4743: 190
+ 4754: hl_psx::prop_authored_tilt:1071
   1: 173
   5: 195
   8: 178
@@ -4316,9 +4316,9 @@ hl_psx::play:7372221:0
     1: hl_psx::map::rd_u32:336
      5: 159
      7: 177
- 4787: 171
- 4788: 194
- 4791: psx_gte::scene::load_rotation:1700
+ 4770: 171
+ 4771: 194
+ 4774: psx_gte::scene::load_rotation:1700
   1: 164
   2: 175
   3: 180
@@ -4329,24 +4329,24 @@ hl_psx::play:7372221:0
   12.2: 165
   12.3: 178
   12.4: 178
- 4792: psx_gte::scene::load_translation:528
+ 4775: psx_gte::scene::load_translation:528
   65502.3: 169
   65502.14: 176
   65502.15: 183
- 4795: 435
- 4854: 442
- 4855: 135
- 4857: 446
- 4859: 121
- 4860: <core::option::Option<psx_engine::render::PrimitivePacketStream>>::expect @hl_psx:155
+ 4778: 435
+ 4834: 442
+ 4835: 135
+ 4837: 446
+ 4839: 121
+ 4840: <core::option::Option<psx_engine::render::PrimitivePacketStream>>::expect @hl_psx:155
   1: 155
- 4863: 436
- 4865: <*mut u32>::add @hl_psx:435
+ 4843: 436
+ 4845: <*mut u32>::add @hl_psx:435
   34.2: 435
- 4873: 437
- 4875.1: 6360
- 4877: 6265
- 4877: <hl_psx::map::Map>::sprite_prop:56616
+ 4853: 437
+ 4855.1: 6360
+ 4857: 6265
+ 4857: <hl_psx::map::Map>::sprite_prop:56616
   1: 6237
   4: 6321
   4: hl_psx::map::rd_i16:6392
@@ -4365,69 +4365,69 @@ hl_psx::play:7372221:0
     1: 6290
   10: hl_psx::map::rd_u16:6230
    1: 6230
- 4879: 6258
- 4879: hl_psx::sprite_is_visible:25362
+ 4859: 6258
+ 4859: hl_psx::sprite_is_visible:25362
   1: 6287
   2: 6302
   2.1: 6374
   3: 6399
- 4882: 2934
- 4883: 2920
- 4883: hl_psx::sprite::n_sprites:2942
+ 4862: 2934
+ 4863: 2920
+ 4863: hl_psx::sprite::n_sprites:2942
   1: 2942
- 4886: 2912
- 4886: <hl_psx::CameraVisibility>::leaf:10379
+ 4866: 2912
+ 4866: <hl_psx::CameraVisibility>::leaf:10379
   1: hl_psx::pvs_leaf_visible:10379
    1.1: 2617
    8: 2554
    8.1: 2608
    9: 2600
- 4889: hl_psx::sprite::def:931
+ 4869: hl_psx::sprite::def:931
   8: <[hl_psx::sprite::SpriteDef]>::get::<usize> @hl_psx:931
    4.1: <usize as core::slice::index::SliceIndex<[hl_psx::sprite::SpriteDef]>>::get @hl_psx:931
     1: 931
- 4890: <u8 as core::cmp::Ord>::max @hl_psx:946
+ 4870: <u8 as core::cmp::Ord>::max @hl_psx:946
   4.11: 946
- 4892: 956
- 4893: 943
- 4894: hl_psx::sprite_set_visible:9
+ 4872: 956
+ 4873: 943
+ 4874: hl_psx::sprite_set_visible:9
   1: 2
   5.1: 3
   9: 4
- 4897.1: 932
- 4898: 913
- 4899: 975
- 4900: 936
- 4900.3: 968
- 4904: hl_psx::draw_billboard:1947
+ 4877.1: 932
+ 4878: 913
+ 4879: 975
+ 4880: 936
+ 4880.3: 968
+ 4884: hl_psx::draw_billboard:1947
   12: hl_psx::emit_billboard:990
    13: hl_psx::emit_billboard_rgb:990
     13: 990
   18: 957
- 4919: 450
- 4920: 447
- 4921: 453
- 4922: 444
- 4923.1: 444
- 4924.1: 448
- 4925: 454
- 4925.1: 411
- 4925.1: <hl_psx::map::Map>::l5_decal_count:1692
+ 4899: 450
+ 4900: 447
+ 4901: 453
+ 4902: 444
+ 4903.1: 444
+ 4904.1: 448
+ 4905: 454
+ 4905.1: 411
+ 4905.1: <hl_psx::map::Map>::l5_decal_count:1692
   1: 449
   4: 425
   4: hl_psx::map::rd_u16_aligned:818
-   2: <*const u8>::add @hl_psx:417
-    34: 417
    2: <*const u16>::read @hl_psx:401
     5: core::ptr::read::<u16> @hl_psx:401
      39: 401
- 4925.5: 272
- 4926.1: 269
- 4962: 461
- 4962.3: 280
- 4963: 299
- 4964: 303
- 4965: hl_psx::viewmodel_offset:608
+   2: <*const u8>::add @hl_psx:417
+    34: 417
+ 4905.5: 272
+ 4906.1: 269
+ 4942: 461
+ 4942.3: 280
+ 4943: 299
+ 4944: 303
+ 4945: hl_psx::viewmodel_offset:608
   2: hl_psx::viewmodel_offset::{closure#0} @hl_psx:325
    0: <psx_gte_core::math::Mat3I16>::rotate_z:325
     2: psx_gte_core::transform::sin_1_3_12:325
@@ -4436,78 +4436,75 @@ hl_psx::play:7372221:0
    0.1: <psx_gte_core::math::Mat3I16>::rotate_z:283
     2: psx_gte_core::transform::sin_1_3_12:283
      1.3: 283
- 4971: 295
- 4971: hl_psx::viewmodel_for:1248
+ 4951: 295
+ 4951: hl_psx::viewmodel_for:1248
   1: 303
   2: 2
   5: 306
   6: 323
   7: 314
- 4972: 308
- 4978: 298
- 4981: 323
- 4985: 307
- 4989: 449
- 5008: 448
- 5018.1: 438
- 5049: 428
- 5053: psx_goldsrc::driver::with::<(), hl_psx::play::{closure#18}> @hl_psx:424
+ 4952: 308
+ 4958: 298
+ 4961: 323
+ 4965: 307
+ 4969: 449
+ 4987: 448
+ 4997.1: 438
+ 5018: 428
+ 5022: psx_goldsrc::driver::with::<(), hl_psx::play::{closure#18}> @hl_psx:424
   2.2: hl_psx::play::{closure#18} @hl_psx:424
    0: 424
- 5056: 454
- 5057: 439
- 5107: psx_goldsrc::driver::with::<(), hl_psx::play::{closure#19}> @hl_psx:443
+ 5025: 454
+ 5026: 439
+ 5076: psx_goldsrc::driver::with::<(), hl_psx::play::{closure#19}> @hl_psx:443
   2.3: 443
- 5113: 443
- 5114: 464
- 5119: <hl_psx::Arsenal>::any_weapon:418
+ 5082: 443
+ 5083: 464
+ 5088: <hl_psx::Arsenal>::any_weapon:418
   1: 418
- 5123: <hl_psx::Arsenal>::clip_display:458
+ 5092: <hl_psx::Arsenal>::clip_display:458
   1: 458
- 5126: <hl_psx::Arsenal>::ammo_mode:270
+ 5095: <hl_psx::Arsenal>::ammo_mode:270
   2: 270
- 5127: 438
- 5133: hl_psx::train_hud_position:342
+ 5096: 438
+ 5102: hl_psx::train_hud_position:342
   1: 342
- 5144: <psx_gpu::frame::PrimitiveArena<psx_gpu::prim::RectFlat>>::new @hl_psx:445
+ 5113: <psx_gpu::frame::PrimitiveArena<psx_gpu::prim::RectFlat>>::new @hl_psx:445
   1: 445
- 5147: 429
- 5153.1: 445
- 5156: 440
- 5156.1: 284
- 5159: 301
- 5161: 303
- 5161: <[hl_psx::vram::TexSlot; 40] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:578
+ 5116: 429
+ 5122.1: 445
+ 5125: 440
+ 5125.1: 284
+ 5128: 301
+ 5130: 303
+ 5130: <[hl_psx::vram::TexSlot; 40] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:578
   1.3: <[hl_psx::vram::TexSlot] as core::ops::index::Index<core::ops::range::Range<usize>>>::index @hl_psx:578
    1.10: <core::ops::range::Range<usize> as core::slice::index::SliceIndex<[hl_psx::vram::TexSlot]>>::index @hl_psx:578
     2: <usize>::checked_sub:295
      6: 295
     6: core::slice::index::get_offset_len_noubcheck::<hl_psx::vram::TexSlot> @hl_psx:283
      7: 283
- 5169: 301
- 5169.1: 301
- 5175: 467
- 5176: <core::option::Option<(psx_asset::hmd8::Model, usize, usize, usize, usize, u32)>>::map::<hl_psx::DeferredViewmodel, hl_psx::play::{closure#20}> @hl_psx:264
+ 5138: 301
+ 5138.1: 301
+ 5144: 467
+ 5145: <core::option::Option<(psx_asset::hmd8::Model, usize, usize, usize, usize, u32)>>::map::<hl_psx::DeferredViewmodel, hl_psx::play::{closure#20}> @hl_psx:264
   5.7: 264
- 5187: <psx_gpu::display::DoubleBuffer>::draw_origin:868
+ 5156: <psx_gpu::display::DoubleBuffer>::draw_origin:868
   1: 433
   1: <psx_gpu::display::DoubleBuffer>::top:435
    1: 435
- 5193: hl_psx::fx_chain_reset:864
+ 5162: hl_psx::fx_chain_reset:864
   1: 418
   2: 446
- 5194: 441
- 5195: 469
- 5196: 471
- 5199: 463
- 5200: 431
- 5201: 447
- 5201: hl_psx::settings::debug_on:446
+ 5163: 441
+ 5164: 469
+ 5165: 471
+ 5168: 463
+ 5169: 431
+ 5170: 447
+ 5170: hl_psx::settings::debug_on:446
   1: 446
- 5211: 429
- 5212: 483
- 5353: <psx_goldsrc::present::FramePresent>::frame_built:418
-  1: 418
+ 5180: 429
 __psx_rt_wait_idle:6780183:434
  0: 448
  1: psx_rt::present::wait_idle_on::<psx_rt::present::Hardware> @psx_rt:6779272
@@ -4545,12 +4542,12 @@ __psx_rt_wait_idle:6780183:434
        11: 435
   6: 1354927
   6: psx_rt::present::since::<psx_rt::present::Hardware> @psx_rt:2709753
-   1: <u32>::wrapping_sub:1354898
-    1: 1354898
    1: <psx_rt::present::Hardware as psx_rt::present::Port>::vblanks:1354855
     1: psx_rt::interrupts::vblank_count:1354855
      4: core::ptr::read_volatile::<u32> @psx_rt:1354855
       11: 1354855
+   1: <u32>::wrapping_sub:1354898
+    1: 1354898
  3: 463
 hl_psx::draw_viewmodel:5799990:579
  8: 579
@@ -4565,19 +4562,19 @@ hl_psx::draw_viewmodel:5799990:579
   1: 594
  18: hl_psx::model_local_scale_and_shift:2346
   1: hl_psx::model_local_scale:1749
-   1: hl_psx::model_local_to_world_q12:575
-    1: 575
    1: <i32 as core::cmp::Ord>::max @hl_psx:585
     4: 585
+   1: hl_psx::model_local_to_world_q12:575
+    1: 575
    1.1: 589
   2.1: 597
  20: hl_psx::weapon_projected_ptrs:1697
+  1: <*mut u32>::add @hl_psx:543
+   34: 543
   1: hl_psx::model_ptr:1154
    1: 579
    1: <*mut u32>::add @hl_psx:575
     34: 575
-  1: <*mut u32>::add @hl_psx:543
-   34: 543
  22: 567
  23: 561
  24: 580
@@ -4653,6 +4650,11 @@ hl_psx::draw_viewmodel:5799990:579
     4: 85958
    21: 85896
    27: 85595
+   27: psx_asset::hmd8::rd_u16:171111
+    4: 85528
+    4.4: <*const u8>::read @hl_psx:85583
+     5.15: core::ptr::read::<u8> @hl_psx:85583
+      39.2: 85583
    27: psx_asset::hmd8::unpack_normal_555:514339
     6: psx_asset::hmd8::unpack_normal_555::{closure#0} @hl_psx:514339
      2: 85791
@@ -4661,11 +4663,6 @@ hl_psx::draw_viewmodel:5799990:579
      3: 85704
      3.1: 86004
      3.2: 85569
-   27: psx_asset::hmd8::rd_u16:171111
-    4: 85528
-    4.4: <*const u8>::read @hl_psx:85583
-     5.15: core::ptr::read::<u8> @hl_psx:85583
-      39.2: 85583
  80: <usize as core::cmp::Ord>::min @hl_psx:85779
   4.6: 85779
  80.2: 85653
@@ -4700,6 +4697,9 @@ hl_psx::draw_viewmodel:5799990:579
   5.2: core::ptr::write::<u32> @hl_psx:58106
    23.2: 58106
  117.1: 58206
+ 119: hl_psx::settings::bright:117207
+  2: 58544
+  5: 58663
  119: hl_psx::vm_normal_shade:151344
   1: 23172
   2: 58308
@@ -4707,20 +4707,17 @@ hl_psx::draw_viewmodel:5799990:579
   6: 23263
   6: <i32 as core::cmp::Ord>::clamp:23329
    9: 23329
- 119: hl_psx::settings::bright:117207
-  2: 58544
-  5: 58663
  119.1: 58514
  122: <*mut u16>::write @hl_psx:58162
   5.3: core::ptr::write::<u16> @hl_psx:58162
    23.2: 58162
  129: 591
  134: hl_psx::weapon_tri_records_ptr:601
+  1.1: <*mut u32>::add @hl_psx:291
+   34.3: 291
   1.1: hl_psx::model_ptr:310
    1.3: <*mut u32>::add @hl_psx:310
     34.3: 310
-  1.1: <*mut u32>::add @hl_psx:291
-   34.3: 291
  135: hl_psx::weapon_tri_indices_ptr:262
   1.1: <*mut u32>::add @hl_psx:262
    34.3: 262
@@ -4960,9 +4957,6 @@ hl_psx::split_walk_entry:3936938:19658
    2: psx_goldsrc::ordering::world_order_key::<640> @hl_psx:289670
     4: 26647
     5: 26548
-    5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:26702
-     1: <usize as core::cmp::Ord>::clamp:26702
-      9: 26702
     5: <psx_goldsrc::ordering::PrimitiveDepths>::representative:75952
      1: 26779
      2: 17905
@@ -4971,6 +4965,9 @@ hl_psx::split_walk_entry:3936938:19658
       4.1: 8705
      16: <i32 as core::cmp::Ord>::max @hl_psx:4471
       4.10: 4471
+    5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:26702
+     1: <usize as core::cmp::Ord>::clamp:26702
+      9: 26702
     7: 27020
     7.3: 26263
     11: 26741
@@ -4990,6 +4987,8 @@ hl_psx::split_walk_entry:3936938:19658
   47: 26875
   47: hl_psx::push_tri_uv_words_packed:537258
    15: hl_psx::emplace_packet::<psx_gpu::prim::TriTexturedGouraud, hl_psx::push_tri_uv_words_packed::{closure#0}> @hl_psx:320632
+    4: <core::option::Option<&mut psx_gpu::prim::TriTexturedGouraud> as core::ops::try_trait::Try>::branch @hl_psx:26614
+     1: 26614
     4: <psx_engine::render::PrimitivePacketArena>::reuse_packet::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:187013
      8: 26809
      11: <psx_engine::render::PrimitivePacketArena>::claim:26605
@@ -5000,15 +4999,13 @@ hl_psx::split_walk_entry:3936938:19658
       5: 26972
      14: 26434
      15: 26635
-    4: <core::option::Option<&mut psx_gpu::prim::TriTexturedGouraud> as core::ops::try_trait::Try>::branch @hl_psx:26614
-     1: 26614
+    5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:27064
+     5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:27064
+      23: 27064
     5: hl_psx::push_tri_uv_words_packed::{closure#0} @hl_psx:79941
      3: 26645
      5: 26613
      8: 26683
-    5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:27064
-     5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:27064
-      23: 27064
    30: 26651
    35: hl_psx::tram_cache_capture_tri:29880
     1: 26890
@@ -5222,10 +5219,10 @@ hl_psx::emit_pvs_walk:3729447:49204
      5.7: core::ptr::read::<u8> @hl_psx:2643
       39: 2643
   100: 2844
-  100: hl_psx::dot12:2897
-   1: 2897
   100: <i32 as core::cmp::Ord>::max @hl_psx:2868
    4: 2868
+  100: hl_psx::dot12:2897
+   1: 2897
   101: 2794
   101: <i32 as core::cmp::Ord>::min @hl_psx:2807
    4: 2807
@@ -5257,8 +5254,6 @@ hl_psx::emit_pvs_walk:3729447:49204
   110: hl_psx::set_emit_face:96
    1: 7
    2: 7
-   2: <hl_psx::EmitPolicy>::with_underwater_blend:9
-    1: 9
    2: <hl_psx::EmitPolicy>::for_face:61
     1: <hl_psx::EmitPolicy>::from_surface:50
      13: 13
@@ -5268,6 +5263,8 @@ hl_psx::emit_pvs_walk:3729447:49204
      16: 10
     3: <hl_psx::map::Map>::face_translucent:11
      1: 11
+   2: <hl_psx::EmitPolicy>::with_underwater_blend:9
+    1: 9
    3: 12
   112: 668
   113: hl_psx::reset_emit_policy:19
@@ -5331,11 +5328,11 @@ hl_psx::try_emit_quad_ctx:3401127:38514
    10: 19727
    10: <*const u8>::add @hl_psx:19191
     34: 19191
-   11: <psx_gte_core::math::Vec3I16>::new:19199
-    1: 19199
    11: <*const i16>::read @hl_psx:19485
     5: core::ptr::read::<i16> @hl_psx:19485
      39: 19485
+   11: <psx_gte_core::math::Vec3I16>::new:19199
+    1: 19199
   29: 19529
   30: 5803
   30: psx_gte::scene::project_vertex_scheduled:11675
@@ -5347,24 +5344,24 @@ hl_psx::try_emit_quad_ctx:3401127:38514
    1.1: 13814
    10.1: <*const u8>::add @hl_psx:13762
     34.1: 13762
-   11.1: <psx_gte_core::math::Vec3I16>::new:13744
-    1.1: 13744
    11.1: <*const i16>::read @hl_psx:13811
     5.3: core::ptr::read::<i16> @hl_psx:13811
      39.1: 13811
+   11.1: <psx_gte_core::math::Vec3I16>::new:13744
+    1.1: 13744
   38: 13879
   39: 6130
   39: <hl_psx::map::Map>::vert:30953
    1.2: 6181
    10.2: <*const u8>::add @hl_psx:6158
     34.2: 6158
-   11.2: <psx_gte_core::math::Vec3I16>::new:6169
-    1.2: 6169
    11.2: <*const i16>::read @hl_psx:12445
     5.6: core::ptr::read::<i16> @hl_psx:6243
      39.2: 6243
     5.8: core::ptr::read::<i16> @hl_psx:6202
      39.2: 6202
+   11.2: <psx_gte_core::math::Vec3I16>::new:6169
+    1.2: 6169
   41: 7654
   43: psx_gte::scene::project_triangle_scheduled:75001
    3: 13894
@@ -5386,11 +5383,11 @@ hl_psx::try_emit_quad_ctx:3401127:38514
    1.3: 4270
    10.3: <*const u8>::add @hl_psx:4215
     34.3: 4215
-   11.3: <psx_gte_core::math::Vec3I16>::new:4307
-    1.3: 4307
    11.3: <*const i16>::read @hl_psx:4286
     5.9: core::ptr::read::<i16> @hl_psx:4286
      39.3: 4286
+   11.3: <psx_gte_core::math::Vec3I16>::new:4307
+    1.3: 4307
   52: 4399
   52: psx_gte::scene::project_vertex_scheduled:12827
    3.1: psx_gte::scene::project_vertex_mips:12827
@@ -5431,10 +5428,10 @@ hl_psx::try_emit_quad_ctx:3401127:38514
  72: 2007
  72: <hl_psx::map::Map>::set_patch_undecided:10055
   1: 1987
-  4: <hl_psx::map::Map>::loopvert_o:2020
-   1: 2020
   4: <*const u8>::add @hl_psx:2012
    34: 2012
+  4: <hl_psx::map::Map>::loopvert_o:2020
+   1: 2020
   7: <*mut u16>::read_unaligned @hl_psx:2019
    5: core::ptr::read_unaligned::<u16> @hl_psx:2019
     9: core::ptr::copy_nonoverlapping::<u8> @hl_psx:2019
@@ -5460,13 +5457,13 @@ hl_psx::try_emit_quad_ctx:3401127:38514
   2: psx_goldsrc::ordering::world_order_key::<640> @hl_psx:39592
    4: 3921
    5: 3909
-   5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:3986
-    1: <usize as core::cmp::Ord>::clamp:3986
-     9: 3986
    5: <psx_goldsrc::ordering::PrimitiveDepths>::representative:11763
     1: 3917
     2: 3936
     6.3: 3910
+   5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:3986
+    1: <usize as core::cmp::Ord>::clamp:3986
+     9: 3986
    7: 3913
    11: 3888
    16: 3858
@@ -5485,13 +5482,13 @@ hl_psx::try_emit_quad_ctx:3401127:38514
  108: hl_psx::world_order_key:43560
   2: psx_goldsrc::ordering::world_order_key::<640> @hl_psx:31761
    5: 3889
-   5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:4006
-    1: <usize as core::cmp::Ord>::clamp:4006
-     9: 4006
    5: <psx_goldsrc::ordering::PrimitiveDepths>::representative:11685
     1: 3910
     2: 3892
     6.3: 3883
+   5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:4006
+    1: <usize as core::cmp::Ord>::clamp:4006
+     9: 4006
    7.5: 17
    11: 3926
    16: 3841
@@ -5632,10 +5629,10 @@ hl_psx::try_emit_quad_ctx:3401127:38514
   25: 8779
   25: <hl_psx::map::Map>::set_patch_subdiv_active:52677
    1: 8720
-   4: <hl_psx::map::Map>::loopvert_o:8506
-    1: 8506
    4: <*const u8>::add @hl_psx:8808
     34: 8808
+   4: <hl_psx::map::Map>::loopvert_o:8506
+    1: 8506
    7: <*mut u16>::read_unaligned @hl_psx:9060
     5: core::ptr::read_unaligned::<u16> @hl_psx:9060
      9: core::ptr::copy_nonoverlapping::<u8> @hl_psx:9060
@@ -5647,10 +5644,10 @@ hl_psx::try_emit_quad_ctx:3401127:38514
       21: 8841
   26: <hl_psx::map::Map>::set_patch_undecided:44089
    1: 8892
-   4: <hl_psx::map::Map>::loopvert_o:8721
-    1: 8721
    4: <*const u8>::add @hl_psx:8985
     34: 8985
+   4: <hl_psx::map::Map>::loopvert_o:8721
+    1: 8721
    7: <*mut u16>::read_unaligned @hl_psx:8798
     5: core::ptr::read_unaligned::<u16> @hl_psx:8798
      9: core::ptr::copy_nonoverlapping::<u8> @hl_psx:8798
@@ -5678,12 +5675,12 @@ hl_psx::try_emit_quad_ctx:3401127:38514
     2: psx_goldsrc::ordering::world_order_key::<640> @hl_psx:195337
      4: 19616
      5: 19260
-     5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:19535
-      1: <usize as core::cmp::Ord>::clamp:19535
-       9: 19535
      5: <psx_goldsrc::ordering::PrimitiveDepths>::representative:39255
       2: 19440
       2.1: 19815
+     5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:19535
+      1: <usize as core::cmp::Ord>::clamp:19535
+       9: 19535
      7: 19403
      7.3: 19577
      11: 19443
@@ -5703,15 +5700,15 @@ hl_psx::try_emit_quad_ctx:3401127:38514
   4: 21600
   4: <core::option::Option<&mut psx_gpu::prim::QuadTexturedGouraud> as core::ops::try_trait::Try>::branch @hl_psx:21516
    1: 21516
+  5: <*mut psx_gpu::prim::QuadTexturedGouraud>::write @hl_psx:21849
+   5: core::ptr::write::<psx_gpu::prim::QuadTexturedGouraud> @hl_psx:21849
+    23: 21849
   5: hl_psx::try_emit_quad_ctx::{closure#3} @hl_psx:108230
    3: 21840
    5: 21689
    8: 21555
    11: 21523
    14: 21623
-  5: <*mut psx_gpu::prim::QuadTexturedGouraud>::write @hl_psx:21849
-   5: core::ptr::write::<psx_gpu::prim::QuadTexturedGouraud> @hl_psx:21849
-    23: 21849
  330: <psx_gpu::frame::OtFrame<640>>::add_raw @hl_psx:129446
   2: <psx_gpu::ot::OrderingTable<640>>::link @hl_psx:129446
    5: <usize as core::cmp::Ord>::min @hl_psx:21601
@@ -5805,10 +5802,10 @@ hl_psx::finish_deferred_overlays:3012573:389
  9: 442
  10: psx_goldsrc::driver::with::<(), hl_psx::finish_deferred_overlays::{closure#1}> @hl_psx:549
   2.1: hl_psx::finish_deferred_overlays::{closure#1} @hl_psx:549
-   1: <psx_gpu::gpu::Gpu>::set_draw_offset:273
-    1: 273
    1: <i16>::saturating_add:276
     1: 276
+   1: <psx_gpu::gpu::Gpu>::set_draw_offset:273
+    1: 273
  14: 433
  14.1: 307
  17: 291
@@ -5850,6 +5847,10 @@ hl_psx::finish_deferred_overlays:3012573:389
      3: psx_io::read_u32:4878
       3: core::ptr::read_volatile::<u32> @psx_vram:4878
        11: 4878
+  2: psx_hw::gpu::gp0::draw_mode:15148
+   8: 5339
+   9: 4795
+   12: 5014
   2: psx_io::gpu::write_command:14712
    1: 4919
    1: psx_io::gpu::handoff::is_slow:4929
@@ -5857,10 +5858,6 @@ hl_psx::finish_deferred_overlays:3012573:389
    8: psx_io::write_u32:4864
     3: core::ptr::write_volatile::<u32> @psx_vram:4864
      11: 4864
-  2: psx_hw::gpu::gp0::draw_mode:15148
-   8: 5339
-   9: 4795
-   12: 5014
   3: 5108
   4: 5007
   6: 5020
@@ -5940,16 +5937,16 @@ hl_psx::draw_model:1434472:180
   1: 185
   2: 163
   5: 168
- 40: hl_psx::model_local_scale_and_shift:738
-  1: hl_psx::model_local_scale:548
-   1: hl_psx::model_local_to_world_q12:189
-    1: 189
-   1: <i32 as core::cmp::Ord>::max @hl_psx:178
-    4: 178
-   1.1: 181
-  2.1: 190
  40: <psx_asset::hmd8::Model>::local_to_world_q12:178
   1: 178
+ 40: hl_psx::model_local_scale_and_shift:738
+  1: hl_psx::model_local_scale:548
+   1: <i32 as core::cmp::Ord>::max @hl_psx:178
+    4: 178
+   1: hl_psx::model_local_to_world_q12:189
+    1: 189
+   1.1: 181
+  2.1: 190
  45: 160
  45.1: 170
  46: 189
@@ -6089,64 +6086,64 @@ hl_psx::emit_soft_cell:1177682:18416
      0: 10583
  28: 8931
  40: 9102
+ 40: <i32 as core::cmp::Ord>::max @hl_psx:9109
+  4: 9109
  40: hl_psx::emit_soft_cell::{closure#3} @hl_psx:72403
   1: 8901
   2: <i32>::abs:9215
    4: 9215
   3: 9075
-  3: <i32>::abs:9181
-   4.3: 9181
   3: <i32 as core::cmp::Ord>::max @hl_psx:8938
    4: 8938
+  3: <i32>::abs:9181
+   4.3: 9181
   4: 8871
-  4: <i32>::abs:9210
-   4.6: 9210
   4: <i32 as core::cmp::Ord>::max @hl_psx:9012
    4.2: 9012
- 40: <i32 as core::cmp::Ord>::max @hl_psx:9109
-  4: 9109
+  4: <i32>::abs:9210
+   4.6: 9210
  40.1: hl_psx::emit_soft_cell::{closure#3} @hl_psx:72438
   1: 9017
   2: <i32>::abs:9126
    4: 9126
   3: 8895
-  3: <i32>::abs:9037
-   4.3: 9037
   3: <i32 as core::cmp::Ord>::max @hl_psx:9141
    4: 9141
+  3: <i32>::abs:9037
+   4.3: 9037
   4: 9085
-  4: <i32>::abs:9120
-   4.6: 9120
   4: <i32 as core::cmp::Ord>::max @hl_psx:9017
    4.2: 9017
+  4: <i32>::abs:9120
+   4.6: 9120
+ 41: <i32 as core::cmp::Ord>::max @hl_psx:9090
+  4.2: 9090
  41: hl_psx::emit_soft_cell::{closure#3} @hl_psx:62917
   1: 8885
   3: 9089
-  3: <i32>::abs:8841
-   4.3: 8841
   3: <i32 as core::cmp::Ord>::max @hl_psx:9011
    4: 9011
+  3: <i32>::abs:8841
+   4.3: 8841
   4: 8979
-  4: <i32>::abs:9064
-   4.6: 9064
   4: <i32 as core::cmp::Ord>::max @hl_psx:9048
    4.2: 9048
- 41: <i32 as core::cmp::Ord>::max @hl_psx:9090
-  4.2: 9090
+  4: <i32>::abs:9064
+   4.6: 9064
  41.1: hl_psx::emit_soft_cell::{closure#3} @hl_psx:71857
   1: 8893
   2: <i32>::abs:9006
    4: 9006
   3: 8890
-  3: <i32>::abs:8976
-   4.3: 8976
   3: <i32 as core::cmp::Ord>::max @hl_psx:8991
    4: 8991
+  3: <i32>::abs:8976
+   4.3: 8976
   4: 9025
-  4: <i32>::abs:9032
-   4.6: 9032
   4: <i32 as core::cmp::Ord>::max @hl_psx:9044
    4.2: 9044
+  4: <i32>::abs:9032
+   4.6: 9032
  46: <i32 as core::cmp::Ord>::min @hl_psx:9253
   4: 9253
  47: <i32 as core::cmp::Ord>::min @hl_psx:9121
@@ -6288,12 +6285,12 @@ hl_psx::emit_soft_cell:1177682:18416
  65: 5760
  65: <psx_engine::render::PrimitivePacketArena>::remaining:11858
   1: 977
-  1: <usize>::saturating_sub:3010
-   1: 3010
   1: <psx_engine::render::PrimitivePacketArena>::capacity:4426
    1: 974
    1.1: 500
    1.2: 2952
+  1: <usize>::saturating_sub:3010
+   1: 3010
   1.1: 478
   1.2: 2967
  65.1: 3344
@@ -6455,14 +6452,14 @@ compiler_builtins::mem::memmove:1137350:11945
     13: compiler_builtins::mem::impls::load_chunk_aligned::<u16> @compiler_builtins:4027
      7.3: 1366
      8.1: 956
-     8.1: <*mut usize>::wrapping_byte_add @compiler_builtins:898
-      1.2: <*mut u8>::wrapping_add @compiler_builtins:898
-       4.2: <*mut u8>::wrapping_offset @compiler_builtins:898
-        5.2: 898
      8.1: <*const usize>::wrapping_byte_add @compiler_builtins:807
       1.2: <*const u8>::wrapping_add @compiler_builtins:807
        4.2: <*const u8>::wrapping_offset @compiler_builtins:807
         5.2: 807
+     8.1: <*mut usize>::wrapping_byte_add @compiler_builtins:898
+      1.2: <*mut u8>::wrapping_add @compiler_builtins:898
+       4.2: <*mut u8>::wrapping_offset @compiler_builtins:898
+        5.2: 898
     16: 1290
    16: <*mut usize>::wrapping_add @compiler_builtins:1295
     4.1: <*mut usize>::wrapping_offset @compiler_builtins:1295
@@ -6658,6 +6655,8 @@ hl_psx::phys::recurse:1114238:5432
  49: 41949
  55: hl_psx::phys::crossing_frac:3960
   5: 779
+  10: <i32 as core::cmp::Ord>::clamp:807
+   9: 807
   10: <i32>::wrapping_div:1609
    1: <i32>::overflowing_div:1609
     2: core::intrinsics::unlikely:818
@@ -6665,8 +6664,6 @@ hl_psx::phys::recurse:1114238:5432
     5.3: 791
   10: <i32>::wrapping_mul:765
    1: 765
-  10: <i32 as core::cmp::Ord>::clamp:807
-   9: 807
  56: 799
  57: hl_psx::phys::lerp_q12:3257
   1: 840
@@ -6702,11 +6699,11 @@ hl_psx::emit_world_loop_tri:1102705:15792
    10: 503
    10: <*const u8>::add @hl_psx:506
     34: 506
-   11: <psx_gte_core::math::Vec3I16>::new:527
-    1: 527
    11: <*const i16>::read @hl_psx:512
     5: core::ptr::read::<i16> @hl_psx:512
      39: 512
+   11: <psx_gte_core::math::Vec3I16>::new:527
+    1: 527
   3: 516
   3: psx_gte::scene::project_vertex_scheduled:1557
    3: psx_gte::scene::project_vertex_mips:1557
@@ -6722,11 +6719,11 @@ hl_psx::emit_world_loop_tri:1102705:15792
    10: 982
    10: <*const u8>::add @hl_psx:947
     34: 947
-   11: <psx_gte_core::math::Vec3I16>::new:924
-    1: 924
    11: <*const i16>::read @hl_psx:985
     5: core::ptr::read::<i16> @hl_psx:985
      39: 985
+   11: <psx_gte_core::math::Vec3I16>::new:924
+    1: 924
   3: 953
   3: psx_gte::scene::project_vertex_scheduled:2735
    3: psx_gte::scene::project_vertex_mips:2735
@@ -6742,11 +6739,11 @@ hl_psx::emit_world_loop_tri:1102705:15792
    10: 412
    10: <*const u8>::add @hl_psx:465
     34: 465
-   11: <psx_gte_core::math::Vec3I16>::new:403
-    1: 403
    11: <*const i16>::read @hl_psx:433
     5: core::ptr::read::<i16> @hl_psx:433
      39: 433
+   11: <psx_gte_core::math::Vec3I16>::new:403
+    1: 403
   3: 424
   3: psx_gte::scene::project_vertex_scheduled:1339
    3: psx_gte::scene::project_vertex_mips:1339
@@ -6859,13 +6856,13 @@ hl_psx::emit_world_loop_tri:1102705:15792
    2: psx_goldsrc::ordering::world_order_key::<640> @hl_psx:77133
     4: 7706
     5: 7608
-    5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:7772
-     1: <usize as core::cmp::Ord>::clamp:7772
-      9: 7772
     5: <psx_goldsrc::ordering::PrimitiveDepths>::representative:23006
      1: 7679
      2: 7635
      6.3: 7692
+    5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:7772
+     1: <usize as core::cmp::Ord>::clamp:7772
+      9: 7772
     7: 7604
     11: 7720
     16: 7732
@@ -6967,14 +6964,14 @@ hl_psx::emit_world_loop_tri:1102705:15792
     4: 7651
     4: <core::option::Option<&mut psx_gpu::prim::TriTexturedGouraud> as core::ops::try_trait::Try>::branch @hl_psx:7527
      1: 7527
+    5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:7710
+     5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:7710
+      23: 7710
     5: hl_psx::push_tri_uv_words_packed::{closure#0} @hl_psx:30140
      3: 7462
      5: 7513
      8: 7551
      11: 7614
-    5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:7710
-     5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:7710
-      23: 7710
    35: hl_psx::tram_cache_capture_tri:7599
     1: 7599
    40: <psx_gpu::frame::OtFrame<640>>::add_raw @hl_psx:38049
@@ -7033,11 +7030,11 @@ hl_psx::emit_submodel_face:1075097:8797
    1: <hl_psx::map::Map>::loop_vert_static:213
     1: <hl_psx::map::Map>::loopvert_o:25
      1: 25
-    3: <*const u8>::add @hl_psx:32
-     34: 32
     3: <*const u32>::read @hl_psx:30
      5: core::ptr::read::<u32> @hl_psx:30
       39: 30
+    3: <*const u8>::add @hl_psx:32
+     34: 32
     4: 30
     4: <*const u8>::add @hl_psx:35
      34: 35
@@ -7055,11 +7052,11 @@ hl_psx::emit_submodel_face:1075097:8797
    1.1: <hl_psx::map::Map>::loop_vert_static:212
     1: <hl_psx::map::Map>::loopvert_o:36
      1: 36
-    3: <*const u8>::add @hl_psx:24
-     34: 24
     3: <*const u32>::read @hl_psx:32
      5: core::ptr::read::<u32> @hl_psx:32
       39: 32
+    3: <*const u8>::add @hl_psx:24
+     34: 24
     4: 28
     4: <*const u8>::add @hl_psx:31
      34: 31
@@ -7074,11 +7071,11 @@ hl_psx::emit_submodel_face:1075097:8797
    1.2: <hl_psx::map::Map>::loop_vert_static:175
     1: <hl_psx::map::Map>::loopvert_o:21
      1: 21
-    3: <*const u8>::add @hl_psx:17
-     34: 17
     3: <*const u32>::read @hl_psx:36
      5: core::ptr::read::<u32> @hl_psx:36
       39: 36
+    3: <*const u8>::add @hl_psx:17
+     34: 17
     4: 32
     4: <*const u8>::add @hl_psx:16
      34: 16
@@ -7093,11 +7090,11 @@ hl_psx::emit_submodel_face:1075097:8797
    1.3: <hl_psx::map::Map>::loop_vert_static:193
     1: <hl_psx::map::Map>::loopvert_o:32
      1: 32
-    3: <*const u8>::add @hl_psx:28
-     34: 28
     3: <*const u32>::read @hl_psx:32
      5: core::ptr::read::<u32> @hl_psx:32
       39: 32
+    3: <*const u8>::add @hl_psx:28
+     34: 28
     4: 21
     4: <*const u8>::add @hl_psx:33
      34: 33
@@ -7110,11 +7107,11 @@ hl_psx::emit_submodel_face:1075097:8797
   12: <hl_psx::map::Map>::loop_vert_static:33200
    1: <hl_psx::map::Map>::loopvert_o:4713
     1: 4713
-   3: <*const u8>::add @hl_psx:4806
-    34: 4806
    3: <*const u32>::read @hl_psx:4729
     5: core::ptr::read::<u32> @hl_psx:4729
      39: 4729
+   3: <*const u8>::add @hl_psx:4806
+    34: 4806
    4: 4696
    4: <*const u8>::add @hl_psx:4818
     34: 4818
@@ -7125,11 +7122,11 @@ hl_psx::emit_submodel_face:1075097:8797
   13: <hl_psx::map::Map>::loop_vert_static:33053
    1: <hl_psx::map::Map>::loopvert_o:4736
     1: 4736
-   3: <*const u8>::add @hl_psx:4824
-    34: 4824
    3: <*const u32>::read @hl_psx:4679
     5: core::ptr::read::<u32> @hl_psx:4679
      39: 4679
+   3: <*const u8>::add @hl_psx:4824
+    34: 4824
    4: 4722
    4: <*const u8>::add @hl_psx:4745
     34: 4745
@@ -7140,11 +7137,11 @@ hl_psx::emit_submodel_face:1075097:8797
   14: <hl_psx::map::Map>::loop_vert_static:33170
    1: <hl_psx::map::Map>::loopvert_o:4709
     1: 4709
-   3: <*const u8>::add @hl_psx:4785
-    34: 4785
    3: <*const u32>::read @hl_psx:4646
     5: core::ptr::read::<u32> @hl_psx:4646
      39: 4646
+   3: <*const u8>::add @hl_psx:4785
+    34: 4785
    4: 4845
    4: <*const u8>::add @hl_psx:4735
     34: 4735
@@ -7155,11 +7152,11 @@ hl_psx::emit_submodel_face:1075097:8797
   15: <hl_psx::map::Map>::loop_vert_static:33016
    1: <hl_psx::map::Map>::loopvert_o:4713
     1: 4713
-   3: <*const u8>::add @hl_psx:4716
-    34: 4716
    3: <*const u32>::read @hl_psx:4780
     5: core::ptr::read::<u32> @hl_psx:4780
      39: 4780
+   3: <*const u8>::add @hl_psx:4716
+    34: 4716
    4: 4669
    4: <*const u8>::add @hl_psx:4673
     34: 4673
@@ -7238,10 +7235,10 @@ hl_psx::emit_submodel_face:1075097:8797
  40: 3278
  40: <psx_engine::render::PrimitivePacketArena>::remaining:9778
   1: 3174
-  1: <usize>::saturating_sub:3238
-   1: 3238
   1: <psx_engine::render::PrimitivePacketArena>::capacity:3366
    1: 3366
+  1: <usize>::saturating_sub:3238
+   1: 3238
  41: <core::slice::iter::Iter<psx_gte::scene::Projected> as core::iter::traits::iterator::Iterator>::all::<hl_psx::emit_submodel_face::{closure#0}> @hl_psx:6428
   6: 3324
   6: hl_psx::emit_submodel_face::{closure#0} @hl_psx:3104
@@ -7250,9 +7247,6 @@ hl_psx::emit_submodel_face:1075097:8797
   6: 2963
  43.1: 628
  45: 1830
- 45: hl_psx::emit_submodel_face::{closure#2} @hl_psx:2485
-  0: 1856
-  0.1: 629
  45: hl_psx::culled_soft:9839
   1: 1849
   1: <psx_math::wide::Wide>::mul:1765
@@ -7272,6 +7266,9 @@ hl_psx::emit_submodel_face:1075097:8797
    1: 1787
   2.1: <psx_math::wide::Wide>::is_negative:650
    1.1: 650
+ 45: hl_psx::emit_submodel_face::{closure#2} @hl_psx:2485
+  0: 1856
+  0.1: 629
  47: 1156
  47: <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::any::<hl_psx::emit_submodel_face::{closure#3}> @hl_psx:1221
   12: 1221
@@ -7682,13 +7679,13 @@ hl_psx::emit_submodel_face:1075097:8797
     2: psx_goldsrc::ordering::world_order_key::<640> @hl_psx:3987
      4: 395
      5: 385
-     5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:398
-      1: <usize as core::cmp::Ord>::clamp:398
-       9: 398
      5: <psx_goldsrc::ordering::PrimitiveDepths>::representative:1166
       1: 381
       2: 405
       6.3: 380
+     5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:398
+      1: <usize as core::cmp::Ord>::clamp:398
+       9: 398
      7: 400
      11: 394
      16: 427
@@ -7758,18 +7755,18 @@ hl_psx::emit_submodel_face:1075097:8797
      1: 373
    51: 398
    54: 396
-   58: hl_psx::sway_uv3:1558
-    1: 385
-    1: <hl_psx::EmitPolicy>::wave:405
-     1: 405
-    2: 378
-    5: 390
    58: <hl_psx::map::Map>::tri_uv_words:1100
     1: <hl_psx::map::Map>::tri_word:391
      3: 391
     2: <hl_psx::map::Map>::tri_word:367
      3: 367
     3: 342
+   58: hl_psx::sway_uv3:1558
+    1: 385
+    1: <hl_psx::EmitPolicy>::wave:405
+     1: 405
+    2: 378
+    5: 390
    72: 416
    72: hl_psx::tri_fits_gpu:1611
     2: <i16 as core::cmp::Ord>::min @hl_psx:399
@@ -7790,6 +7787,8 @@ hl_psx::emit_submodel_face:1075097:8797
     3: 35
    86: hl_psx::push_tri_uv_words_packed:8003
     15: hl_psx::emplace_packet::<psx_gpu::prim::TriTexturedGouraud, hl_psx::push_tri_uv_words_packed::{closure#0}> @hl_psx:4778
+     4: <core::option::Option<&mut psx_gpu::prim::TriTexturedGouraud> as core::ops::try_trait::Try>::branch @hl_psx:371
+      1: 371
      4: <psx_engine::render::PrimitivePacketArena>::reuse_packet::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:2601
       8: 375
       11: <psx_engine::render::PrimitivePacketArena>::claim:351
@@ -7800,16 +7799,14 @@ hl_psx::emit_submodel_face:1075097:8797
        5: 394
       14: 377
       15: 388
-     4: <core::option::Option<&mut psx_gpu::prim::TriTexturedGouraud> as core::ops::try_trait::Try>::branch @hl_psx:371
-      1: 371
+     5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:383
+      5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:383
+       23: 383
      5: hl_psx::push_tri_uv_words_packed::{closure#0} @hl_psx:1423
       3: 369
       5: 346
       8: 352
       11: 356
-     5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:383
-      5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:383
-       23: 383
     35: hl_psx::tram_cache_capture_tri:1004
      1: 370
      4: 110
@@ -8084,15 +8081,15 @@ hl_psx::project_hmd7_model_inner:962619:359
     15.1: <*const i16>::add @hl_psx:9981
      34: 9981
  49.1: <core::iter::adapters::map::Map<core::iter::adapters::zip::Zip<core::slice::iter::Iter<[u32; 3]>, core::slice::iter::Iter<[i16; 3]>>, <psx_asset::hmd8::VertexWords>::triples::{closure#0}> as core::iter::traits::iterator::Iterator>::next @hl_psx:153499
+  1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<[u32; 3]>, core::slice::iter::Iter<[i16; 3]>> as core::iter::traits::iterator::Iterator>::next @hl_psx:38517
+   1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<[u32; 3]>, core::slice::iter::Iter<[i16; 3]>> as core::iter::adapters::zip::ZipImpl<core::slice::iter::Iter<[u32; 3]>, core::slice::iter::Iter<[i16; 3]>>>::next @hl_psx:38517
+    1: 38517
   1: <core::option::Option<(&[u32; 3], &[i16; 3])>>::map::<[psx_asset::hmd8::GteVertexWords; 3], &mut <psx_asset::hmd8::VertexWords>::triples::{closure#0}> @hl_psx:114982
    5: <&mut <psx_asset::hmd8::VertexWords>::triples::{closure#0} as core::ops::function::FnOnce<((&[u32; 3], &[i16; 3]),)>>::call_once @hl_psx:114982
     1: <psx_asset::hmd8::VertexWords>::triples::{closure#0} @hl_psx:114982
      2: 38310
      3: 38163
      4: 38509
-  1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<[u32; 3]>, core::slice::iter::Iter<[i16; 3]>> as core::iter::traits::iterator::Iterator>::next @hl_psx:38517
-   1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<[u32; 3]>, core::slice::iter::Iter<[i16; 3]>> as core::iter::adapters::zip::ZipImpl<core::slice::iter::Iter<[u32; 3]>, core::slice::iter::Iter<[i16; 3]>>>::next @hl_psx:38517
-    1: 38517
  50: hl_psx::project_hmd7_triangle_words:38605
   14: 38605
  51: hl_psx::projected_soa_set:75999
@@ -8120,15 +8117,15 @@ hl_psx::project_hmd7_model_inner:962619:359
   3: <core::slice::iter::Iter<u32> as core::iter::traits::iterator::Iterator>::zip::<&[i16]> @hl_psx:30062
    5: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>>>::new @hl_psx:30062
     1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>> as core::iter::adapters::zip::ZipImpl<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>>>::new @hl_psx:30062
-     1: core::cmp::min::<usize> @hl_psx:10096
-      1: <usize as core::cmp::Ord>::min @hl_psx:10096
-       4: 10096
      1: <core::slice::iter::Iter<u32> as core::iter::adapters::zip::TrustedRandomAccessNoCoerce>::size @hl_psx:9999
       4: <core::slice::iter::Iter<u32> as core::iter::traits::iterator::Iterator>::size_hint @hl_psx:9999
        65375: <core::ptr::non_null::NonNull<u32>>::offset_from_unsigned @hl_psx:9999
         5: <*mut u32>::offset_from_unsigned @hl_psx:9999
          5: <*const u32>::offset_from_unsigned @hl_psx:9999
           28: 9999
+     1: core::cmp::min::<usize> @hl_psx:10096
+      1: <usize as core::cmp::Ord>::min @hl_psx:10096
+       4: 10096
      1.1: <core::slice::iter::Iter<i16> as core::iter::adapters::zip::TrustedRandomAccessNoCoerce>::size @hl_psx:9967
       4: <core::slice::iter::Iter<i16> as core::iter::traits::iterator::Iterator>::size_hint @hl_psx:9967
        65375: <core::ptr::non_null::NonNull<i16>>::offset_from_unsigned @hl_psx:9967
@@ -8136,13 +8133,13 @@ hl_psx::project_hmd7_model_inner:962619:359
          5: <*const i16>::offset_from_unsigned @hl_psx:9967
           28: 9967
  56.1: <core::iter::adapters::map::Map<core::iter::adapters::zip::Zip<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>>, <psx_asset::hmd8::VertexWords>::iter::{closure#0}> as core::iter::traits::iterator::Iterator>::next @hl_psx:19667
+  1.1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>> as core::iter::traits::iterator::Iterator>::next @hl_psx:9848
+   1.1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>> as core::iter::adapters::zip::ZipImpl<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>>>::next @hl_psx:9848
+    1: 9848
   1.1: <core::option::Option<(&u32, &i16)>>::map::<psx_asset::hmd8::GteVertexWords, &mut <psx_asset::hmd8::VertexWords>::iter::{closure#0}> @hl_psx:9819
    5.1: <&mut <psx_asset::hmd8::VertexWords>::iter::{closure#0} as core::ops::function::FnOnce<((&u32, &i16),)>>::call_once @hl_psx:9819
     1.1: <psx_asset::hmd8::VertexWords>::iter::{closure#0} @hl_psx:9819
      0: 9819
-  1.1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>> as core::iter::traits::iterator::Iterator>::next @hl_psx:9848
-   1.1: <core::iter::adapters::zip::Zip<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>> as core::iter::adapters::zip::ZipImpl<core::slice::iter::Iter<u32>, core::slice::iter::Iter<i16>>>::next @hl_psx:9848
-    1: 9848
  57: hl_psx::projected_soa_set:19608
   2.3: <*mut u32>::write @hl_psx:9712
    5.6: core::ptr::write::<u32> @hl_psx:9712
@@ -8455,18 +8452,18 @@ psx_goldsrc::fx::submit_list:914746:898
  45: 2943
  46: 2996
  46: psx_asset::hma1::u32_unaligned:6052
+  2: <*const u8>::add @psx_asset:3068
+   34.2: 3068
   2: core::ptr::read_unaligned::<u32> @psx_asset:2984
    9: core::ptr::copy_nonoverlapping::<u8> @psx_asset:2984
     21: 2984
-  2: <*const u8>::add @psx_asset:3068
-   34.2: 3068
  47: 3042
  47: psx_asset::hma1::u32_unaligned:6041
+  2.1: <*const u8>::add @psx_asset:3018
+   34.2: 3018
   2.1: core::ptr::read_unaligned::<u32> @psx_asset:3023
    9.1: core::ptr::copy_nonoverlapping::<u8> @psx_asset:3023
     21: 3023
-  2.1: <*const u8>::add @psx_asset:3018
-   34.2: 3018
  56: 2986
  57: <psx_asset::hma1::Model>::decode_with::{closure#0} @psx_asset:12101
   2: 3042
@@ -8557,18 +8554,18 @@ psx_goldsrc::fx::submit_list:914746:898
  100: 339
  101: 350
  101: psx_asset::hma1::u32_unaligned:693
+  2.2: <*const u8>::add @psx_asset:320
+   34.7: 320
   2.2: core::ptr::read_unaligned::<u32> @psx_asset:373
    9.2: core::ptr::copy_nonoverlapping::<u8> @psx_asset:373
     21.1: 373
-  2.2: <*const u8>::add @psx_asset:320
-   34.7: 320
  102: 373
  102: psx_asset::hma1::u32_unaligned:661
+  2.3: <*const u8>::add @psx_asset:345
+   34.7: 345
   2.3: core::ptr::read_unaligned::<u32> @psx_asset:316
    9.3: core::ptr::copy_nonoverlapping::<u8> @psx_asset:316
     21.1: 316
-  2.3: <*const u8>::add @psx_asset:345
-   34.7: 345
  110: <psx_asset::hma1::Model>::decode_with::{closure#1} @psx_asset:1087
   2: 359
   3: 378
@@ -8719,11 +8716,11 @@ psx_spu::dma_write:720485:109
   8: psx_spu::write_reg16:127
    7.1: core::ptr::write_volatile::<u16> @psx_spu:127
     11.1: 127
+  9: <psx_spu::SpuAddr>::register_value:108
+   1: 108
   9: psx_spu::write_reg16:152
    7.2: core::ptr::write_volatile::<u16> @psx_spu:152
     11.1: 152
-  9: <psx_spu::SpuAddr>::register_value:108
-   1: 108
   16: 96
   16: psx_spu::write_reg16:140
    7.3: core::ptr::write_volatile::<u16> @psx_spu:140
@@ -8881,13 +8878,13 @@ hl_psx::emit_submodel_loop_tri_projected:687601:18483
    2: psx_goldsrc::ordering::world_order_key::<640> @hl_psx:61702
     4: 6036
     5: 6177
-    5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:6202
-     1: <usize as core::cmp::Ord>::clamp:6202
-      9: 6202
     5: <psx_goldsrc::ordering::PrimitiveDepths>::representative:18414
      1: 6107
      2: 6210
      6.3: 6097
+    5: psx_goldsrc::ordering::clamp_otz::<640> @hl_psx:6202
+     1: <usize as core::cmp::Ord>::clamp:6202
+      9: 6202
     7: 6205
     11: 6210
     16: 6186
@@ -8973,14 +8970,14 @@ hl_psx::emit_submodel_loop_tri_projected:687601:18483
     4: 6182
     4: <core::option::Option<&mut psx_gpu::prim::TriTexturedGouraud> as core::ops::try_trait::Try>::branch @hl_psx:6244
      1: 6244
+    5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:6248
+     5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:6248
+      23: 6248
     5: hl_psx::push_tri_uv_words_packed::{closure#0} @hl_psx:24408
      3: 6079
      5: 6177
      8: 6033
      11: 6119
-    5: <*mut psx_gpu::prim::TriTexturedGouraud>::write @hl_psx:6248
-     5: core::ptr::write::<psx_gpu::prim::TriTexturedGouraud> @hl_psx:6248
-      23: 6248
    35: hl_psx::tram_cache_capture_tri:11888
     1: 6128
     4: 1329
@@ -9030,10 +9027,10 @@ hl_psx::emit_soft_quad_split:615806:5705
  18: 5318
  18: <psx_engine::render::PrimitivePacketArena>::remaining:15959
   1: 5312
-  1: <usize>::saturating_sub:5265
-   1: 5265
   1: <psx_engine::render::PrimitivePacketArena>::capacity:5382
    1: 5382
+  1: <usize>::saturating_sub:5265
+   1: 5265
  24: 5357
  25: 5421
  26: 5244
@@ -9061,22 +9058,22 @@ hl_psx::emit_soft_quad_split:615806:5705
    10: 7
    10: <*const u8>::add @hl_psx:4
     34: 4
-   11: <psx_gte_core::math::Vec3I16>::new:2
-    1: 2
    11: <*const i16>::read @hl_psx:8
     5: core::ptr::read::<i16> @hl_psx:8
      39: 8
+   11: <psx_gte_core::math::Vec3I16>::new:2
+    1: 2
   29: 11
   37: 11
   37: <hl_psx::map::Map>::vert:47
    1.1: 12
    10.1: <*const u8>::add @hl_psx:14
     34.1: 14
-   11.1: <psx_gte_core::math::Vec3I16>::new:9
-    1.1: 9
    11.1: <*const i16>::read @hl_psx:12
     5.3: core::ptr::read::<i16> @hl_psx:12
      39.1: 12
+   11.1: <psx_gte_core::math::Vec3I16>::new:9
+    1.1: 9
   38: 10
   41: 9
   43: psx_gte::scene::project_triangle_scheduled:52
@@ -9259,18 +9256,6 @@ hl_psx::phys::trace_all:588780:1547
  26: 1489
  30: 1611
 hl_psx::cache_projected_vert:581396:47619
- 1: hl_psx::scratch_set:191072
-  1: hl_psx::projected_soa_set:191072
-   1: <*mut u32>::add @hl_psx:47797
-    34: 47797
-   2: <*mut u32>::write @hl_psx:47933
-    5: core::ptr::write::<u32> @hl_psx:47933
-     23: 47933
-   3: <*mut u16>::add @hl_psx:47493
-    34: 47493
-   3: <*mut u16>::write @hl_psx:47849
-    5.1: core::ptr::write::<u16> @hl_psx:47849
-     23: 47849
  1: hl_psx::fix_projected_vertex:294317
   1: 47619
   2: 47872
@@ -9301,6 +9286,18 @@ hl_psx::cache_projected_vert:581396:47619
   19: <i32 as core::cmp::Ord>::clamp:5194
    9.3: 5194
   21: 47870
+ 1: hl_psx::scratch_set:191072
+  1: hl_psx::projected_soa_set:191072
+   1: <*mut u32>::add @hl_psx:47797
+    34: 47797
+   2: <*mut u32>::write @hl_psx:47933
+    5: core::ptr::write::<u32> @hl_psx:47933
+     23: 47933
+   3: <*mut u16>::add @hl_psx:47493
+    34: 47493
+   3: <*mut u16>::write @hl_psx:47849
+    5.1: core::ptr::write::<u16> @hl_psx:47849
+     23: 47849
  2.1: 47927
  4: 48080
 <hl_psx::map::Map>::logic:555486:16897
