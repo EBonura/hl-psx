@@ -151,6 +151,14 @@ fn stage_intro(repository: &Path, psoxide: &Path) -> Result<(PathBuf, PathBuf)> 
         }
         copy_tree(&repository.join("intro").join(dir), &target)?;
     }
+    // The two files the intro's sources reach by relative path (splash.rs, main.rs).
+    for relative in ["host/hl-content/src/bonnie_logo.rs", ".hlpsx/intro/movie.rs"] {
+        let target = root.join(relative);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(repository.join(relative), target)?;
+    }
     // The SDK: the hydration receipt says which components the tree holds; clone it again only
     // when that differs.
     let receipt = |dir: &Path| fs::read(dir.join(".components-receipt.json")).ok();
