@@ -15,6 +15,8 @@ PREV_CLIP = 0x800cd87c
 PREV_RESERVE = 0x800cd878
 PREV_HEALTH = 0x800cd870
 LAST_CORE = 0x800ce340
+LOGIC_PLAYER_POS = 0x801d2ba4
+LOGIC_PLAYER_YAW = 0x801d2bb0
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100
@@ -78,11 +80,11 @@ wait = 100
 repeat = 10
 
 [[step]]
-label = "turn to face the wall"
+label = "turn to face the wall: 14 sim ticks of full right stick (127 each); a fixed hold gave 14 or 15 ticks as frame timing moved"
 rstick = [255, 128]
 press = []
-hold = 40
-wait = 2
+hold_until = { kind="ram", sym="LOGIC_PLAYER_YAW", size=2, op="ge", value=1778 }
+timeout = 300
 
 [[step]]
 rstick = [128, 128]
@@ -90,12 +92,12 @@ press = []
 wait = 20
 
 [[step]]
-label = "walk up to the wall"
+label = "walk up to the wall, releasing at the spot the mine is placed from (z 602; the player coasts to about 565)"
 lstick = [128, 1]
 rstick = [128, 128]
 press = []
-hold = 25
-wait = 2
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=8, op="le", value=602 }
+timeout = 300
 
 [[step]]
 lstick = [128, 128]
