@@ -14,7 +14,6 @@ mod intro;
 mod model_audit;
 mod model_variants;
 mod pack_order;
-mod profile_prune;
 mod ram_report;
 mod regression;
 mod stack_gate;
@@ -2975,19 +2974,20 @@ fn profile_guided_pack(
         .unwrap_or(PGO_HOT_COVERAGE_PERMILLE);
     let full_profile = work.join("hl-psx.full.prof");
     fs::copy(&profile, &full_profile)?;
-    let (pruned_text, pruned) = profile_prune::prune(
-        &fs::read_to_string(&full_profile)?,
-        coverage,
-        &PGO_COLD_FUNCTIONS,
-    );
-    fs::write(&profile, pruned_text)?;
-    println!(
-        "PGO profile pruned to the hottest {} of {} functions, {}.{}% of the samples (HLPSX_PGO_COVERAGE={coverage})",
-        pruned.kept,
-        pruned.total,
-        pruned.covered_permille / 10,
-        pruned.covered_permille % 10
-    );
+    // The SDK's `hottest` keeps the functions that hold `coverage` permille of the samples of the
+    // functions that are not cold, and keeps the leading `#` record lines (the profile's source).
+    let mut hottest = Command::new(cargo());
+    hottest
+        .current_dir(psoxide)
+        .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "hottest"])
+        .arg(&full_profile)
+        .arg(&profile)
+        .arg("--coverage")
+        .arg(coverage.to_string());
+    for cold in PGO_COLD_FUNCTIONS {
+        hottest.arg("--cold").arg(cold);
+    }
+    run(&mut hottest, "keep the hottest profile functions (psoxide-pgo hottest)")?;
 
     // The layout binds to the code of a link in the linker's own order, so
     // collect it on that link, then link again with the layout applied.
