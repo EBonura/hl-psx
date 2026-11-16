@@ -2849,9 +2849,42 @@ fn pack_disc_into(
         }
     }
     run(&mut command, "pack PlayStation BIN/CUE disc")?;
+    check_root_is_one_sector(&image.with_extension("bin"))?;
     let cue = image.with_extension("cue");
     println!("DISC -> {}", cue.display());
     Ok(cue)
+}
+
+/// Size in bytes of the root directory the volume descriptor of a raw (2352-byte sector) image
+/// names, or `None` when sector 16 is not a descriptor.
+fn root_directory_bytes(image: &[u8]) -> Option<u32> {
+    const RAW: usize = 2352;
+    const HEADER: usize = 24;
+    let descriptor = image.get(16 * RAW + HEADER..16 * RAW + HEADER + 2048)?;
+    if &descriptor[1..6] != b"CD001" {
+        return None;
+    }
+    // The root directory record starts at 156; its data length is the little-endian word at +10.
+    Some(u32::from_le_bytes(descriptor[166..170].try_into().ok()?))
+}
+
+/// `music::locate_files` reads one root sector (`iso::read_root_sector`), so a disc whose root
+/// directory passes one sector would lose the music files and the intro's game file after it,
+/// silently. Stop the pack instead.
+fn check_root_is_one_sector(bin: &Path) -> Result<()> {
+    let mut head = vec![0u8; 17 * 2352 + 24 + 2048];
+    fs::File::open(bin)?.read_exact(&mut head)?;
+    let bytes = root_directory_bytes(&head)
+        .ok_or("the packed image has no volume descriptor at sector 16")?;
+    if bytes > 2048 {
+        return Err(format!(
+            "the disc's root directory is {bytes} bytes, past one sector: music::locate_files reads \
+             only the first root sector (iso::read_root_sector), so the files after it would not be \
+             found; use iso::find_in_root there or shorten the root"
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// Pack a disc optimised with the emulator's own instruction counts.
@@ -4138,5 +4171,17 @@ mod tests {
         assert_eq!(record["source"]["repository"], GAME_REPOSITORY);
         assert_eq!(record["artifacts"]["bin"]["bytes"], 4);
         fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn the_root_directory_size_is_read_from_the_volume_descriptor() {
+        let mut image = vec![0u8; 17 * 2352 + 24 + 2048];
+        let at = 16 * 2352 + 24;
+        assert_eq!(root_directory_bytes(&image), None);
+        image[at + 1..at + 6].copy_from_slice(b"CD001");
+        image[at + 166..at + 170].copy_from_slice(&2048u32.to_le_bytes());
+        assert_eq!(root_directory_bytes(&image), Some(2048));
+        image[at + 166..at + 170].copy_from_slice(&4096u32.to_le_bytes());
+        assert_eq!(root_directory_bytes(&image), Some(4096));
     }
 }

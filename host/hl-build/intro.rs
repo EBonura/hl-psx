@@ -138,7 +138,12 @@ fn intro_stage() -> PathBuf {
 fn stage_intro(repository: &Path, psoxide: &Path) -> Result<(PathBuf, PathBuf)> {
     let root = intro_stage();
     let (staged_intro, staged_sdk) = (root.join("intro"), root.join(".psoxide"));
-    fs::create_dir_all(&root)?;
+    fs::create_dir_all(&root).map_err(|error| {
+        format!(
+            "cannot create the intro build stage {}: {error} (set HLPSX_INTRO_STAGE to a writable directory)",
+            root.display()
+        )
+    })?;
     // Sources: replace wholesale (small); keep `target/` so cargo stays incremental.
     fs::create_dir_all(&staged_intro)?;
     for entry in ["Cargo.toml", "Cargo.lock", "build.rs"] {
