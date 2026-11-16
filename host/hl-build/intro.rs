@@ -152,7 +152,12 @@ fn stage_intro(repository: &Path, psoxide: &Path) -> Result<(PathBuf, PathBuf)> 
         copy_tree(&repository.join("intro").join(dir), &target)?;
     }
     // The two files the intro's sources reach by relative path (splash.rs, main.rs).
-    for relative in ["host/hl-content/src/bonnie_logo.rs", ".hlpsx/intro/movie.rs"] {
+    // The toolchain pin too: the stage is outside the repository, and the intro needs the nightly.
+    for relative in [
+        "rust-toolchain.toml",
+        "host/hl-content/src/bonnie_logo.rs",
+        ".hlpsx/intro/movie.rs",
+    ] {
         let target = root.join(relative);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;

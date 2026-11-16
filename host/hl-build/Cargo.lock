@@ -158,6 +158,7 @@ version = "0.1.0"
 source = "git+https://github.com/EBonura/PSoXide.git?rev=c6db13cdc4b82514a4c798678e885370f4c22ea5#c6db13cdc4b82514a4c798678e885370f4c22ea5"
 dependencies = [
  "psx-hw",
+ "psx-math",
 ]
 
 [[package]]
@@ -170,11 +171,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-math"
+version = "0.1.0"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=c6db13cdc4b82514a4c798678e885370f4c22ea5#c6db13cdc4b82514a4c798678e885370f4c22ea5"
+
+[[package]]
 name = "psx-pack"
 version = "0.1.0"
 source = "git+https://github.com/EBonura/PSoXide.git?rev=c6db13cdc4b82514a4c798678e885370f4c22ea5#c6db13cdc4b82514a4c798678e885370f4c22ea5"
 dependencies = [
  "psx-io",
+ "psx-math",
 ]
 
 [[package]]
