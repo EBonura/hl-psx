@@ -47,22 +47,6 @@ pub fn install(cd: Cd) {
     unsafe { PLAYER = Some(Player::new(cd)) };
 }
 
-/// Read one data sector into `sector` and return its bytes.
-#[optimize(size)]
-#[inline(never)]
-unsafe fn read_sector<'a>(
-    reader: &mut SectorReader,
-    lba: u32,
-    sector: &'a mut [u32; SECTOR_WORDS],
-) -> Option<&'a [u8; iso::BYTES]> {
-    if !reader.start_read(lba) {
-        return None;
-    }
-    let read = reader.read_sector(sector);
-    reader.stop();
-    read.then(|| iso::as_bytes(sector))
-}
-
 /// Find the music files by name in the disc's root directory, so no sector
 /// number is baked into the executable. `sector` is scratch for the reads.
 ///
@@ -86,25 +70,23 @@ pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
     if !reader.prepare() {
         return;
     }
-    let Some(volume) = read_sector(&mut reader, iso::PVD_LBA, sector) else {
-        return;
-    };
-    let Some((root, size)) = iso::root_directory(volume) else {
-        return;
-    };
-    // A root directory this small is one sector; scan a few in case it is not.
-    for at in 0..iso::sectors(size).min(4) {
-        let Some(directory) = read_sector(&mut reader, root + at, sector) else {
-            return;
-        };
-        for (file, name) in layout::FILE_NAMES.iter().enumerate() {
-            if let Some((lba, bytes)) = iso::find_in_directory(directory, name) {
-                DIRECTORY[file] = (lba, bytes / 2048);
-            }
+    // The music files, then the intro stage's game file, in one pass over the root directory.
+    let mut names = [INTRO_GAME_FILE; layout::FILE_COUNT + 1];
+    names[..layout::FILE_COUNT].copy_from_slice(&layout::FILE_NAMES);
+    let mut found = [None; layout::FILE_COUNT + 1];
+    iso::find_in_root(
+        sector,
+        |lba, into| reader.read_at(lba, into),
+        &names,
+        &mut found,
+    );
+    for (file, extent) in found[..layout::FILE_COUNT].iter().enumerate() {
+        if let Some((lba, bytes)) = *extent {
+            DIRECTORY[file] = (lba, bytes / 2048);
         }
-        if iso::find_in_directory(directory, INTRO_GAME_FILE).is_some() {
-            BOOTED_BY_INTRO = true;
-        }
+    }
+    if found[layout::FILE_COUNT].is_some() {
+        BOOTED_BY_INTRO = true;
     }
 }
 
