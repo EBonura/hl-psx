@@ -13,13 +13,13 @@ sha256 = "3fd1b3a413df99e3c5bfc90ae8c6f810e76b112da3744c6a10c290bb33eb12e4"
 
 # Bound to the build this journey was written against.
 [addr]
-LOGIC_PLAYER_HEALTH = 0x800ca19c
-LOGIC_PLAYER_PITCH = 0x801e775c
-LOGIC_PLAYER_POS = 0x801d2d64
-LOGIC_PLAYER_VIEW_HEIGHT = 0x800ca5f8
-LOGIC_PLAYER_YAW = 0x801d2d70
-SIM_NOW = 0x801e9db4
-WORLD_ARENA = 0x800e5ca8
+LOGIC_PLAYER_HEALTH = 0x800c9f8c
+LOGIC_PLAYER_PITCH = 0x801e755c
+LOGIC_PLAYER_POS = 0x801d2b64
+LOGIC_PLAYER_VIEW_HEIGHT = 0x800ca3e8
+LOGIC_PLAYER_YAW = 0x801d2b70
+SIM_NOW = 0x801e9bb4
+WORLD_ARENA = 0x800e5aa8
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"
