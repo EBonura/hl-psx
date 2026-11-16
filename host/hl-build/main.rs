@@ -2201,8 +2201,13 @@ fn sdk_stack_geometry(script: &str) -> Result<(u32, u32)> {
             .ok_or_else(|| format!("psoxide.ld has no `{name} = {prefix}<hex>`").into())
     };
     let reserve = value("STACK_RESERVE", "0x")?;
-    let init = value("STACK_INIT", "RAM_BASE + 0x")?;
-    Ok((reserve, RAM_TOP_OFFSET - init))
+    // `RAM_BASE + RAM_SIZE - 0x100` (SDK 913a9e7 on: RAM_SIZE can be overridden) names the
+    // gap itself; the older scripts gave `RAM_BASE + 0x001FFF00`.
+    let gap = match value("STACK_INIT", "RAM_BASE + RAM_SIZE - 0x") {
+        Ok(gap) => gap,
+        Err(_) => RAM_TOP_OFFSET - value("STACK_INIT", "RAM_BASE + 0x")?,
+    };
+    Ok((reserve, gap))
 }
 
 /// Stack room below the initial SP of a link that leaves `free` B of RAM
@@ -3932,6 +3937,8 @@ mod tests {
         assert!(sdk_stack_geometry("STACK_RESERVE = 0x8000;").is_err());
         let hooked = "STACK_INIT  = RAM_BASE + 0x001FFF00;\nSTACK_RESERVE = DEFINED(STACK_RESERVE_OVERRIDE) ? STACK_RESERVE_OVERRIDE : 0x8000; /* default */\n";
         assert_eq!(sdk_stack_geometry(hooked).unwrap(), (0x8000, 0x100));
+        let sized = "STACK_INIT  = RAM_BASE + RAM_SIZE - 0x100;\nSTACK_RESERVE = DEFINED(STACK_RESERVE_OVERRIDE) ? STACK_RESERVE_OVERRIDE : 0x8000;\n";
+        assert_eq!(sdk_stack_geometry(sized).unwrap(), (0x8000, 0x100));
         // The repository's own pin has both lines.
         let ld = root().join(".psoxide/sdk/psoxide.ld");
         if let Ok(text) = fs::read_to_string(ld) {

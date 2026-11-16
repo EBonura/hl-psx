@@ -122,7 +122,11 @@ pub fn layout(contents: &PackContents) -> Vec<u32> {
         place(id, &mut order);
     }
     let banks = BANK_FIRST..BANK_FIRST + VIEWMODEL_COUNT;
-    for id in contents.ids.range(3000..3100).filter(|id| !banks.contains(id)) {
+    for id in contents
+        .ids
+        .range(3000..3100)
+        .filter(|id| !banks.contains(id))
+    {
         place(*id, &mut order);
     }
     // A weapon's sound bank lies right behind its viewmodel: drawing the weapon
