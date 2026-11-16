@@ -16,6 +16,7 @@ use psx_gpu::material::{BlendMode, TextureMaterial};
 use psx_gpu::ot::OrderingTable;
 use crate::{max_reserve_for, Arsenal, AMMO_ARGREN, AMMO_NONE, WEAPON_DEFS};
 use psx_gpu::prim::{RectFlat, Sprite};
+use psx_hw::gpu::packet;
 use psx_vram::{upload_bytes, Clut, TextureDepth, TexturePage, VramRect};
 
 const HUD_VRAM_X: u16 = 960; // fixed final band-1 page, excluded from room allocation
@@ -384,7 +385,7 @@ unsafe fn flat<const N: usize>(
         return;
     }
     rects[*count] = RectFlat::new(x, y, w as u16, h, rgb.0, rgb.1, rgb.2);
-    rects[*count].color_cmd |= 0x0200_0000; // semi-transparent: added to the frame
+    rects[*count].color_cmd |= packet::SEMI_TRANSPARENT; // semi-transparent: added to the frame
     ot.resume_frame()
         .add_raw(0, core::ptr::from_mut(&mut rects[*count]).cast(), RectFlat::WORDS);
     *count += 1;

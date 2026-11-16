@@ -297,7 +297,7 @@ unsafe fn sprite_quad(
         let prim = TriTexturedGouraud {
             tag: 0,
             tex_window: packet.tex_window_word,
-            color0_cmd: (packet.color0_command_word | 0x0200_0000) | pack_rgb_word(rgb),
+            color0_cmd: (packet.color0_command_word | psx_hw::gpu::packet::SEMI_TRANSPARENT) | pack_rgb_word(rgb),
             v0: pack_vertex_word(tris[k][0].0, tris[k][0].1),
             uv0_clut: uvs[k][0] as u32 | packet.clut_high_word,
             color1: pack_rgb_word(rgb),

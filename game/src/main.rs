@@ -12751,9 +12751,9 @@ fn fx_quad_add(verts: [(i16, i16); 4], colors: [(u8, u8, u8); 4], gouraud: bool)
                     // GP0(3Ah) Gouraud quad, GP0(2Ah) flat quad: untextured, semi-transparent.
                     let cmd = if i == 0 {
                         if gouraud {
-                            0x3A00_0000
+                            psx_hw::gpu::packet::SHADED_QUAD | psx_hw::gpu::packet::SEMI_TRANSPARENT
                         } else {
-                            0x2A00_0000
+                            psx_hw::gpu::packet::FLAT_QUAD | psx_hw::gpu::packet::SEMI_TRANSPARENT
                         }
                     } else {
                         0
@@ -28422,7 +28422,7 @@ unsafe fn push_blocked_edge_skirts(
             let prim = QuadTexturedGouraud {
                 tag: 0,
                 tex_window: mat.tex_window_word,
-                color0_cmd: (mat.color0_command_word | 0x0800_0000) | rgb[i],
+                color0_cmd: (mat.color0_command_word | psx_hw::gpu::packet::QUAD) | rgb[i],
                 v0: pack_vertex_word(q[i].0, q[i].1),
                 uv0_clut: uv[i] as u32 | mat.clut_high_word,
                 color1: rgb[j],
@@ -28853,7 +28853,7 @@ unsafe fn try_emit_quad_ctx(
     let Some(packet) = emplace_packet(packets, move || QuadTexturedGouraud {
         tag: 0,
         tex_window: mat.tex_window_word,
-        color0_cmd: (mat.color0_command_word | 0x0800_0000) | qrgb[0],
+        color0_cmd: (mat.color0_command_word | psx_hw::gpu::packet::QUAD) | qrgb[0],
         v0: pack_vertex_word(pb.sx, pb.sy),
         uv0_clut: uv[0] as u32 | mat.clut_high_word,
         color1: qrgb[1],
@@ -30416,7 +30416,7 @@ unsafe fn push_patch_underlay(
     let Some(packet) = emplace_packet(packets, move || QuadTexturedGouraud {
         tag: 0,
         tex_window: mat.tex_window_word,
-        color0_cmd: (mat.color0_command_word | 0x0800_0000) | rgb[0],
+        color0_cmd: (mat.color0_command_word | psx_hw::gpu::packet::QUAD) | rgb[0],
         v0: pack_vertex_word(p0.sx, p0.sy),
         uv0_clut: uv[0] as u32 | mat.clut_high_word,
         color1: rgb[1],
@@ -33333,7 +33333,7 @@ impl BeamTri {
             draw_mode,
             // GP0 polygon bit 25 enables semi-transparency for an untextured
             // primitive; E1 above selects additive blending.
-            color_cmd: tri.color_cmd | 0x0200_0000,
+            color_cmd: tri.color_cmd | psx_hw::gpu::packet::SEMI_TRANSPARENT,
             v0: tri.v0,
             v1: tri.v1,
             v2: tri.v2,
@@ -33614,7 +33614,7 @@ unsafe fn draw_beam_textured(
         let prim = TriTexturedGouraud {
             tag: 0,
             tex_window: packet.tex_window_word,
-            color0_cmd: (packet.color0_command_word | 0x0200_0000) | pack_rgb_word(rgb[0]),
+            color0_cmd: (packet.color0_command_word | psx_hw::gpu::packet::SEMI_TRANSPARENT) | pack_rgb_word(rgb[0]),
             v0: pack_vertex_word(screen[0].0, screen[0].1),
             uv0_clut: uv[0] as u32 | packet.clut_high_word,
             color1: pack_rgb_word(rgb[1]),
@@ -34717,7 +34717,7 @@ fn draw_vm_tri(
         psx_io::gpu::write_command(next_window);
         *texture_window = next_window;
     }
-    psx_io::gpu::write_command((material.color0_command_word & !0x1000_0000) | rgb);
+    psx_io::gpu::write_command((material.color0_command_word & !psx_hw::gpu::packet::SHADED) | rgb);
     psx_io::gpu::write_command(packed_xy[0]);
     psx_io::gpu::write_command(uv_words[0] as u32 | material.clut_high_word);
     psx_io::gpu::write_command(packed_xy[1]);
