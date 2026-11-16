@@ -85,6 +85,7 @@ dependencies = [
  "hl-format",
  "lz4_flex",
  "psoxide-link",
+ "psx-library",
  "psx-pack",
  "serde",
  "serde_json",
@@ -157,6 +158,15 @@ version = "0.1.0"
 source = "git+https://github.com/EBonura/PSoXide.git?rev=6c0ed4ebd5ed647fd913aacaf94a69c548f89c0e#6c0ed4ebd5ed647fd913aacaf94a69c548f89c0e"
 dependencies = [
  "psx-hw",
+]
+
+[[package]]
+name = "psx-library"
+version = "0.1.0"
+source = "git+https://github.com/EBonura/PSoXide.git?rev=6c0ed4ebd5ed647fd913aacaf94a69c548f89c0e#6c0ed4ebd5ed647fd913aacaf94a69c548f89c0e"
+dependencies = [
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
