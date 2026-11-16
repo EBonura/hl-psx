@@ -46,15 +46,3 @@ pub fn fx_quad_textured_material(
 ) {
     fx::quad_textured_material::<OverlayTail>(verts, uvs, material);
 }
-
-/// A textured rectangle, captured when armed.
-pub fn fx_sprite_textured_material(
-    x: i16,
-    y: i16,
-    w: u16,
-    h: u16,
-    uv: (u8, u8),
-    material: TextureMaterial,
-) {
-    fx::sprite_textured_material::<OverlayTail>(x, y, w, h, uv, material);
-}
