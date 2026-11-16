@@ -13,14 +13,9 @@ name = "hl-psx"
 path = "src/main.rs"
 
 [features]
-# Presentation is decoupled from the 20 Hz simulation by default: the
-# renderer is identical and the simulation is bit-identical, only the
-# presented-frame count and the camera sampling change, and it measures
-# +5.6% on the tram-ride benchmark (13.79 -> 14.55). It carries the same
-# packet arena as a coupled build, so it cannot cost geometry on the vista
-# maps. Build with --no-default-features for the historical one-render-per-
-# tick loop.
-default = ["decoupled-present"]
+# Presentation is always decoupled from the 20 Hz simulation (the former decoupled-present
+# feature is gone with its dead off path).
+default = []
 # A/B baseline for the CPU scratchpad optimization. Normal PS1 builds place
 # render working sets in the 1 KiB hardware scratchpad; enabling this feature
 # backs the identical layout with main RAM so regression profiles can isolate
@@ -57,13 +52,6 @@ order-trace = []
 # and rasterized coverage are identical to a normal build and an uncovered
 # seam pixel can be attributed to the mechanisms bordering it.
 seam-census = []
-# Decouple presentation from the fixed 20 Hz simulation: render every
-# available VBlank slot with a camera interpolated between the last two
-# simulation ticks, the way the retail reference free-runs its frame loop
-# against interrupt-driven presentation. Simulation math, input polling and
-# tick cadence are untouched; only presented-frame count and camera sampling
-# change. Off = the exact historical one-render-per-tick loop.
-decoupled-present = []
 # Event/counter-only profile build. This leaves the large guest debug-log
 # diagnostics out so the profiler fits beside the shipping campaign pools.
 performance-telemetry = ["psx-goldsrc/performance-telemetry"]
