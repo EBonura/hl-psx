@@ -38,9 +38,10 @@ pub fn cooked(repository: &Path) -> Option<PathBuf> {
 }
 
 /// Encode the install's startup movie. Without the encoder or the movie the
-/// stage is dropped (and any earlier one removed, so the disc cannot carry a
-/// movie that no longer matches the install).
-pub fn cook(repository: &Path, valve: &Path) -> Result<bool> {
+/// build stops (`--without-intro` is the explicit way to leave the stage off, and then this is
+/// not called); the earlier cook is removed first, so a disc cannot carry a movie that no
+/// longer matches the install.
+pub fn cook(repository: &Path, valve: &Path, psxavenc: Option<&Path>) -> Result<bool> {
     let manifest = repository.join("host/hl-intro-cook/Cargo.toml");
     run(
         Command::new(cargo())
@@ -51,20 +52,22 @@ pub fn cook(repository: &Path, valve: &Path) -> Result<bool> {
     )?;
     let out = dir(repository);
     println!("\n==> cook the intro movie");
-    let status = Command::new(executable(
+    let mut command = Command::new(executable(
         repository.join("host/hl-intro-cook/target/release/hl-intro-cook"),
-    ))
-    .arg("--valve")
-    .arg(valve)
-    .arg("--out")
-    .arg(&out)
-    .status()?;
+    ));
+    command.arg("--valve").arg(valve).arg("--out").arg(&out);
+    if let Some(psxavenc) = psxavenc {
+        command.arg("--psxavenc").arg(psxavenc);
+    }
+    let status = command.status()?;
     match status.code() {
         Some(0) => Ok(true),
         Some(NO_INTRO) => {
             let _ = fs::remove_dir_all(&out);
-            println!("warning: no intro movie cooked; the disc will boot straight into the game");
-            Ok(false)
+            Err("the startup movie could not be cooked: no psxavenc was found (pass --psxavenc PATH \
+                 or set PSXAVENC) or the install has no valve.webm. A disc is not made without the \
+                 intro unless you say --without-intro."
+                .into())
         }
         _ => Err(format!("cook the intro movie failed with {status}").into()),
     }
@@ -147,7 +150,10 @@ fn stage_intro(repository: &Path, psoxide: &Path) -> Result<(PathBuf, PathBuf)> 
     // Sources: replace wholesale (small); keep `target/` so cargo stays incremental.
     fs::create_dir_all(&staged_intro)?;
     for entry in ["Cargo.toml", "Cargo.lock", "build.rs"] {
-        fs::copy(repository.join("intro").join(entry), staged_intro.join(entry))?;
+        fs::copy(
+            repository.join("intro").join(entry),
+            staged_intro.join(entry),
+        )?;
     }
     for dir in ["src", ".cargo"] {
         let target = staged_intro.join(dir);

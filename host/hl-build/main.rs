@@ -281,7 +281,12 @@ fn cook_inputs_digest(repository: &Path) -> Result<String> {
     for root in COOK_INPUT_ROOTS {
         let before = files.len();
         let mut found = Vec::new();
-        collect_files_skipping(&repository.join(root), &repository.join(root), &mut found, &["target", ".git", "__pycache__"])?;
+        collect_files_skipping(
+            &repository.join(root),
+            &repository.join(root),
+            &mut found,
+            &["target", ".git", "__pycache__"],
+        )?;
         files.extend(found.into_iter().map(|path| Path::new(root).join(path)));
         if files.len() == before {
             return Err(format!("cook input root is empty: {root}").into());
@@ -766,8 +771,10 @@ struct Options {
     maps: Option<String>,
     /// `pgo`: scripted scenarios (play-order, port-1 polls) profiled beside the tapes.
     scripts: Vec<(usize, u32)>,
-    /// Pack the game alone, without the intro stage (`--no-intro`).
+    /// Pack the game alone, without the intro stage (`--without-intro`; `--no-intro` is the same).
     no_intro: bool,
+    /// The `psxavenc` the intro cooker encodes the movie with (`--psxavenc`, else `PSXAVENC`, else the PATH).
+    psxavenc: Option<PathBuf>,
 }
 
 /// The library name before the canonical one (flat `hl-psx.bin`); an install removes a stale pair.
@@ -811,8 +818,10 @@ const HELP: &str = "hl-psx Rust build\n\n\
                               to the maps' room ids so the collect build holds them)\n\
            --maps LIST|all    stack: play-order indices to run (default: a representative set)\n\
            --items            ram: list every placed section instead of the summary\n\
-           --no-intro         leave the startup-movie stage off the disc, so the game boots\n\
-                              directly (stack, regress and the journeys' disc are built so)\n\
+           --without-intro    leave the startup-movie stage off the disc, so the game boots\n\
+                              directly (stack, regress and the journeys' disc are built so);\n\
+                              without it a missing psxavenc stops the build (--no-intro: same)\n\
+           --psxavenc PATH    the psxavenc that encodes the startup movie (or set PSXAVENC)\n\
            --map PATH         ram: report this link map (default .hlpsx/hl-psx.map) without linking\n\
            --polls FROM..TO   gameplay window (port-1 polls) of the preceding --tape; with one pgo\n\
                               also collects the I-cache layout (game/pgo/hl-psx.layout)\n\n\
@@ -911,6 +920,7 @@ fn parse_args() -> Options {
         maps: None,
         scripts: Vec::new(),
         no_intro: false,
+        psxavenc: None,
     };
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str() else { usage() };
@@ -927,7 +937,8 @@ fn parse_args() -> Options {
                 options.regression_scenario = Some(value(&mut args).to_string_lossy().into_owned())
             }
             "--items" => options.items = true,
-            "--no-intro" => options.no_intro = true,
+            "--without-intro" | "--no-intro" => options.no_intro = true,
+            "--psxavenc" => options.psxavenc = Some(PathBuf::from(value(&mut args))),
             "--script" => {
                 let text = value(&mut args).to_string_lossy().into_owned();
                 match text
@@ -1028,7 +1039,12 @@ fn hazard_tool(psoxide: &Path, bin: &str) -> Command {
 /// gate on the program at `crate_dir` first, so a program that breaks the architecture gets no
 /// receipt and the disc builder refuses it. The receipt sits in the PSX-EXE header, outside the
 /// payload the intro checksums.
-fn stamp_receipt(psoxide: &Path, crate_dir: &Path, exe: &Path, features: Option<&str>) -> Result<()> {
+fn stamp_receipt(
+    psoxide: &Path,
+    crate_dir: &Path,
+    exe: &Path,
+    features: Option<&str>,
+) -> Result<()> {
     let mut command = hazard_tool(psoxide, "psx-gate");
     command
         .arg("--sdk")
@@ -2177,7 +2193,11 @@ fn sdk_stack_geometry(script: &str) -> Result<(u32, u32)> {
                 let rest = line.trim().strip_prefix(name)?.trim_start();
                 let rest = rest.strip_prefix('=')?.trim();
                 // `DEFINED(STACK_RESERVE_OVERRIDE) ? STACK_RESERVE_OVERRIDE : 0x8000`: the default.
-                let rest = if rest.starts_with("DEFINED") { rest.rsplit(':').next()?.trim() } else { rest };
+                let rest = if rest.starts_with("DEFINED") {
+                    rest.rsplit(':').next()?.trim()
+                } else {
+                    rest
+                };
                 let rest = rest.strip_prefix(prefix)?;
                 let digits = rest.split(|c: char| !c.is_ascii_hexdigit()).next()?;
                 u32::from_str_radix(digits, 16).ok()
@@ -2793,6 +2813,14 @@ fn pack_disc_into(
     let image = dist.join("hl-psx.bin");
     let staged_pack = stage_world_pack(repository)?;
     let movie = intro.then(|| intro::cooked(repository)).flatten();
+    if intro && movie.is_none() {
+        return Err(
+            "no cooked startup movie under .hlpsx/intro: cook it (build or assets with psxavenc, \
+             --psxavenc PATH or PSXAVENC) or say --without-intro; a disc is never made without \
+             the intro by accident"
+                .into(),
+        );
+    }
     let mut boot = exe.to_path_buf();
     let mut game_file = None;
     if let Some(movie) = &movie {
@@ -2822,7 +2850,9 @@ fn pack_disc_into(
         .args(["--volume", "HLPSX", "--world-pack-rooms-dir"])
         .arg(staged_pack.join("rooms"));
     // The game and its intro carry no gate receipt yet: the exceptions file names them (sdk/docs/GATE.md, G3).
-    command.arg("--gate-file").arg(repository.join("psx-gate.toml"));
+    command
+        .arg("--gate-file")
+        .arg(repository.join("psx-gate.toml"));
     if DIAG_BUILD.load(Ordering::Relaxed) {
         command.arg("--diag");
     }
@@ -3038,7 +3068,15 @@ fn profile_guided_pack(
     let mut hottest = Command::new(cargo());
     hottest
         .current_dir(psoxide)
-        .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "hottest"])
+        .args([
+            "run",
+            "--release",
+            "-q",
+            "-p",
+            "psoxide-pgo",
+            "--",
+            "hottest",
+        ])
         .arg(&full_profile)
         .arg(&profile)
         .arg("--coverage")
@@ -3046,7 +3084,10 @@ fn profile_guided_pack(
     for cold in PGO_COLD_FUNCTIONS {
         hottest.arg("--cold").arg(cold);
     }
-    run(&mut hottest, "keep the hottest profile functions (psoxide-pgo hottest)")?;
+    run(
+        &mut hottest,
+        "keep the hottest profile functions (psoxide-pgo hottest)",
+    )?;
 
     // The layout binds to the code of a link in the linker's own order, so
     // collect it on that link, then link again with the layout applied.
@@ -3275,7 +3316,15 @@ fn bound_profile(
     run(
         Command::new(cargo())
             .current_dir(psoxide)
-            .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "rebind"])
+            .args([
+                "run",
+                "--release",
+                "-q",
+                "-p",
+                "psoxide-pgo",
+                "--",
+                "rebind",
+            ])
             .arg(samples)
             .arg(&twin)
             .arg(&bound)
@@ -3289,7 +3338,10 @@ fn bound_profile(
 /// shared crates, the manifests and the component pin. A twin is reused while this holds.
 fn twin_key(repository: &Path, features: Option<&str>) -> Result<String> {
     fn visit(dir: &Path, hasher: &mut Sha256) -> Result<()> {
-        let mut entries: Vec<_> = fs::read_dir(dir)?.flatten().map(|entry| entry.path()).collect();
+        let mut entries: Vec<_> = fs::read_dir(dir)?
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
         entries.sort();
         for path in entries {
             if path.file_name().is_some_and(|name| name == "target") {
@@ -3306,14 +3358,24 @@ fn twin_key(repository: &Path, features: Option<&str>) -> Result<String> {
     }
     let mut hasher = Sha256::new();
     hasher.update(features.unwrap_or("").as_bytes());
-    hasher.update(env::var("HLPSX_COLLECT_MAPS").unwrap_or_default().as_bytes());
+    hasher.update(
+        env::var("HLPSX_COLLECT_MAPS")
+            .unwrap_or_default()
+            .as_bytes(),
+    );
     for part in ["game/src", "game/.cargo", "shared"] {
         let dir = repository.join(part);
         if dir.is_dir() {
             visit(&dir, &mut hasher)?;
         }
     }
-    for file in ["game/Cargo.toml", "game/build.rs", "Cargo.toml", "Cargo.lock", "components.lock.json"] {
+    for file in [
+        "game/Cargo.toml",
+        "game/build.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+        "components.lock.json",
+    ] {
         if let Ok(bytes) = fs::read(repository.join(file)) {
             hasher.update(bytes);
         }
@@ -3326,7 +3388,12 @@ fn twin_key(repository: &Path, features: Option<&str>) -> Result<String> {
 fn compile_twin(repository: &Path, psoxide: &Path, features: Option<&str>) -> Result<PathBuf> {
     let mut reserve = PGO_COLLECT_STACK_RESERVE;
     loop {
-        match compile_game(repository, psoxide, features, GuestProfile::CollectElf(reserve)) {
+        match compile_game(
+            repository,
+            psoxide,
+            features,
+            GuestProfile::CollectElf(reserve),
+        ) {
             Ok(exe) => return Ok(exe),
             Err(error) => {
                 let message = error.to_string();
@@ -3448,14 +3515,23 @@ fn rung_link(repository: &Path, psoxide: &Path, features: Option<&str>) -> Resul
 /// bench) is left in `.hlpsx/ladder/rung-N/`.
 fn pick_threshold(repository: &Path, psoxide: &Path) -> Result<u32> {
     let floor = ram_floor(repository)?;
-    let candidates = env::var("HLPSX_LADDER_CANDIDATES").unwrap_or_else(|_| PGO_LADDER_CANDIDATES.into());
+    let candidates =
+        env::var("HLPSX_LADDER_CANDIDATES").unwrap_or_else(|_| PGO_LADDER_CANDIDATES.into());
     let work = repository.join(".hlpsx/ladder");
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work)?;
     let mut command = Command::new(cargo());
     command
         .current_dir(psoxide)
-        .args(["run", "--release", "-q", "-p", "psoxide-pgo", "--", "ladder"])
+        .args([
+            "run",
+            "--release",
+            "-q",
+            "-p",
+            "psoxide-pgo",
+            "--",
+            "ladder",
+        ])
         // The architecture gate reads the program from this workspace (the SDK tool runs in .psoxide).
         .arg("--crate")
         .arg(repository)
@@ -3473,9 +3549,14 @@ fn pick_threshold(repository: &Path, psoxide: &Path) -> Result<u32> {
         command.arg("--baseline").arg(&baseline);
     }
     if candidates != "1" {
-        command.arg("--bench").arg(repository.join(PGO_LADDER_BENCH));
+        command
+            .arg("--bench")
+            .arg(repository.join(PGO_LADDER_BENCH));
     }
-    run(&mut command, "pick the hot call-site threshold (psoxide-pgo ladder)")?;
+    run(
+        &mut command,
+        "pick the hot call-site threshold (psoxide-pgo ladder)",
+    )?;
     let scores = work.join("scores.txt");
     if scores.is_file() {
         fs::copy(&scores, repository.join(SHIPPED_SCORES))?;
@@ -3701,7 +3782,7 @@ fn main() -> Result<()> {
         // The startup movie sits beside the cooked assets, outside data/ and
         // so outside the cook provenance: it shapes no cooked byte.
         if !options.no_intro {
-            intro::cook(&repository, &valve)?;
+            intro::cook(&repository, &valve, options.psxavenc.as_deref())?;
         }
     }
     if options.action == Action::Assets {

@@ -116,10 +116,11 @@ The movie is encoded from your install at build time with
 [`psxavenc`](https://github.com/WonderfulToolchain/psxavenc) (zlib licence; it
 reads the movie itself, so no `ffmpeg` binary is needed). Build it and put it on
 your `PATH`, or point `PSXAVENC` at it. Without it, or without a startup movie
-in your install, the build prints a warning and makes the disc without the
-intro, which boots straight into the game. `--no-intro` does the same on
-purpose; `stack`, `regress`, `pgo` data collection and the journeys use such a
-disc because they replay input from boot. Nothing derived from the movie is
+in your install, the build stops with a message naming `--psxavenc PATH` and
+`PSXAVENC`: a disc is never made without the intro by accident. `--without-intro`
+(`--no-intro`) leaves the stage off on purpose; `stack`, `regress`, `pgo` data
+collection and the journeys use such a disc because they replay input from boot.
+Nothing derived from the movie is
 ever written outside `.hlpsx/intro/`.
 
 The cook also fits the sound to the player. The CD sound loses 0.9 dB of loudness
