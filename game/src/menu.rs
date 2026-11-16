@@ -829,14 +829,11 @@ struct Shell {
 #[inline(never)]
 #[optimize(size)]
 fn draw_shell(
-    fb: &mut DoubleBuffer,
     font: &FontAtlas,
     shell: &Shell,
     anim: (TextureMaterial, TextureMaterial, u16, u16),
     title: &str,
 ) {
-    driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
-    draw_bg(shell.bg);
     if anim.2 == 0 {
         draw_logo(shell.logo, shell.lw, shell.lh);
     } else {
@@ -1312,6 +1309,14 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
         if let Some(room) = crate::segments::poll_control() {
             return room;
         }
+        // The backdrop first: the GPU spends most of a title frame filling it, and the
+        // pad exchange, the menu logic and the film upload below run while it does. In
+        // the frame order they followed it, they waited for it, and the frame kept only
+        // 55,500 of its 571,238 cycles to spare (696663c). Nothing above it depends on
+        // this frame's input; a return below leaves it in the hidden buffer, which the
+        // next frame anyone shows is drawn over.
+        driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
+        draw_bg(shell.bg);
         let input = poll_menu_edges(&mut pad);
         if input.up || input.down {
             play_menu_move();
@@ -1475,7 +1480,7 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
         );
         match screen {
             MenuScreen::Main => {
-                draw_shell(fb, &font, &shell, title_anim, "");
+                draw_shell(&font, &shell, title_anim, "");
                 draw_main_menu(&font, &help_font, main_sel as usize);
                 if load_failed {
                     hltext::draw_centered_scaled(
@@ -1487,31 +1492,31 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                 }
             }
             MenuScreen::Chapters => {
-                draw_shell(fb, &font, &shell, title_anim, "Chapter Select");
+                draw_shell(&font, &shell, title_anim, "Chapter Select");
                 draw_chapter_menu(&font, chapter_sel);
             }
             MenuScreen::Maps => {
-                draw_shell(fb, &font, &shell, title_anim, chapter_title(map_chapter));
+                draw_shell(&font, &shell, title_anim, chapter_title(map_chapter));
                 draw_map_menu(&font, &help_font, map_chapter, map_sel);
             }
             MenuScreen::Options => {
-                draw_shell(fb, &font, &shell, title_anim, "Configuration");
+                draw_shell(&font, &shell, title_anim, "Configuration");
                 draw_options_menu(&font, &help_font, options_sel as usize);
             }
             MenuScreen::Debug => {
-                draw_shell(fb, &font, &shell, title_anim, "Debug");
+                draw_shell(&font, &shell, title_anim, "Debug");
                 draw_debug_menu(&font, debug_sel as usize);
             }
             MenuScreen::Segments => {
-                draw_shell(fb, &font, &shell, title_anim, "Segment select");
+                draw_shell(&font, &shell, title_anim, "Segment select");
                 draw_segment_menu(&font, &segment_selection);
             }
             MenuScreen::Controls => {
-                draw_shell(fb, &font, &shell, title_anim, "Controls");
+                draw_shell(&font, &shell, title_anim, "Controls");
                 draw_controls_menu(&font, &help_font);
             }
             MenuScreen::Credits => {
-                draw_shell(fb, &font, &shell, title_anim, "Credits");
+                draw_shell(&font, &shell, title_anim, "Credits");
                 draw_credits_menu(&help_font, credits_first);
             }
         }
