@@ -1397,6 +1397,7 @@ fn prepare_psoxide(explicit: Option<&Path>) -> Result<PathBuf> {
     match explicit {
         Some(path) => {
             let path = path.canonicalize()?;
+            let _ = PSOXIDE_SOURCE.set(path.clone());
             psoxide_link::hydrate(&path, &destination, None, false)?;
         }
         None => {
@@ -3511,6 +3512,19 @@ fn rung_link(repository: &Path, psoxide: &Path, features: Option<&str>) -> Resul
     Ok(())
 }
 
+/// The `--psoxide` source this run hydrated from, when one was given.
+static PSOXIDE_SOURCE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The ladder's link hook: this executable's `rung-link`, hydrating from the same `--psoxide`
+/// source as this run (otherwise it would materialise the pinned SDK over the local one).
+fn rung_link_command() -> Result<String> {
+    let mut command = format!("'{}' rung-link", env::current_exe()?.display());
+    if let Some(source) = PSOXIDE_SOURCE.get() {
+        command.push_str(&format!(" --psoxide '{}'", source.display()));
+    }
+    Ok(command)
+}
+
 /// Run `psoxide-pgo ladder` on the profile in `SHIPPED_PROFILE` and return the threshold it
 /// picked. The per-rung table goes to `SHIPPED_LADDER` and the pick's scores to
 /// `SHIPPED_SCORES`; the pick's layout (collected by the
@@ -3545,7 +3559,7 @@ fn pick_threshold(repository: &Path, psoxide: &Path) -> Result<u32> {
         .arg("--out")
         .arg(repository.join(SHIPPED_LADDER))
         .arg("--link")
-        .arg(format!("{} rung-link", env::current_exe()?.display()));
+        .arg(rung_link_command()?);
     let baseline = repository.join(SHIPPED_SCORES);
     if baseline.is_file() {
         command.arg("--baseline").arg(&baseline);
