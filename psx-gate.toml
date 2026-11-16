@@ -7,5 +7,5 @@
 program = "hl-psx"
 kind = "register-literal"
 item = "game/src/main.rs"
-count = 2
+count = 1
 remove = "unscheduled"

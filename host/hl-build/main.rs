@@ -2598,19 +2598,7 @@ fn compile_game(
         )?;
         run(
             hazard_tool(psoxide, "stack-guard").arg(&exe).arg(&link_map),
-            "prove psx-rt scratchpad stacks fit",
-        )?;
-        // The model projection chain runs on the 1 KiB scratchpad through the
-        // game's own stack switch; an inlining change that outgrows it would
-        // otherwise only show up as lost speed.
-        let budget = projection_stack_budget(&game.join("src/scratchpad.rs"))?;
-        run(
-            hazard_tool(psoxide, "stack-guard")
-                .arg(&exe)
-                .arg(&link_map)
-                .args(["--root", PROJECTION_STACK_ENTRY, "--budget"])
-                .arg(budget.to_string()),
-            "check the scratchpad projection stack budget",
+            "prove psx-rt scratchpad stacks fit (the split walk and the model projection)",
         )?;
         if !ordered && matches!(profile, GuestProfile::Use(..)) {
             if let Some(order) = layout_order(repository, psoxide, features, &exe, &link_map)? {
@@ -2674,32 +2662,6 @@ fn layout_order(
     ));
     fs::rename(&staging, &order)?;
     Ok(Some(order))
-}
-
-/// The game's scratchpad stack switch entry, as `stack-guard --root` matches
-/// it in the link map.
-const PROJECTION_STACK_ENTRY: &str = r"^hl_psx::project_hmd7_model_stack_entry(::h[0-9a-f]{16})?$";
-
-/// Bytes the projection chain may use: it grows down from the top of the
-/// 1 KiB scratchpad to the canary ending at `PROJECTION_GUARD_END`.
-fn projection_stack_budget(scratchpad_rs: &Path) -> Result<usize> {
-    const SCRATCHPAD_BYTES: usize = 1024;
-    let source = fs::read_to_string(scratchpad_rs)?;
-    let guard_end = source
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("const PROJECTION_GUARD_END: usize = ")
-        })
-        .and_then(|value| value.strip_suffix(';'))
-        .and_then(|value| value.parse::<usize>().ok())
-        .ok_or_else(|| {
-            format!(
-                "PROJECTION_GUARD_END not found in {}",
-                scratchpad_rs.display()
-            )
-        })?;
-    Ok(SCRATCHPAD_BYTES - guard_end)
 }
 
 /// The ordinary build: the committed profile at exactly the threshold it shipped at.
@@ -4047,13 +4009,6 @@ mod tests {
         let error = "compile hl-psx for PlayStation failed with exit status: 101: = note: rust-lld: error: section '.bss' will not fit in region 'IMAGE': overflowed by 192 bytes";
         assert_eq!(overflowed_by(error), Some(192));
         assert_eq!(overflowed_by("some other failure"), None);
-    }
-
-    #[test]
-    fn projection_stack_budget_reads_the_guard_from_the_game() {
-        let scratchpad = root().join("game/src/scratchpad.rs");
-        let budget = projection_stack_budget(&scratchpad).unwrap();
-        assert!(budget > 0 && budget < 1024, "{budget}");
     }
 
     #[test]

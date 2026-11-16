@@ -30610,16 +30610,18 @@ static mut SPLIT_DEEP_LEVELS: [SplitLevel; 6 - SPLIT_FAST_LEVELS] = [SplitLevel 
 }; 6 - SPLIT_FAST_LEVELS];
 
 // Scratchpad bytes 128..840 during world emission: the working set, a guard,
-// the trampoline's save record, and a stack for the walk itself (its frame and
-// push_packet's; memcpy is a leaf) growing down from 840. The affine workspace
-// above 840 stays live across splits and is not touched.
+// and a stack for the walk itself (its frame and push_packet's; memcpy is a
+// leaf) below 840. The affine workspace above 840 stays live across splits and
+// is not touched.
 const SPLIT_WORK_SCRATCH_OFFSET: usize = GROUP_VIS_SCRATCH_OFFSET;
 const SPLIT_GUARD_OFFSET: usize = SPLIT_WORK_SCRATCH_OFFSET + core::mem::size_of::<SplitWork>();
 const SPLIT_GUARD_WORDS: usize = 3;
-const SPLIT_SAVE_OFFSET: usize = SPLIT_GUARD_OFFSET + SPLIT_GUARD_WORDS * 4;
-const SPLIT_STACK_TOP: usize = AFFINE_WORKSPACE_SCRATCH_OFFSET;
-const SPLIT_STACK_BYTES: usize = SPLIT_STACK_TOP - (SPLIT_SAVE_OFFSET + 12);
-const _: () = assert!(SPLIT_STACK_BYTES >= 256 && SPLIT_STACK_TOP % 8 == 0);
+/// The walk's stack; `stack-guard` proves its linked call tree fits after every link.
+type SplitStack = scratchpad::ScratchpadStack<
+    { SPLIT_GUARD_OFFSET + SPLIT_GUARD_WORDS * 4 },
+    AFFINE_WORKSPACE_SCRATCH_OFFSET,
+>;
+const _: () = assert!(SplitStack::BUDGET >= 256);
 const SPLIT_GUARD: u32 = 0x5a17_5b17;
 /// Splits whose stack reached the guard (telemetry; should stay 0).
 #[no_mangle]
@@ -30645,26 +30647,6 @@ struct SplitCall {
     np: *mut usize,
     mat: TexturedGouraudPacketMaterial,
     texture_backdrop: bool,
-}
-
-/// Whether the CPU is already running on a scratchpad stack (the model
-/// projection stack shares these bytes).
-#[inline(always)]
-fn on_scratchpad_stack() -> bool {
-    #[cfg(target_arch = "mips")]
-    {
-        let sp: u32;
-        // The allocator may pick $at; `.set noat` keeps the assembler quiet
-        // (psx-rt's stack_pointer does the same).
-        unsafe {
-            core::arch::asm!(".set noat", "move {0}, $sp", ".set at", out(reg) sp, options(nomem, nostack))
-        };
-        (sp & 0x1fff_fc00) == 0x1f80_0000
-    }
-    #[cfg(not(target_arch = "mips"))]
-    {
-        false
-    }
 }
 
 /// Examine `w`'s current triangle at `depth`: emit it, drop it, or open
@@ -30858,18 +30840,10 @@ unsafe fn push_tri_gpu_split(
         mat,
         texture_backdrop,
     };
-    if on_scratchpad_stack() {
-        // Already on a scratchpad stack (none of today's callers are): walk on
-        // it rather than nesting a second one over the same bytes.
-        split_walk_entry(core::ptr::addr_of_mut!(call).cast::<u8>());
-    } else {
-        scratchpad::call_on_stack(
-            core::ptr::addr_of_mut!(call).cast::<u8>(),
-            split_walk_entry,
-            SPLIT_STACK_TOP,
-            SPLIT_SAVE_OFFSET,
-        );
-    }
+    // Already on a scratchpad stack (none of today's callers are), `run` walks
+    // on it rather than nesting a second one over the same bytes.
+    let context = core::ptr::addr_of_mut!(call).cast::<u8>();
+    SplitStack::run(|| split_walk_entry(context));
     i = 0;
     while i < SPLIT_GUARD_WORDS {
         if guard.add(i).read() != SPLIT_GUARD ^ i as u32 {
@@ -32600,10 +32574,8 @@ unsafe fn project_hmd7_model(
         projected_z,
     };
     let intact = unsafe {
-        scratchpad::call_on_projection_stack(
-            core::ptr::addr_of_mut!(call).cast::<u8>(),
-            project_hmd7_model_stack_entry,
-        )
+        let context = core::ptr::addr_of_mut!(call).cast::<u8>();
+        scratchpad::call_on_projection_stack(|| project_hmd7_model_stack_entry(context))
     };
     if !intact {
         unsafe { PROJECTION_SCRATCH_STACK_OK = false };
