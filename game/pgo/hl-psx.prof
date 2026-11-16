@@ -1,4 +1,4 @@
-# psoxide-pgo source: c1c9d97b170e9fdca17d998214551d54b416c60b
+# psoxide-pgo source: e91dd8fb9d95955ff18265884badedfb3236946a
 # psoxide-pgo file: d55c9c640bc5621018aca028ab0ee77b1b51f545 game/src/cdstream.rs
 # psoxide-pgo file: 974e22803230ffebb8a05a9b1600b5e006d001ff game/src/env_blood.rs
 # psoxide-pgo file: 63ae100bbd80bf5c3e92cc07465b97077f9a1e68 game/src/env_bubbles.rs
@@ -8,12 +8,12 @@
 # psoxide-pgo file: 5ddf01731628e947aa57ddb4063e5e50c62b97b7 game/src/hud.rs
 # psoxide-pgo file: d91c283764c54bedd732d6b961606381b79f6afc game/src/logic_state.rs
 # psoxide-pgo file: 26637645ac572cc895fcfe347015db92491d8b91 game/src/main.rs
-# psoxide-pgo file: 6a13ddcf47eba4615d71602225c102958c80bff5 game/src/map.rs
+# psoxide-pgo file: 2719030348e25cabbff9b93d9cf6b375c0fce673 game/src/map.rs
 # psoxide-pgo file: 7e84d796c1b873f2af17ea1ac72e325be620242c game/src/map_catalog.rs
 # psoxide-pgo file: a5c909fe4f23f197ab61f4b735fa939036aafd31 game/src/mapsnap.rs
 # psoxide-pgo file: 01dff069b400f16e06b2c4ef3d78e92f801770f0 game/src/monster_voice.rs
 # psoxide-pgo file: 401eff3e2c90cd4a23d3ea20ace234e90e3361ef game/src/monsterjump.rs
-# psoxide-pgo file: dd8254aa7444b7961d22fed7fece2404f8326704 game/src/music.rs
+# psoxide-pgo file: ac0e004dfe4302718b728d7b17d0ae8512aaa549 game/src/music.rs
 # psoxide-pgo file: 64c7ebca947e275bbb30109b7dbd8134b20a3378 game/src/phys.rs
 # psoxide-pgo file: bc35977f5e3c978f09b38573601113e4ab673917 game/src/player_rules.rs
 # psoxide-pgo file: ad46f1b7f278ea59603d7812d1f00467d3567c84 game/src/render.rs
@@ -56,55 +56,55 @@
 # psoxide-pgo func: 51 55 2 <hl_psx::env_bubbles::Scheduler>::tick
 # psoxide-pgo func: 116 122 3 <hl_psx::env_funnel::Burst>::advance
 # psoxide-pgo func: 105 106 5 <hl_psx::hev::Suit>::clear_queue
-# psoxide-pgo func: 1654 1666 9 <hl_psx::map::Map>::apply_dynamic_light
-# psoxide-pgo func: 1673 1682 9 <hl_psx::map::Map>::apply_dynamic_loop_light
-# psoxide-pgo func: 1352 1369 9 <hl_psx::map::Map>::clipnode
-# psoxide-pgo func: 2045 2066 9 <hl_psx::map::Map>::cooked_group_plane
-# psoxide-pgo func: 2376 2377 9 <hl_psx::map::Map>::dynamic_loop_active
-# psoxide-pgo func: 1689 1696 9 <hl_psx::map::Map>::expand_light_palette
-# psoxide-pgo func: 2203 2209 9 <hl_psx::map::Map>::face_bounds
-# psoxide-pgo func: 2206 2206 9 <hl_psx::map::Map>::face_bounds::{closure#0} @hl_psx
-# psoxide-pgo func: 2082 2085 9 <hl_psx::map::Map>::face_group
-# psoxide-pgo func: 2224 2229 9 <hl_psx::map::Map>::face_is_loop
-# psoxide-pgo func: 2239 2244 9 <hl_psx::map::Map>::face_is_patch
-# psoxide-pgo func: 2092 2096 9 <hl_psx::map::Map>::face_lightstyle
-# psoxide-pgo func: 2299 2304 9 <hl_psx::map::Map>::face_liquid
-# psoxide-pgo func: 2077 2078 9 <hl_psx::map::Map>::face_plane_cooked
-# psoxide-pgo func: 2270 2272 9 <hl_psx::map::Map>::face_refined_topology
-# psoxide-pgo func: 2323 2328 9 <hl_psx::map::Map>::face_tex
-# psoxide-pgo func: 2313 2314 9 <hl_psx::map::Map>::face_translucent
-# psoxide-pgo func: 2215 2219 9 <hl_psx::map::Map>::face_tris
-# psoxide-pgo func: 2218 2218 9 <hl_psx::map::Map>::face_tris::{closure#0} @hl_psx
-# psoxide-pgo func: 1455 1459 9 <hl_psx::map::Map>::l5_decal_count
-# psoxide-pgo func: 2008 2016 9 <hl_psx::map::Map>::leaf_liquid
-# psoxide-pgo func: 1449 1450 9 <hl_psx::map::Map>::light_word
-# psoxide-pgo func: 1271 1296 9 <hl_psx::map::Map>::logic
-# psoxide-pgo func: 2432 2447 9 <hl_psx::map::Map>::loop_corners4
-# psoxide-pgo func: 2507 2520 9 <hl_psx::map::Map>::loop_render_tri
-# psoxide-pgo func: 2384 2386 9 <hl_psx::map::Map>::loop_vert
-# psoxide-pgo func: 2338 2339 9 <hl_psx::map::Map>::loop_vert_idx
-# psoxide-pgo func: 2346 2353 9 <hl_psx::map::Map>::loop_vert_static
-# psoxide-pgo func: 2333 2334 9 <hl_psx::map::Map>::loopvert_o
-# psoxide-pgo func: 1751 1768 9 <hl_psx::map::Map>::node
-# psoxide-pgo func: 1987 1989 9 <hl_psx::map::Map>::paired_pvs
-# psoxide-pgo func: 2457 2502 9 <hl_psx::map::Map>::patch_corners_meta
-# psoxide-pgo func: 2484 2489 9 <hl_psx::map::Map>::patch_corners_meta::{closure#0} @hl_psx
-# psoxide-pgo func: 2492 2492 9 <hl_psx::map::Map>::patch_corners_meta::{closure#1} @hl_psx
-# psoxide-pgo func: 2395 2396 9 <hl_psx::map::Map>::patch_subdiv_active
-# psoxide-pgo func: 2403 2404 9 <hl_psx::map::Map>::patch_undecided
-# psoxide-pgo func: 1046 1047 9 <hl_psx::map::Map>::prop_orientation
-# psoxide-pgo func: 1554 1559 9 <hl_psx::map::Map>::reset_dynamic_face
-# psoxide-pgo func: 1615 1618 9 <hl_psx::map::Map>::reset_lightstyles
-# psoxide-pgo func: 2420 2428 9 <hl_psx::map::Map>::set_patch_subdiv_active
-# psoxide-pgo func: 2408 2416 9 <hl_psx::map::Map>::set_patch_undecided
-# psoxide-pgo func: 1069 1081 9 <hl_psx::map::Map>::sprite_prop
-# psoxide-pgo func: 1166 1172 9 <hl_psx::map::Map>::submodel
-# psoxide-pgo func: 1429 1435 9 <hl_psx::map::Map>::tri_idx
-# psoxide-pgo func: 1700 1707 9 <hl_psx::map::Map>::tri_rgb_words
-# psoxide-pgo func: 1420 1423 9 <hl_psx::map::Map>::tri_uv_words
-# psoxide-pgo func: 1412 1415 9 <hl_psx::map::Map>::tri_word
-# psoxide-pgo func: 1384 1395 9 <hl_psx::map::Map>::vert
-# psoxide-pgo func: 1112 1113 9 <hl_psx::map::Map>::way_pass
+# psoxide-pgo func: 1649 1661 9 <hl_psx::map::Map>::apply_dynamic_light
+# psoxide-pgo func: 1668 1677 9 <hl_psx::map::Map>::apply_dynamic_loop_light
+# psoxide-pgo func: 1347 1364 9 <hl_psx::map::Map>::clipnode
+# psoxide-pgo func: 2040 2061 9 <hl_psx::map::Map>::cooked_group_plane
+# psoxide-pgo func: 2371 2372 9 <hl_psx::map::Map>::dynamic_loop_active
+# psoxide-pgo func: 1684 1691 9 <hl_psx::map::Map>::expand_light_palette
+# psoxide-pgo func: 2198 2204 9 <hl_psx::map::Map>::face_bounds
+# psoxide-pgo func: 2201 2201 9 <hl_psx::map::Map>::face_bounds::{closure#0} @hl_psx
+# psoxide-pgo func: 2077 2080 9 <hl_psx::map::Map>::face_group
+# psoxide-pgo func: 2219 2224 9 <hl_psx::map::Map>::face_is_loop
+# psoxide-pgo func: 2234 2239 9 <hl_psx::map::Map>::face_is_patch
+# psoxide-pgo func: 2087 2091 9 <hl_psx::map::Map>::face_lightstyle
+# psoxide-pgo func: 2294 2299 9 <hl_psx::map::Map>::face_liquid
+# psoxide-pgo func: 2072 2073 9 <hl_psx::map::Map>::face_plane_cooked
+# psoxide-pgo func: 2265 2267 9 <hl_psx::map::Map>::face_refined_topology
+# psoxide-pgo func: 2318 2323 9 <hl_psx::map::Map>::face_tex
+# psoxide-pgo func: 2308 2309 9 <hl_psx::map::Map>::face_translucent
+# psoxide-pgo func: 2210 2214 9 <hl_psx::map::Map>::face_tris
+# psoxide-pgo func: 2213 2213 9 <hl_psx::map::Map>::face_tris::{closure#0} @hl_psx
+# psoxide-pgo func: 1450 1454 9 <hl_psx::map::Map>::l5_decal_count
+# psoxide-pgo func: 2003 2011 9 <hl_psx::map::Map>::leaf_liquid
+# psoxide-pgo func: 1444 1445 9 <hl_psx::map::Map>::light_word
+# psoxide-pgo func: 1266 1291 9 <hl_psx::map::Map>::logic
+# psoxide-pgo func: 2427 2442 9 <hl_psx::map::Map>::loop_corners4
+# psoxide-pgo func: 2502 2515 9 <hl_psx::map::Map>::loop_render_tri
+# psoxide-pgo func: 2379 2381 9 <hl_psx::map::Map>::loop_vert
+# psoxide-pgo func: 2333 2334 9 <hl_psx::map::Map>::loop_vert_idx
+# psoxide-pgo func: 2341 2348 9 <hl_psx::map::Map>::loop_vert_static
+# psoxide-pgo func: 2328 2329 9 <hl_psx::map::Map>::loopvert_o
+# psoxide-pgo func: 1746 1763 9 <hl_psx::map::Map>::node
+# psoxide-pgo func: 1982 1984 9 <hl_psx::map::Map>::paired_pvs
+# psoxide-pgo func: 2452 2497 9 <hl_psx::map::Map>::patch_corners_meta
+# psoxide-pgo func: 2479 2484 9 <hl_psx::map::Map>::patch_corners_meta::{closure#0} @hl_psx
+# psoxide-pgo func: 2487 2487 9 <hl_psx::map::Map>::patch_corners_meta::{closure#1} @hl_psx
+# psoxide-pgo func: 2390 2391 9 <hl_psx::map::Map>::patch_subdiv_active
+# psoxide-pgo func: 2398 2399 9 <hl_psx::map::Map>::patch_undecided
+# psoxide-pgo func: 1041 1042 9 <hl_psx::map::Map>::prop_orientation
+# psoxide-pgo func: 1549 1554 9 <hl_psx::map::Map>::reset_dynamic_face
+# psoxide-pgo func: 1610 1613 9 <hl_psx::map::Map>::reset_lightstyles
+# psoxide-pgo func: 2415 2423 9 <hl_psx::map::Map>::set_patch_subdiv_active
+# psoxide-pgo func: 2403 2411 9 <hl_psx::map::Map>::set_patch_undecided
+# psoxide-pgo func: 1064 1076 9 <hl_psx::map::Map>::sprite_prop
+# psoxide-pgo func: 1161 1167 9 <hl_psx::map::Map>::submodel
+# psoxide-pgo func: 1424 1430 9 <hl_psx::map::Map>::tri_idx
+# psoxide-pgo func: 1695 1702 9 <hl_psx::map::Map>::tri_rgb_words
+# psoxide-pgo func: 1415 1418 9 <hl_psx::map::Map>::tri_uv_words
+# psoxide-pgo func: 1407 1410 9 <hl_psx::map::Map>::tri_word
+# psoxide-pgo func: 1379 1390 9 <hl_psx::map::Map>::vert
+# psoxide-pgo func: 1107 1108 9 <hl_psx::map::Map>::way_pass
 # psoxide-pgo func: 598 599 15 <hl_psx::phys::Mover>::h1
 # psoxide-pgo func: 605 610 15 <hl_psx::phys::Mover>::pick
 # psoxide-pgo func: 2262 2264 15 <hl_psx::phys::Player>::add_vertical_push
@@ -232,15 +232,15 @@
 # psoxide-pgo func: 13036 13054 8 hl_psx::logic_tick_rotating
 # psoxide-pgo func: 6710 6712 8 hl_psx::logic_valid_brush
 # psoxide-pgo func: 12083 12084 8 hl_psx::maker_delay
-# psoxide-pgo func: 146 150 9 hl_psx::map::q5_to_world_nearest
-# psoxide-pgo func: 121 122 9 hl_psx::map::rd_i16
-# psoxide-pgo func: 135 136 9 hl_psx::map::rd_i16_aligned
-# psoxide-pgo func: 113 114 9 hl_psx::map::rd_i32
-# psoxide-pgo func: 117 118 9 hl_psx::map::rd_u16
-# psoxide-pgo func: 129 131 9 hl_psx::map::rd_u16_aligned
-# psoxide-pgo func: 102 109 9 hl_psx::map::rd_u32
-# psoxide-pgo func: 441 445 9 hl_psx::map::tex_anim_display
-# psoxide-pgo func: 412 413 9 hl_psx::map::tex_anim_select
+# psoxide-pgo func: 141 145 9 hl_psx::map::q5_to_world_nearest
+# psoxide-pgo func: 116 117 9 hl_psx::map::rd_i16
+# psoxide-pgo func: 130 131 9 hl_psx::map::rd_i16_aligned
+# psoxide-pgo func: 108 109 9 hl_psx::map::rd_i32
+# psoxide-pgo func: 112 113 9 hl_psx::map::rd_u16
+# psoxide-pgo func: 124 126 9 hl_psx::map::rd_u16_aligned
+# psoxide-pgo func: 104 111 9 hl_psx::map::rd_u32
+# psoxide-pgo func: 436 440 9 hl_psx::map::tex_anim_display
+# psoxide-pgo func: 407 408 9 hl_psx::map::tex_anim_select
 # psoxide-pgo func: 128 129 10 hl_psx::map_catalog::diagnostic_has_hev
 # psoxide-pgo func: 115 121 10 hl_psx::map_catalog::play_rank
 # psoxide-pgo func: 618 620 11 hl_psx::mapsnap::arm_for_death
@@ -262,7 +262,7 @@
 # psoxide-pgo func: 64 69 12 hl_psx::monster_voice::voiced
 # psoxide-pgo func: 13 14 13 hl_psx::monsterjump::airborne
 # psoxide-pgo func: 10 11 13 hl_psx::monsterjump::environment_eligible
-# psoxide-pgo func: 147 149 14 hl_psx::music::poll
+# psoxide-pgo func: 125 127 14 hl_psx::music::poll
 # psoxide-pgo func: 30428 30454 8 hl_psx::native_affine_patch_mask
 # psoxide-pgo func: 27099 27109 8 hl_psx::next_proj_token
 # psoxide-pgo func: 30627 30638 8 hl_psx::off_display::<3> @hl_psx
