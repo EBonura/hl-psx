@@ -140,7 +140,6 @@ jobs:
           sets=(
             ""
             "--no-default-features"
-            "--features main-ram-render-scratch,main-ram-projection-stack"
             "--features performance-telemetry,debug-map-boot,debug-regression-viewpoints,debug-weapon-gallery"
             "--features emulator-telemetry"
             "--features affine-heatmap"

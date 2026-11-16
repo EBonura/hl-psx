@@ -16,18 +16,9 @@ path = "src/main.rs"
 # Presentation is always decoupled from the 20 Hz simulation (the former decoupled-present
 # feature is gone with its dead off path).
 default = []
-# A/B baseline for the CPU scratchpad optimization. Normal PS1 builds place
-# render working sets in the 1 KiB hardware scratchpad; enabling this feature
-# backs the identical layout with main RAM so regression profiles can isolate
-# the memory-location effect without changing renderer behavior.
-main-ram-render-scratch = ["psx-goldsrc/main-ram-render-scratch"]
 # Diagnostic build: every visible-face rebuild also runs the reference walk (pvs_compile.rs) and
 # panics on the first difference from the fast one. Needs HLPSX_RAM_FLOOR=0 (about 40 KB more RAM).
 pvs-check = []
-# Isolates the projection-stack experiment while leaving the visibility bits
-# and viewmodel bucket heads in hardware scratchpad. Regression builds use this
-# to run the same projection entry on the ordinary main-RAM CPU stack.
-main-ram-projection-stack = ["psx-goldsrc/main-ram-projection-stack"]
 # Console diagnostic pressings only: name the load stage the program has reached for the
 # stop panel (psx_io::diag, present only in the SDK diag branch). Never in a shipping build.
 console-diag = []
