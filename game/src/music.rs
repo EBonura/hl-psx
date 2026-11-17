@@ -143,9 +143,27 @@ pub unsafe fn position() -> Option<u32> {
 }
 
 #[optimize(size)]
-/// Pause the drive and forget the song.
+/// Pause the drive and forget the song. Returns without waiting for the drive;
+/// [`poll_stop`] finishes the Pause.
 pub unsafe fn stop() {
     if let Some(player) = (*core::ptr::addr_of_mut!(PLAYER)).as_mut() {
         player.stop();
+    }
+}
+
+#[optimize(size)]
+/// Look at a stop's pending Pause once. Call every tick.
+pub unsafe fn poll_stop() {
+    if let Some(player) = (*core::ptr::addr_of_mut!(PLAYER)).as_mut() {
+        player.poll_stop();
+    }
+}
+
+#[optimize(size)]
+/// Pause the drive and forget the song, waiting for the drive: before a data
+/// read, and on the way to the menu.
+pub unsafe fn stop_and_wait() {
+    if let Some(player) = (*core::ptr::addr_of_mut!(PLAYER)).as_mut() {
+        player.stop_and_wait();
     }
 }

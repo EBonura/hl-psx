@@ -6062,9 +6062,11 @@ unsafe fn music_suspend_for_stream() {
             CD_RESUME_TRACK = CD_TRACK_CUR;
             CD_RESUME_SECTOR = sector;
         }
-        music::stop();
         CD_TRACK_CUR = 0;
     }
+    // The stream owns the drive next: finish the Pause of any stop still out
+    // (the one music_apply may have left), not only one this function sends.
+    music::stop_and_wait();
 }
 
 /// Leave gameplay with both the drive and SPU CD input in a known-silent
@@ -6081,9 +6083,9 @@ unsafe fn music_stop_for_menu() {
     // while the menu should become silent immediately and unconditionally.
     psx_spu::enable_cd_audio(false);
     psx_spu::set_cd_volume(psx_spu::CdVolume::SILENCE, psx_spu::CdVolume::SILENCE);
-    if CD_TRACK_CUR > 0 {
-        music::stop();
-    }
+    // An idle player sends the drive nothing, so a timed-out stream's late IRQ
+    // is never met by a Pause; a stop still out is finished here.
+    music::stop_and_wait();
     CD_TRACK_WANT = 0;
     CD_TRACK_CUR = 0;
     CD_RESUME_TRACK = 0;
@@ -12386,6 +12388,10 @@ unsafe fn drop_punch_angle() {
 /// worldspawn chapter title shortly after load (like HL's chapter cards).
 unsafe fn tick_screen_fx(sim_frame_no: u32) {
     music_apply(); // no-op when the wanted track already plays
+    if !cdstream::stream_active() {
+        // A stop returns at once; this completes its Pause (CD_TRACK_CUR is 0 by then).
+        music::poll_stop();
+    }
     if CD_TRACK_CUR > 0 && sim_frame_no & 1 == 0 && !cdstream::stream_active() {
         music::poll(); // notices the end of the song and pauses the drive
     }
