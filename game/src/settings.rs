@@ -33,6 +33,11 @@ static mut LOOK_DEADZONE: u8 = ANALOG_DEADZONE_DEFAULT;
 static mut LOOK_DEADZONE_ZONE: Deadzone = Deadzone::new(ANALOG_DEADZONE_DEFAULT as i16);
 
 // ---- Brightness ------------------------------------------------------------
+// The curve itself is `crate::brightness` (pure arithmetic, tested on the host).
+use crate::brightness::{
+    bright_curve, vm_shade_table, BRIGHTNESS_MIX, DEFAULT_MIX, VM_SHADE_LEN, VM_SHADE_MAX,
+    VM_SHADE_MIN,
+};
 // Quake-PSX cooks six gamma'd copies of its one shared 256-colour palette into
 // consecutive VRAM CLUT rows, so its slider is a row index in the texture-page
 // word. Half-Life has no shared palette to copy: every cooked 4bpp texture owns
@@ -45,45 +50,26 @@ static mut LOOK_DEADZONE_ZONE: Deadzone = Deadzone::new(ANALOG_DEADZONE_DEFAULT 
 // looked up in, plus the single `shade` byte each studio model draw modulates
 // with. Applying the curve there costs nothing per pixel and nothing per frame:
 // the world palette is expanded once per map load (and once more when the level
-// changes), and the model paths pay one call that returns immediately at the
-// default level.
+// changes), the model paths pay one call per draw, and the viewmodel's
+// per-triangle shades are a table rebuilt when the level changes.
 
 // Level 4 (zero-based) preserves cooked lighting; lower levels darken and higher
 // levels lift mid-tones. The full eight-level range remains available in Options,
 // and `DEFAULT_BRIGHTNESS` (level 2) is what a fresh boot starts on.
 
-/// Q8 blend weight from `v` toward the curve target for each level: negative
-/// pulls toward `v^2` (darker), positive toward `sqrt(v)` (brighter), and zero
-/// is the untouched palette. Both targets are exact at 0 and 255, so no level
-/// crushes black or blows out white.
-/// Levels 7 and 8 continue the bright side at the same 112 spacing as level 6.
-/// The weight may exceed 256: the blend stays monotonic and reaches exactly 255
-/// at v=255 for any weight up to about 512, so nothing wraps through `as u8`.
-/// Past that the curve overshoots and clips, so do not extend this table
-/// further without redoing that check.
-const BRIGHTNESS_MIX: [i16; BRIGHTNESS_LEVELS as usize] = [-224, -168, -112, -56, 0, 112, 224, 336];
-
 static mut BRIGHTNESS: u8 = DEFAULT_BRIGHTNESS;
 // Cached `BRIGHTNESS_MIX[BRIGHTNESS]`, so the per-draw entry point is one static
 // load and a branch rather than a bounds-checked table index. Keep the cached
 // initializer tied to the default so boot and the Options row cannot disagree.
-static mut BRIGHT_MIX: i16 = BRIGHTNESS_MIX[DEFAULT_BRIGHTNESS as usize];
+static mut BRIGHT_MIX: i16 = DEFAULT_MIX;
 // Set when the level changes with a map already resident; the pause menu is the
 // only way that can happen, so it is consumed there rather than per frame.
 static mut BRIGHT_DIRTY: bool = false;
 
-/// Integer square root of `n` (`n < 2^16`), used only when the palette is
-/// rebuilt or a model shade is lifted.
-#[inline(always)]
-fn isqrt16(n: u32) -> i32 {
-    psx_math::int32::isqrt_i32(n as i32)
-}
-
 #[optimize(size)]
 /// Apply the current brightness curve to one 8-bit light or shade channel. At
-/// the default level this is a load, a compare and a return; the curve itself
-/// is out of line and out of the hot text bucket, so selecting a non-default
-/// level costs image size but never disturbs the world loop's cache layout.
+/// the middle level (mix 0) this is a load, a compare and a return; at any
+/// other level, the default included, it calls the curve, which is out of line.
 #[inline]
 pub fn bright(v: u8) -> u8 {
     let mix = unsafe { BRIGHT_MIX };
@@ -104,21 +90,35 @@ pub fn bright_cold(v: u8) -> u8 {
     bright(v)
 }
 
+// The current level's curve over the viewmodel's shades. The viewmodel looks up
+// one shade per triangle every frame, so the curve is applied here once per
+// level change instead (81 bytes); the initializer is the default level's.
+static mut VM_SHADE: [u8; VM_SHADE_LEN] = vm_shade_table(DEFAULT_MIX);
+
+/// [`bright`] for a viewmodel shade (`VM_SHADE_MIN..=VM_SHADE_MAX`): one load.
+#[inline(always)]
+pub fn bright_vm_shade(shade: u8) -> u8 {
+    debug_assert!(shade >= VM_SHADE_MIN && shade <= VM_SHADE_MAX);
+    // SAFETY: the caller's shade is in VM_SHADE_MIN..=VM_SHADE_MAX (vm_normal_shade
+    // clamps to that range), so the index is below VM_SHADE_LEN; the table is
+    // written only by `set_mix`, on the main thread, never during a draw.
+    unsafe {
+        *core::ptr::addr_of!(VM_SHADE)
+            .cast::<u8>()
+            .add((shade - VM_SHADE_MIN) as usize)
+    }
+}
+
+/// Make `mix` the current brightness curve: the per-draw mix and the viewmodel
+/// shade table. Runs when the level changes or the options are restored.
 #[optimize(size)]
 #[inline(never)]
 #[link_section = ".psx_cold.brightness"]
-fn bright_curve(v: u8, mix: i16) -> u8 {
-    let x = v as i32;
-    // sqrt(255 * x) is 255 * sqrt(x / 255) without leaving integers; the dark
-    // target is the matching x^2 / 255. Both bracket x, so the blend stays in
-    // range without a clamp.
-    let target = if mix > 0 {
-        isqrt16((x as u32) * 255)
-    } else {
-        (x * x + 127) / 255
-    };
-    let weight = mix.unsigned_abs() as i32;
-    (x + (((target - x) * weight) >> 8)) as u8
+fn set_mix(mix: i16) {
+    unsafe {
+        BRIGHT_MIX = mix;
+        VM_SHADE = vm_shade_table(mix);
+    }
 }
 
 #[optimize(size)]
@@ -131,7 +131,7 @@ pub fn set_brightness_level(level: u8) {
             return;
         }
         BRIGHTNESS = level;
-        BRIGHT_MIX = BRIGHTNESS_MIX[level as usize];
+        set_mix(BRIGHTNESS_MIX[level as usize]);
         BRIGHT_DIRTY = true;
     }
 }
@@ -322,7 +322,7 @@ pub fn restore(record: &Saved) {
         MUSIC_VOL = o.music;
         SFX_VOL = o.sfx;
         BRIGHTNESS = o.brightness;
-        BRIGHT_MIX = BRIGHTNESS_MIX[o.brightness as usize];
+        set_mix(BRIGHTNESS_MIX[o.brightness as usize]);
         SCREEN = o.screen;
         PERSIST_DIRTY = false;
     }

@@ -63,6 +63,8 @@ pub mod save;
 
 #[path = "../../../game/src/options_record.rs"]
 pub mod options_record;
+#[path = "../../../game/src/brightness.rs"]
+pub mod brightness;
 
 #[path = "../../../game/src/map_catalog.rs"]
 pub mod map_catalog;

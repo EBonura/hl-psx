@@ -29,6 +29,7 @@ extern crate psx_rt;
 
 mod air_navigation;
 mod beverage;
+mod brightness;
 mod cdstream;
 mod combat_defs;
 mod decal_light;
@@ -32889,7 +32890,7 @@ unsafe fn draw_model(
     }
     // Studio models carry one tint per draw, so the options screen's brightness
     // curve lands here rather than on any per-vertex or per-pixel path: one call
-    // per model, and at the default level it returns immediately.
+    // per model (a load and a compare at the middle level, the curve otherwise).
     let shade = settings::bright(shade);
     // OoT/Crash vertex-precision trick. Vertices are baked at `s`x (cook), so
     // keep the rotation matrix FULL precision and inflate the view-space
@@ -34636,7 +34637,8 @@ fn vm_normal_shade(normal: [i8; 3]) -> u8 {
         return 128;
     }
     let dot = -(x << 2) + y * 3 + (z << 1);
-    (104 + ((dot * 15) >> 8)).clamp(64, 144) as u8
+    let (lo, hi) = (brightness::VM_SHADE_MIN as i32, brightness::VM_SHADE_MAX as i32);
+    (104 + ((dot * 15) >> 8)).clamp(lo, hi) as u8
 }
 
 /// Immediate GP0 equivalent of `TriTextured`. Viewmodels render after the
@@ -34790,7 +34792,7 @@ unsafe fn draw_viewmodel(
             records.add(t).write(
                 *heads.add(bucket) as u32
                     | ((tex_id as u32 & 0xff) << VM_SORT_TEX_SHIFT)
-                    | ((settings::bright(vm_normal_shade(tri.normal)) as u32)
+                    | ((settings::bright_vm_shade(vm_normal_shade(tri.normal)) as u32)
                         << VM_SORT_SHADE_SHIFT),
             );
             heads.add(bucket).write(t as u16);

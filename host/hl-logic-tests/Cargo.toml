@@ -18,6 +18,7 @@ psx-hw = { path = "../../.psoxide/crates/psx-hw" }
 psx-spu = { path = "../../.psoxide/sdk/crates/psx-spu" }
 psx-sfx = { path = "../../.psoxide/sdk/crates/psx-sfx" }
 psx-math = { path = "../../.psoxide/sdk/crates/psx-math" }
+psx-pack = { path = "../../.psoxide/sdk/crates/psx-pack" }
 psx-segments = { path = "../../.psoxide/sdk/crates/psx-segments" }
 psx-engine = { path = "../../.psoxide/engine/crates/psx-engine" }
 hl-format = { path = "../../shared/hl-format" }
