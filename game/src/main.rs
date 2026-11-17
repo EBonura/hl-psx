@@ -40,8 +40,9 @@ use psx_goldsrc::driver;
 #[cfg(feature = "performance-telemetry")]
 use psx_goldsrc::emit::words::affine_heatmap_color;
 use psx_goldsrc::emit::words::{
-    average_packed_bytes, culled, culled_soft, pack_rgb_word, pack_vertex_word, point_in_tri,
-    projected_soa_get, projected_soa_set, tri_fits_gpu, unpack_rgb_word, uv_word, uv_word_pair_i32,
+    average_packed_bytes, brush_angles_q8, culled, culled_soft, dot12, pack_rgb_word,
+    pack_vertex_word, platrot_world_to_local, point_in_tri, projected_soa_get, projected_soa_set,
+    tri_fits_gpu, unpack_rgb_word, uv_word, uv_word_pair_i32,
 };
 #[cfg(feature = "performance-telemetry")]
 use psx_goldsrc::emit::AFFINE_ERROR_BUCKETS;
@@ -4352,11 +4353,6 @@ fn trace_player_hull_probes(
 }
 
 #[inline(always)]
-fn dot12(row: [i16; 3], e: [i32; 3]) -> i32 {
-    ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2])) >> 12
-}
-
-#[inline(always)]
 fn dot12_q5(row: [i16; 3], e: [i32; 3]) -> i32 {
     ((row[0] as i32 * e[0]) + (row[1] as i32 * e[1]) + (row[2] as i32 * e[2]))
         >> (map::PLANE_NORMAL_FRAC_BITS - 5)
@@ -7130,24 +7126,6 @@ fn rot_door_pose(e: map::Ent, phase: i32) -> (i32, i32) {
     }
 }
 
-/// `func_door_rotating` uses the same compact physical-axis encoding as fans
-/// and pendulums. The cooker has already conjugated GoldSrc's axial angle
-/// through the HL Z-up -> PS1 Y-up reflection, so this is a direct matrix
-/// dispatch with no map-specific correction.
-#[inline(never)]
-fn brush_angles_q8(packed: u32, axis: i32, angle_q12: u16) -> u32 {
-    let mut pitch = (packed & 0xff) as u16;
-    let mut yaw = ((packed >> 8) & 0xff) as u16;
-    let mut roll = ((packed >> 16) & 0xff) as u16;
-    let movement = angle_q12 >> 4;
-    match axis {
-        1 => roll = roll.wrapping_add(movement),
-        2 => pitch = pitch.wrapping_add(movement),
-        _ => yaw = yaw.wrapping_add(movement),
-    }
-    pitch as u32 | ((yaw as u32) << 8) | ((roll as u32) << 16)
-}
-
 #[inline(always)]
 fn axial_brush_angles_q8(e: map::Ent, angle_q12: u16) -> u32 {
     brush_angles_q8(e.mv[2] as u32, e.mv[1], angle_q12)
@@ -7361,16 +7339,6 @@ fn platrot_phase_from_offset(e: map::Ent, off: [i32; 3]) -> i32 {
     } else {
         (((off[1] - e.origin[1]) * 4096) / e.mv[1]).clamp(0, 4096)
     }
-}
-
-#[inline(never)]
-fn platrot_world_to_local(p: [i32; 3], off: [i32; 3], r: &Mat3I16) -> [i32; 3] {
-    let d = [p[0] - off[0], p[1] - off[1], p[2] - off[2]];
-    [
-        ((r.m[0][0] as i32 * d[0]) + (r.m[1][0] as i32 * d[1]) + (r.m[2][0] as i32 * d[2])) >> 12,
-        ((r.m[0][1] as i32 * d[0]) + (r.m[1][1] as i32 * d[1]) + (r.m[2][1] as i32 * d[2])) >> 12,
-        ((r.m[0][2] as i32 * d[0]) + (r.m[1][2] as i32 * d[1]) + (r.m[2][2] as i32 * d[2])) >> 12,
-    ]
 }
 
 #[inline(never)]
@@ -30658,38 +30626,42 @@ unsafe fn split_examine(
 }
 
 /// The depth-first walk over `SplitWork`, run on the scratchpad stack.
-unsafe extern "C" fn split_walk_entry(context: *mut u8) {
-    let call = unsafe { &mut *context.cast::<SplitCall>() };
-    let packets = unsafe { &mut *call.packets };
-    let np = unsafe { &mut *call.np };
-    let (mat, texture_backdrop) = (call.mat, call.texture_backdrop);
-    let w = unsafe { &mut *scratchpad::ptr_at::<SplitWork>(SPLIT_WORK_SCRATCH_OFFSET) };
-    let mut d = 0usize;
-    loop {
-        let opened = unsafe { split_examine(packets, np, w, d, texture_backdrop, mat) };
-        // The next triangle is the next fan child of the deepest open level.
-        let mut top = if opened { d + 1 } else { d };
+struct SplitWalk;
+
+impl scratchpad::StackEntry for SplitWalk {
+    unsafe extern "C" fn enter(context: *mut u8) {
+        let call = unsafe { &mut *context.cast::<SplitCall>() };
+        let packets = unsafe { &mut *call.packets };
+        let np = unsafe { &mut *call.np };
+        let (mat, texture_backdrop) = (call.mat, call.texture_backdrop);
+        let w = unsafe { &mut *scratchpad::ptr_at::<SplitWork>(SPLIT_WORK_SCRATCH_OFFSET) };
+        let mut d = 0usize;
         loop {
-            if top == 0 {
-                return;
-            }
-            let lv = unsafe { &mut *split_level(w, top - 1) };
-            if (lv.k as usize) + 1 < lv.pn as usize {
-                let mut i2 = lv.i1 + 1;
-                if i2 >= lv.pn {
-                    i2 -= lv.pn;
+            let opened = unsafe { split_examine(packets, np, w, d, texture_backdrop, mat) };
+            // The next triangle is the next fan child of the deepest open level.
+            let mut top = if opened { d + 1 } else { d };
+            loop {
+                if top == 0 {
+                    return;
                 }
-                let (a, b, c) = (lv.anchor as usize, lv.i1 as usize, i2 as usize);
-                w.xy = [lv.xy[a], lv.xy[b], lv.xy[c]];
-                w.uv = [lv.uv[a], lv.uv[b], lv.uv[c]];
-                w.rgb = [lv.rgb[a], lv.rgb[b], lv.rgb[c]];
-                w.z = [lv.z[a], lv.z[b], lv.z[c]];
-                lv.i1 = i2;
-                lv.k += 1;
-                d = top;
-                break;
+                let lv = unsafe { &mut *split_level(w, top - 1) };
+                if (lv.k as usize) + 1 < lv.pn as usize {
+                    let mut i2 = lv.i1 + 1;
+                    if i2 >= lv.pn {
+                        i2 -= lv.pn;
+                    }
+                    let (a, b, c) = (lv.anchor as usize, lv.i1 as usize, i2 as usize);
+                    w.xy = [lv.xy[a], lv.xy[b], lv.xy[c]];
+                    w.uv = [lv.uv[a], lv.uv[b], lv.uv[c]];
+                    w.rgb = [lv.rgb[a], lv.rgb[b], lv.rgb[c]];
+                    w.z = [lv.z[a], lv.z[b], lv.z[c]];
+                    lv.i1 = i2;
+                    lv.k += 1;
+                    d = top;
+                    break;
+                }
+                top -= 1;
             }
-            top -= 1;
         }
     }
 }
@@ -30729,10 +30701,10 @@ unsafe fn push_tri_gpu_split(
         mat,
         texture_backdrop,
     };
-    // Already on a scratchpad stack (none of today's callers are), `run` walks
+    // Already on a scratchpad stack (none of today's callers are), `call` walks
     // on it rather than nesting a second one over the same bytes.
     let context = core::ptr::addr_of_mut!(call).cast::<u8>();
-    SplitStack::run(|| split_walk_entry(context));
+    SplitStack::call::<SplitWalk>(context);
     i = 0;
     while i < SPLIT_GUARD_WORDS {
         if guard.add(i).read() != SPLIT_GUARD ^ i as u32 {

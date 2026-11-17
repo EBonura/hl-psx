@@ -25,3 +25,8 @@ hl_psx::tri_fits_gpu=psx_goldsrc::emit::words::tri_fits_gpu
 hl_psx::projected_soa_get=psx_goldsrc::emit::words::projected_soa_get
 hl_psx::projected_soa_set=psx_goldsrc::emit::words::projected_soa_set
 hl_psx::affine_heatmap_color=psx_goldsrc::emit::words::affine_heatmap_color
+hl_psx::dot12=psx_goldsrc::emit::words::dot12
+hl_psx::brush_angles_q8=psx_goldsrc::emit::words::brush_angles_q8
+hl_psx::platrot_world_to_local=psx_goldsrc::emit::words::platrot_world_to_local
+# the split walk is a StackEntry run by ScratchpadStack::call (no closure, no shim)
+hl_psx::split_walk_entry=<hl_psx::SplitWalk as psx_rt::scratchpad::StackEntry>::enter
