@@ -10,7 +10,7 @@ max_ticks = 5900
 # Bound to the build these journeys were written against (SIM_NOW is the map's tick counter):
 # rebind.sh rewrites it from a link map.
 [addr]
-SIM_NOW = 0x801e9cec
+SIM_NOW = 0x801e9d2c
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
