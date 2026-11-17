@@ -11,3 +11,17 @@ hl_psx::emit_soft_cell::{closure#5} @hl_psx=psx_goldsrc::emit::emit_soft_cell::<
 <core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<hl_psx::emit_soft_cell::{closure#2}> @hl_psx=<core::slice::iter::Iter<&psx_goldsrc::render::CVert> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit>::{closure#2}> @hl_psx
 hl_psx::soft_cell_mid=psx_goldsrc::emit::soft_cell_mid
 hl_psx::warp_cell_edge_over=psx_goldsrc::emit::warp_cell_edge_over
+# psx_goldsrc::emit::words took 13 pure helpers (B1 batch A)
+hl_psx::pack_rgb_word=psx_goldsrc::emit::words::pack_rgb_word
+hl_psx::unpack_rgb_word=psx_goldsrc::emit::words::unpack_rgb_word
+hl_psx::pack_vertex_word=psx_goldsrc::emit::words::pack_vertex_word
+hl_psx::uv_word=psx_goldsrc::emit::words::uv_word
+hl_psx::uv_word_pair_i32=psx_goldsrc::emit::words::uv_word_pair_i32
+hl_psx::average_packed_bytes=psx_goldsrc::emit::words::average_packed_bytes
+hl_psx::culled=psx_goldsrc::emit::words::culled
+hl_psx::culled_soft=psx_goldsrc::emit::words::culled_soft
+hl_psx::point_in_tri=psx_goldsrc::emit::words::point_in_tri
+hl_psx::tri_fits_gpu=psx_goldsrc::emit::words::tri_fits_gpu
+hl_psx::projected_soa_get=psx_goldsrc::emit::words::projected_soa_get
+hl_psx::projected_soa_set=psx_goldsrc::emit::words::projected_soa_set
+hl_psx::affine_heatmap_color=psx_goldsrc::emit::words::affine_heatmap_color

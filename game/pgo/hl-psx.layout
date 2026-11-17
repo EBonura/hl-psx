@@ -1161,7 +1161,7 @@ w 279:2501 280:2501 281:2501 282:2501 283:2501 284:2501 285:2501 286:2501 287:25
 w 295:2501 296:2501 297:2501 298:2501 299:2501 300:2501 301:2501 302:2501 303:2501 304:2501 305:2501 306:2501 307:2501 308:2501 309:2501 310:2501
 w 311:2501 312:2501 313:2501 314:2501 315:2501 316:2501 317:2501 318:2501 319:2501 320:2501 321:2501
 c 2501 313 hl_psx::emit_residue_children
-c 10065 125 hl_psx::tri_fits_gpu
+c 10065 125 psx_goldsrc::emit::words::tri_fits_gpu
 c 7503 280,285,290 hl_psx::try_emit_native_residue::{closure#2} @hl_psx
 f eeeb772c47b63dc7 235 hl_psx::emit_affine_quad_child
 w 0:4496 1:4496 2:4496 3:4496 4:4496 5:4496 6:4496 7:4496 8:4496 9:4496 10:4496 11:4496 12:4496 13:4496 14:4496 15:4496
@@ -5056,7 +5056,7 @@ w 156:437 157:437 158:437 159:437 160:437 161:437 162:437 163:437 164:437 165:43
 c 10622 20,24,59,63,71,75,102,106 <hl_psx::map::Map>::waypoint
 c 437 138 hl_psx::seg_len
 c 874 92,121 hl_psx::tram_seg_heading_q28
-f dcc35ba658e32e32 55 hl_psx::tri_fits_gpu
+f dcc35ba658e32e32 55 psx_goldsrc::emit::words::tri_fits_gpu
 w 0:70765 1:70765 2:70765 3:70765 4:70765 5:70765 6:70765 7:70765 8:70765 9:70765 10:70765 11:70765 12:70765 13:70765 14:70765 15:70765
 w 16:70765 17:70765 18:60587 19:70765 20:70765 21:70765 22:70765 23:70765 24:70765 25:70765 26:70765 27:70765 28:70765 29:70765 30:70765 31:70765
 w 32:70765 33:70765 34:70765 35:70765 36:70765 37:70765 38:70765 39:70765 40:70765 41:38786 42:38786 43:40653 44:40653 45:47451 46:47451 47:42642
@@ -5180,7 +5180,7 @@ c 38547 246 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator
 c 37803 252 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#3}> @hl_psx
 c 3408 138 hl_psx::cache_projected_vert
 c 6443 491 hl_psx::emit_residue_children
-c 60700 196 hl_psx::tri_fits_gpu
+c 60700 196 psx_goldsrc::emit::words::tri_fits_gpu
 c 40105 282,289,297 hl_psx::try_emit_native_residue::{closure#1} @hl_psx
 c 19329 461,466,471 hl_psx::try_emit_native_residue::{closure#2} @hl_psx
 f a0348bbfa45f7d05 73 hl_psx::try_emit_native_residue::{closure#1} @hl_psx

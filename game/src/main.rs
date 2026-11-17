@@ -38,6 +38,12 @@ mod overlay;
 use overlay::{fx_quad_flat, fx_quad_textured_material, fx_tri_flat_blended, OverlayTail};
 use psx_goldsrc::driver;
 #[cfg(feature = "performance-telemetry")]
+use psx_goldsrc::emit::words::affine_heatmap_color;
+use psx_goldsrc::emit::words::{
+    average_packed_bytes, culled, culled_soft, pack_rgb_word, pack_vertex_word, point_in_tri,
+    projected_soa_get, projected_soa_set, tri_fits_gpu, unpack_rgb_word, uv_word, uv_word_pair_i32,
+};
+#[cfg(feature = "performance-telemetry")]
 use psx_goldsrc::emit::AFFINE_ERROR_BUCKETS;
 use psx_goldsrc::emit::{
     self, CULL, SOFT_CACHED_SCREEN, SOFT_SPLIT_TARGET_SPAN_PX, WORLD_AFFINE_SPLIT_TRIS,
@@ -2592,23 +2598,6 @@ static mut SCRATCH_Z: [u16; MAX_VERTS] = [0; MAX_VERTS];
 // This remains one contiguous word array because map streaming temporarily
 // aliases its head as the old->compact u16 vertex remap.
 static mut MODEL_SCRATCH: [u32; MODEL_PROJECTED_WORDS] = [0; MODEL_PROJECTED_WORDS];
-
-#[inline(always)]
-unsafe fn projected_soa_get(xy: *const u32, z: *const u16, i: usize) -> Projected {
-    let packed = xy.add(i).read();
-    Projected {
-        sx: packed as u16 as i16,
-        sy: (packed >> 16) as u16 as i16,
-        sz: z.add(i).read(),
-    }
-}
-
-#[inline(always)]
-unsafe fn projected_soa_set(xy: *mut u32, z: *mut u16, i: usize, p: Projected) {
-    xy.add(i)
-        .write((p.sx as u16 as u32) | ((p.sy as u16 as u32) << 16));
-    z.add(i).write(p.sz);
-}
 
 #[inline(always)]
 unsafe fn scratch_get(i: usize) -> Projected {
@@ -14825,17 +14814,6 @@ unsafe fn init_logic_state(m: &Map, nlogic: usize, nents: usize, now: u16) {
     }
 }
 
-/// Cull when the screen triangle isn't front-facing (area <= 0). Matches the
-/// cook's reversed winding. 32-bit cross: exact ONLY for GTE-range coords
-/// (|x|,|y| <= 1023) -- the fast/quad paths. Soft-projected coords use
-/// `culled_soft`.
-#[inline]
-fn culled(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
-    // >= 0 (was <= 0): the det -1 camera (view_rotation) flips the projected
-    // winding, so a front face now has cross >= 0.
-    (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1) >= 0
-}
-
 /// GTE backface test for dense indexed model loops. The SDK sequence includes
 /// the input/result gaps measured on real PS1 hardware, avoiding the old
 /// stale-MAC0 wall-drop failure while replacing two serialized CPU multiplies.
@@ -14846,30 +14824,6 @@ fn culled_gte(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
         (b.0 as i16, b.1 as i16),
         (c.0 as i16, c.1 as i16),
     ]) >= 0
-}
-
-/// Backface cull for TRUE soft-projected coords (near-grazing tris reach tens
-/// of thousands of px). 64-bit cross: exact sign at any magnitude. The two
-/// prior attempts both broke here: raw i32 overflowed (random culls of visible
-/// floors/walls), and `>>4` pre-scaling quantized the two on-screen verts of a
-/// thin near-plane sliver into the SAME cell (cross == 0 -> culled), eating
-/// the floor strip at the player's feet -- the "black wedges" bug. A 32x32->64
-/// multiply is one MIPS `mult`; only i64 DIVISION is the known miscompile.
-#[inline]
-fn culled_soft(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
-    let cr = Wide::mul(b.0 - a.0, c.1 - a.1).mul_sub(c.0 - a.0, b.1 - a.1);
-    !cr.is_negative() // >= 0 (was <= 0): det -1 camera flips the projected winding
-}
-
-/// DEBUG: is screen point `p` inside triangle (a,b,c)? (winding-agnostic)
-fn point_in_tri(p: (i32, i32), a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> bool {
-    let s = |u: (i32, i32), v: (i32, i32)| (v.0 - u.0) * (p.1 - u.1) - (v.1 - u.1) * (p.0 - u.0);
-    let d1 = s(a, b);
-    let d2 = s(b, c);
-    let d3 = s(c, a);
-    let neg = d1 < 0 || d2 < 0 || d3 < 0;
-    let pos = d1 > 0 || d2 > 0 || d3 > 0;
-    !(neg && pos)
 }
 
 /// DEBUG: record world tri `tt` if it contains the screen centre and is nearest.
@@ -27104,16 +27058,6 @@ unsafe fn proj_submodel_vert(m: &Map, i: usize, token: u16) {
 }
 
 #[inline]
-const fn uv_word(uv: (u8, u8)) -> u16 {
-    (uv.0 as u16) | ((uv.1 as u16) << 8)
-}
-
-#[inline]
-const fn uv_word_pair_i32(word: u16) -> (i32, i32) {
-    ((word & 0xff) as i32, ((word >> 8) & 0xff) as i32)
-}
-
-#[inline]
 unsafe fn cached_world_uv_words(m: &Map, tri_index: usize) -> [u16; 3] {
     m.tri_uv_words(tri_index)
 }
@@ -28811,39 +28755,6 @@ unsafe fn update_flashlight_reach(m: &Map, eye: [i32; 3], rot: &Mat3I16) {
     }
 }
 
-#[inline(always)]
-const fn pack_rgb_word(rgb: (u8, u8, u8)) -> u32 {
-    rgb.0 as u32 | ((rgb.1 as u32) << 8) | ((rgb.2 as u32) << 16)
-}
-
-#[inline(always)]
-const fn unpack_rgb_word(rgb: u32) -> (u8, u8, u8) {
-    (rgb as u8, (rgb >> 8) as u8, (rgb >> 16) as u8)
-}
-
-#[inline(always)]
-const fn pack_vertex_word(x: i16, y: i16) -> u32 {
-    x as u16 as u32 | ((y as u16 as u32) << 16)
-}
-
-#[cfg(feature = "performance-telemetry")]
-#[inline(always)]
-fn affine_heatmap_color(error_q8: u32) -> (u8, u8, u8) {
-    // Blue/green is below the leave threshold, yellow approaches the split
-    // threshold, and red/magenta exposes severe residual error.
-    if error_q8 <= 2 * 256 {
-        (24, 96u8.saturating_add((error_q8 / 8) as u8), 255)
-    } else if error_q8 <= 4 * 256 {
-        let t = ((error_q8 - 2 * 256) >> 2).min(127) as u8;
-        (t.saturating_mul(2), 255, 32)
-    } else if error_q8 <= 8 * 256 {
-        let t = ((error_q8 - 4 * 256) >> 4).min(255) as u8;
-        (255, 255u8.saturating_sub(t), 16)
-    } else {
-        (255, 0, 160)
-    }
-}
-
 #[cfg(feature = "performance-telemetry")]
 #[inline(never)]
 unsafe fn push_affine_heatmap_tri(
@@ -29661,11 +29572,6 @@ struct AffineVertex {
 const _: () = assert!(
     AFFINE_WORKSPACE_SCRATCH_OFFSET + 5 * core::mem::size_of::<AffineVertex>() <= scratchpad::SIZE
 );
-
-#[inline(always)]
-const fn average_packed_bytes(a: u32, b: u32, lane_mask: u32) -> u32 {
-    (a & b) + (((a ^ b) & lane_mask) >> 1)
-}
 
 #[inline(always)]
 fn affine_midpoint_unprojected(va: AffineVertex, vb: AffineVertex) -> AffineVertex {
@@ -30517,23 +30423,6 @@ unsafe fn emit_proj_fast(
     }
     // All-behind-camera counts as handled (nothing to draw); otherwise straddler.
     pa.sz == 0 && pb.sz == 0 && pc.sz == 0
-}
-
-/// The GPU rejects primitives wider than 1023 px or taller than 511 px
-/// outright (silicon, and PSoXide models it). Grazing floor views project
-/// in-clamp-range triangles 700+ px tall; pushed raw they vanish wholesale
-/// (the hardware "missing polygon" holes).
-#[inline]
-fn tri_fits_gpu(pa: &Projected, pb: &Projected, pc: &Projected) -> bool {
-    let (min_x, max_x) = (
-        (pa.sx).min(pb.sx).min(pc.sx) as i32,
-        (pa.sx).max(pb.sx).max(pc.sx) as i32,
-    );
-    let (min_y, max_y) = (
-        (pa.sy).min(pb.sy).min(pc.sy) as i32,
-        (pa.sy).max(pb.sy).max(pc.sy) as i32,
-    );
-    max_x - min_x <= 1023 && max_y - min_y <= 511
 }
 
 /// `tri_fits_gpu` for packed screen coordinates.
