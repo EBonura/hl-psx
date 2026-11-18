@@ -142,7 +142,24 @@ fn play_movie(skip: &mut Skip, limit: u32) {
     report(&outcome);
 }
 
+/// The movie's outcome, published for tests that wait on game state (the cross-emulator smoke):
+/// `[stop, frames shown]`, stop 0 until the player returns, then 1 + the `Stop` (1 end,
+/// 2 skipped, 3 stall, 4 cd-error, 5 wedged, 6 setup). The game loads below this image, so the
+/// words survive the hand-off until the game reuses that memory.
+#[no_mangle]
+static mut INTRO_MOVIE: [u32; 2] = [0; 2];
+
 fn report(o: &player::Outcome) {
+    let code = match o.stop {
+        Stop::End => 1,
+        Stop::Skipped => 2,
+        Stop::Stall => 3,
+        Stop::CdError => 4,
+        Stop::Wedged => 5,
+        Stop::Setup => 6,
+    };
+    // SAFETY: single-threaded guest; written once, after the player returned.
+    unsafe { INTRO_MOVIE = [code, o.shown] };
     let stop = match o.stop {
         Stop::End => "end",
         Stop::Skipped => "skipped",

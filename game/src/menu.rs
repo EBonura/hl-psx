@@ -111,6 +111,13 @@ const CREDIT_LINES: [(&str, (u8, u8, u8)); 8] = [
     ("All rights to original creators", DIM),
 ];
 
+/// The menu as shown, published for tests that wait on game state (gate journeys and the
+/// cross-emulator smoke): `[screen, row]`, screen 0 outside the menu, else 1 + the `MenuScreen`
+/// (1 main, 2 chapters, 3 maps, 4 options), row the highlighted row of that screen. Written once
+/// per menu frame and on leaving the menu.
+#[no_mangle]
+static mut MENU_STATE: [u8; 2] = [0; 2];
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MenuScreen {
     Main,
@@ -1307,6 +1314,8 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
     crate::end_loading();
     loop {
         if let Some(room) = crate::segments::poll_control() {
+            // SAFETY: single-threaded guest.
+            unsafe { MENU_STATE = [0; 2] };
             return room;
         }
         // The backdrop first: the GPU spends most of a title frame filling it, and the
@@ -1317,6 +1326,16 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
         // next frame anyone shows is drawn over.
         driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
         draw_bg(shell.bg);
+        let row = match screen {
+            MenuScreen::Main => main_sel,
+            MenuScreen::Chapters => chapter_sel,
+            MenuScreen::Maps => map_sel,
+            MenuScreen::Options => options_sel,
+            MenuScreen::Debug => debug_sel,
+            _ => 0,
+        };
+        // SAFETY: single-threaded guest; only the menu writes this state.
+        unsafe { MENU_STATE = [screen as u8 + 1, row as u8] };
         let input = poll_menu_edges(&mut pad);
         if input.up || input.down {
             play_menu_move();
@@ -1335,6 +1354,8 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                             crate::reset_weaponboxes_for_new_game();
                             // No screen of our own here: play() overlays its
                             // loading strip on this very frame a moment later.
+                            // SAFETY: single-threaded guest.
+                            unsafe { MENU_STATE = [0; 2] };
                             return CHAPTER_ROOM[0] as usize;
                         }
                         1 => {
@@ -1346,7 +1367,11 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                         // Load game: the room comes from the card, and the
                         // restore is applied by play() after its normal setup.
                         3 => match crate::load_saved_room() {
-                            Some(room) => return room,
+                            Some(room) => {
+                                // SAFETY: single-threaded guest.
+                                unsafe { MENU_STATE = [0; 2] };
+                                return room;
+                            }
                             None => load_failed = true,
                         },
                         4 => screen = MenuScreen::Chapters,
@@ -1387,6 +1412,8 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                     let room = PLAY_ORDER[start + map_sel as usize] as usize;
                     if room < MAPS.len() {
                         play_menu_accept();
+                        // SAFETY: single-threaded guest.
+                        unsafe { MENU_STATE = [0; 2] };
                         return room;
                     }
                 }
@@ -1444,6 +1471,8 @@ pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
                     if let Some(row) = segment_selection.selected() {
                         if let Ok(room) = crate::segments::diagnostic_room(row) {
                             play_menu_accept();
+                            // SAFETY: single-threaded guest.
+                            unsafe { MENU_STATE = [0; 2] };
                             return room;
                         }
                     }
