@@ -64,12 +64,9 @@ smoke = ["tests/smoke-boot-play.toml", "tests/smoke-movie.toml"]
 
 # The source CI's checks (.github/workflows/source-ci.yml), then the fleet's load-delay scanner.
 # Left out, red on the pinned tree and never run by the old lane scripts (findings for the owner):
-# rustfmt on the game, hl-content, hl-logic-tests and hl-format crates; scripts/golden.sh check
-# (three local goldens differ from tests/golden-manifest.tsv).
-[[host]]
-name = "source-only"
-command = ["bash", "scripts/check-source-only.sh"]
-
+# scripts/check-source-only.sh refuses the committed tapes and card fixtures as tracked binaries
+# and two journeys over its 2 MiB limit; rustfmt on the game, hl-content, hl-logic-tests and
+# hl-format crates; scripts/golden.sh check (three local goldens differ from the manifest).
 [[host]]
 name = "no64"
 command = ["sh", "scripts/check-no64.sh"]
