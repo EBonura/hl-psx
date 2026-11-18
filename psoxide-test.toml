@@ -13,6 +13,9 @@ repository = "EBonura/hl-psx"
 name = "ship"
 out = "build/ship"
 commands = [
+  # The sample profile is rebound through the git blob it was collected from (psoxide-pgo
+  # rebind): the clean stage's depth-1 clone needs the history first.
+  ["sh", "-c", "if [ -f .git/shallow ]; then git fetch -q --unshallow origin; fi"],
   ["cargo", "hl-build", "build", "--half-life", "{input:half-life}"],
   # The gate reads a map row `hl_psx::SIM_NOW (.0)` as `(.0)`: list those statics by name.
   ["sh", "-c", "awk 'NF == 6 && $6 ~ /^[(][.][0-9]+[)]$/ {print $1, $5}' .hlpsx/hl-psx.map > {out}/symbols.txt"],
