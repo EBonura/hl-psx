@@ -4,19 +4,11 @@
 # orange on the way, and the blast on the wall costs the player health at this distance.
 name = "hl-weapons-rpg"
 title = "Half-Life: the RPG fires a rocket that follows the laser dot and blows up on the wall"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 30000
 
-# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
-# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
-[addr]
-PREV_WEAPON = 0x800cd9cc
-PREV_CLIP = 0x800cd9d4
-PREV_RESERVE = 0x800cd9d0
-PREV_HEALTH = 0x800cd9c8
-LAST_CORE = 0x800ce498
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100

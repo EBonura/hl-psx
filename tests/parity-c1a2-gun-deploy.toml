@@ -2,22 +2,14 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-parity-c1a2-gun-deploy"
 title = "Half-Life c1a2 security gun: the miniturret waits for its deploy clip after it first sees the player, then hits a standing player about once in five ticks until he is dead (retail oracle ref/tur1..tur5)"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 30000
 [card_fixture]
 path = "tests/cards/dev-c1a2-gunroom.mcd"
 sha256 = "97afedf11a83de7ecd8f571e64e51257a63653da22b8615963343a3349e4b34b"
-
-# Bound to the build this journey was written against.
-[addr]
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_YAW = 0x801d2d00
-SIM_NOW = 0x801e9d2c
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

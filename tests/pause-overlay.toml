@@ -5,14 +5,10 @@
 # directory.
 name = "hl-pause-overlay"
 title = "Half-Life: the pause menu over the live game, brightness live"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 4800
-
-# Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
-[addr]
-BRIGHTNESS = 0x800cf860
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"

@@ -2,19 +2,11 @@
 # Controller input only: no state is written, no map is forced.
 name = "dev-c1a2-arrive"
 title = "dev: fly from the c1a2 elevator to the exit, save at the c1a2a arrival"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 30000
-
-# Bound to the build this journey was written against.
-[addr]
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_YAW = 0x801d2d00
-SIM_NOW = 0x801e9d2c
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

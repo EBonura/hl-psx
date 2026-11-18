@@ -2,17 +2,11 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-chain-skill-hard"
 title = "Half-Life New Game on Hard: three changelevels of the tram ride keep Hard"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 20000
-
-# Bound to the build this journey was written against.
-[addr]
-SIM_NOW = 0x801e9d2c
-SKILL = 0x800cf878
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

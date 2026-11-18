@@ -2,36 +2,11 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-chain-new-game"
 title = "Half-Life New Game: tram ride, station, Anomalous Materials, the resonance cascade, c1a0c (lift, console scientist, retinal door, control room), Unforeseen Consequences' c1a1 (pipe room, two lasers, the glass window, the elevator shaft ladder) to the arrival in c1a1a"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 260000
-
-# Bound to the build this journey was written against.
-[addr]
-BEAM_RAND_END = 0x801c65f8
-ENT_ACTIVE = 0x800d63b0
-ENT_CACHE = 0x801eae7c
-ENT_PHASE = 0x801edb7c
-LOGIC_COUNTER = 0x801c69fc
-LOGIC_PLAYER_CLIP_AMMO = 0x800ca570
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_PITCH = 0x801e76ec
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_RESERVE_AMMO = 0x800ca584
-LOGIC_PLAYER_SUIT = 0x801d3b98
-LOGIC_PLAYER_VIEW_HEIGHT = 0x800ca580
-LOGIC_PLAYER_YAW = 0x801d2d00
-PLAYER_ON_GROUND = 0x801d2d0c
-PLAYER_WATER_LEVEL = 0x801e76f0
-PROP_HEALTH = 0x800d94cc
-PROP_KIND = 0x800d9beb
-PROP_POS = 0x801e9e44
-SIM_NOW = 0x801e9d2c
-TRAIN_OFF = 0x801f56f2
-VM_LIVE_WM = 0x800c8c40
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

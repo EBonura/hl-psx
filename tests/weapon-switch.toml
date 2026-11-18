@@ -13,9 +13,9 @@
 # must be published within 45 more; the old path needed up to 85 and fails the first switch.
 name = "hl-weapon-switch"
 title = "Half-Life: a weapon switch streams from the CD interrupt without dropping a sector"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 14000
 
 [[step]]

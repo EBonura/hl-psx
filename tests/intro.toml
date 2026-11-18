@@ -6,9 +6,9 @@
 # keeps its frames in its own report directory, outside the repository.
 name = "hl-intro"
 title = "Half-Life: startup movie, then the title menu"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 2800
 
 [[step]]

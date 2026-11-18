@@ -8,9 +8,9 @@
 # three frames to spare) and only has to sit inside the model streams.
 name = "hl-hazard-load"
 title = "Half-Life: the Hazard Course load keeps its loading strip alive"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 2000
 
 

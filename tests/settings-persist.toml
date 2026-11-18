@@ -5,16 +5,10 @@
 # Run with psoxide-gate and a fresh report directory.
 name = "hl-settings-persist"
 title = "Half-Life: options persist on the memory card"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 4200
-
-# Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
-[addr]
-MOVE_DEADZONE = 0x800cf86c
-LOOK_DEADZONE = 0x800cf868
-BRIGHTNESS = 0x800cf860
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"

@@ -5,16 +5,10 @@
 # proves the selector reaches the game on the shipping disc.
 name = "hl-skill-medium"
 title = "Half-Life: choose Medium on the New game row and start"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 14000
-
-# Bound to the build this journey was written against: scripts/bind-skill-addr.sh rewrites it.
-[addr]
-SKILL = 0x800cf878
-SIM_NOW = 0x801e9d2c
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"

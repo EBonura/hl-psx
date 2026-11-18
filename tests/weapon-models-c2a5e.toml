@@ -4,9 +4,9 @@
 # map's models are streamed, and 0xff when the model was dropped.
 name = "hl-weapon-models-c2a5e"
 title = "Half-Life: c2a5e keeps the tripmine and snark models resident"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 14000
 
 [[step]]

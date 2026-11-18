@@ -21,9 +21,9 @@
 
 name = "hl-hazard-panels"
 title = "Half-Life: the Hazard Course number panels light up"
-disc = ["dist/probe/hl-psx.cue"]
-symbols = [".hlpsx/probe/hl-psx.map"]
-pad = "analog"
+disc = "build/probe/hl-psx.cue"
+symbols = ["build/probe/hl-psx.map", "build/probe/symbols.txt"]
+pad = "dualshock"
 max_ticks = 6000
 
 [[step]]

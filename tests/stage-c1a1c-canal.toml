@@ -2,30 +2,14 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-stage-c1a1c-canal"
 title = "Half-Life c1a1c stage, lower canal: from the platform below the Lower Canal door, the crates, the swim west past the barnacles, the ladder, the first aid unit, the pocket door, the bullsquid and the crabs on the south platform, the second door and the corridor to the changelevel into c1a1d, ending with an @save at the real c1a1d arrival"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 120000
 [card_fixture]
 path = "tests/cards/c1a1c-canal.mcd"
 sha256 = "4ceb830bc673e36c6a706ffeb8e5370bb66ff19c5be58fbc9fe2a15afdc8e456"
-
-# Bound to the build this journey was written against.
-[addr]
-LOGIC_PLAYER_CLIP_AMMO = 0x800ca570
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_PITCH = 0x801e76ec
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_RESERVE_AMMO = 0x800ca584
-LOGIC_PLAYER_VIEW_HEIGHT = 0x800ca580
-LOGIC_PLAYER_YAW = 0x801d2d00
-PROP_HEALTH = 0x800d94cc
-PROP_KIND = 0x800d9beb
-PROP_POS = 0x801e9e44
-SIM_NOW = 0x801e9d2c
-VM_LIVE_WM = 0x800c8c40
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

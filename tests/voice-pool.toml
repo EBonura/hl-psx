@@ -1,19 +1,11 @@
 # Voice pool: the shotgun's second barrel is a banked sound on the bank's own voice (14), and a burst of pool sounds must not take that voice. Hsfx rotates its one-shot pool over voices 0..13 now (next_voice, the byte at STATE+2214 in this build, never reaches 14); with the old 15-voice pool the 15th sound of a burst cut the barrel's tail and the bank cut a pool sound in turn.
 name = "hl-voice-pool"
 title = "Half-Life: a pool-sound burst never takes the weapon bank's voice"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 30000
 
-# Bound to the build these journeys were written against (hud::PREV_* are the HUD's
-# last-drawn weapon, clip and reserve): tools/bind-weapon-addr.sh rewrites them from a link map.
-[addr]
-PREV_WEAPON = 0x800cd9cc
-PREV_CLIP = 0x800cd9d4
-PREV_RESERVE = 0x800cd9d0
-PREV_HEALTH = 0x800cd9c8
-LAST_CORE = 0x800ce498
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them (a disc without the movie ignores the second press)"
 wait = 100

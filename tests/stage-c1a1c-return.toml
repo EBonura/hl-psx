@@ -2,24 +2,14 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-stage-c1a1c-return"
 title = "Half-Life c1a1c stage: resume at the arrival from c1a1d, walk to the elevator (the touch door in the south passage, the call button, the inner button) and take it to c1a2"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 40000
 [card_fixture]
 path = "tests/cards/c1a1c-return.mcd"
 sha256 = "3fd1b3a413df99e3c5bfc90ae8c6f810e76b112da3744c6a10c290bb33eb12e4"
-
-# Bound to the build this journey was written against.
-[addr]
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_PITCH = 0x801e76ec
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_VIEW_HEIGHT = 0x800ca580
-LOGIC_PLAYER_YAW = 0x801d2d00
-SIM_NOW = 0x801e9d2c
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

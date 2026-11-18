@@ -2,9 +2,9 @@
 # built with the intro; see tests/intro.toml for why no frame is a golden.
 name = "hl-intro-skip-cross"
 title = "Half-Life: skip the startup movie with Cross, then the title menu"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 2200
 
 [[step]]

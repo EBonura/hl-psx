@@ -2,18 +2,11 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-chain-hazard"
 title = "Half-Life Hazard Course: title, Hazard Course row, t0a0 start corridor, doors td1 and td2, the observation hall, the catwalk, round the canal, the jump course and the duck course"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 30000
-
-# Bound to the build this journey was written against.
-[addr]
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_YAW = 0x801d2d00
-SIM_NOW = 0x801e9d2c
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

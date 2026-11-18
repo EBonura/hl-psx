@@ -2,9 +2,9 @@
 # diagnostic reset; this does not certify independent earned progression.
 name = "hl-segment-select"
 title = "Half-Life: Debug Segment select diagnostic launch"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 4900
 

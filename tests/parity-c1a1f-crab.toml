@@ -2,21 +2,11 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-parity-crab"
 title = "Half-Life c1a1f: the headcrab at (-436,80) that wakes as the player leaves the vent crawl walks at the reference speed (5.02 units per 0.1 s: about 150 units in 60 ticks, the port had 3.0 per move)"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 80000
-
-# Bound to the build this journey was written against.
-[addr]
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_YAW = 0x801d2d00
-PROP_HEALTH = 0x800d94cc
-PROP_POS = 0x801e9e44
-SIM_NOW = 0x801e9d2c
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

@@ -2,32 +2,14 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-stage-c1a2-part2"
 title = "Half-Life c1a2 stage, part 2: from the part 1 card, the ceiling panel, the corridor crabs, the crate stack, the ladder, the ledge above it, the hatch and the duct, ending hidden behind the broken vent cover with an @save"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 40000
 [card_fixture]
 path = "tests/cards/c1a2-part1.mcd"
 sha256 = "773f16fa888822b9094ef6a4d223afab9268386f5fc307be410f40ea19b4c941"
-
-# Bound to the build this journey was written against.
-[addr]
-ENT_ACTIVE = 0x800d63b0
-ENT_CACHE = 0x801eae7c
-LOGIC_PLAYER_CLIP_AMMO = 0x800ca570
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_PITCH = 0x801e76ec
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_RESERVE_AMMO = 0x800ca584
-LOGIC_PLAYER_VIEW_HEIGHT = 0x800ca580
-LOGIC_PLAYER_YAW = 0x801d2d00
-PROP_HEALTH = 0x800d94cc
-PROP_KIND = 0x800d9beb
-PROP_POS = 0x801e9e44
-SIM_NOW = 0x801e9d2c
-VM_LIVE_WM = 0x800c8c40
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

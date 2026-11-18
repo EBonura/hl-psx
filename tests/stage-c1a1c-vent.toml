@@ -2,25 +2,14 @@
 # Controller input only: no state is written, no map is forced.
 name = "hl-stage-c1a1c-vent"
 title = "Half-Life c1a1c stage: resume from the bridge approach save, cross the pipes to the vent box, draw the crowbar and break the vent cover"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 card_observe = true
 max_ticks = 60000
 [card_fixture]
 path = "tests/cards/c1a1c-bridge.mcd"
 sha256 = "8ba6c28d5d3ddee94ad6e8b7841c358ff67172df1a3e6c2a503c59cd7bb39b8c"
-
-# Bound to the build this journey was written against.
-[addr]
-ENT_ACTIVE = 0x800d63b0
-LOGIC_PLAYER_HEALTH = 0x800ca124
-LOGIC_PLAYER_POS = 0x801d2cf4
-LOGIC_PLAYER_YAW = 0x801d2d00
-PLAYER_ON_GROUND = 0x801d2d0c
-SIM_NOW = 0x801e9d2c
-VM_LIVE_WM = 0x800c8c40
-WORLD_ARENA = 0x800e5c38
 
 [[step]]
 label = "skip the studio splash and the startup movie, if the disc has them"

@@ -14,9 +14,9 @@
 # leg times out.
 name = "hl-unstick-vent"
 title = "Half-Life: a hull embedded in the c1a1b vent clip slab is released"
-disc = ["dist/probe/hl-psx.cue"]
-symbols = [".hlpsx/probe/hl-psx.map"]
-pad = "analog"
+disc = "build/probe/hl-psx.cue"
+symbols = ["build/probe/hl-psx.map", "build/probe/symbols.txt"]
+pad = "dualshock"
 max_ticks = 3000
 
 [[step]]

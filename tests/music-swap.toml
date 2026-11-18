@@ -12,15 +12,10 @@
 # log by tools/cdcheck, run by scratch/music-swap.sh next to this journey.
 name = "hl-music-swap"
 title = "Half-Life: a cached weapon swap parks the song for its bank read and plays it again"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 14000
-
-# Bound to the build by scripts/bind-weapon-addr.sh (hl_psx::CD_TRACK_* are split statics).
-[addr]
-CD_TRACK_CUR = 0x801c185c
-CD_TRACK_WANT = 0x801c677c
 
 [[step]]
 label = "skip the studio splash, then the startup movie, if the disc has them"

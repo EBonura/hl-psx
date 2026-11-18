@@ -3,9 +3,9 @@
 # report directory. The ordinary visual journey remains tests/journey.toml.
 name = "hl-save-repin"
 title = "Half-Life: Hazard Course save and cold load"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 7900
 
 [[step]]

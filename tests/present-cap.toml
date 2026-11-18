@@ -9,9 +9,9 @@
 # Needs the disc WITH the startup movie, like the tape.
 name = "hl-present-cap"
 title = "Half-Life: no display flip comes sooner than two VBlanks after the last during play"
-disc = ["dist/hl-psx.cue"]
-symbols = [".hlpsx/hl-psx.map"]
-pad = "analog"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt"]
+pad = "dualshock"
 max_ticks = 14000
 
 [[step]]
