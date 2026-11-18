@@ -1,0 +1,287 @@
+# Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
+# psoxide-test.toml with a reason, never by hand-editing these numbers).
+schema = 1
+blessed_commit = "6d1f8cd6238e4786210bb1a48c91d3456f44ae42"
+sdk_pin = "aaf06b0ffa5d3fbf0868e7e6c40f4f3999d695f6"
+
+[size.ship]
+text = 755836
+data = 56440
+bss = 1187164
+free = 6308
+
+[speed.c4a3]
+offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
+flips = [1012, 1012, 1012, 1012, 1012, 1011, 1010, 1008]
+work_per_frame = [1638264, 1636486, 1635775, 1635063, 1635480, 1635825, 1637298, 1639832]
+frame_work_p99 = [2801967, 2801967, 2801967, 2801967, 2801967, 2801967, 2801968, 2801968]
+vblanks = ["2:167,3:723,4:110,5:11", "2:167,3:725,4:108,5:11", "2:167,3:725,4:108,5:11", "2:167,3:725,4:108,5:11", "2:166,3:726,4:108,5:11", "2:163,3:728,4:108,5:11", "2:159,3:731,4:108,5:11", "2:153,3:734,4:109,5:11"]
+
+[journeys.chain-hazard]
+ticks = 7381
+open_loop = 7
+
+[journeys.chain-hazard-rung]
+ticks = 7484
+open_loop = 7
+
+[journeys.chain-new-game]
+ticks = 121256
+open_loop = 5
+
+[journeys.chain-skill-hard]
+ticks = 13044
+open_loop = 6
+
+[journeys.dev-c1a2a-arrival]
+ticks = 4564
+open_loop = 17
+
+[journeys.hazard-load]
+ticks = 1651
+open_loop = 26
+
+[journeys.hazard-panels]
+ticks = 2278
+open_loop = 9
+
+[journeys.hud-damage]
+ticks = 4397
+open_loop = 43
+
+[journeys.hud-history]
+ticks = 2133
+open_loop = 13
+
+[journeys.hud-interact]
+ticks = 3433
+open_loop = 18
+
+[journeys.hud-selection]
+ticks = 2501
+open_loop = 14
+
+[journeys.hud-weapons]
+ticks = 5961
+open_loop = 36
+
+[journeys.intro]
+ticks = 1347
+open_loop = 4
+
+[journeys.intro-skip]
+ticks = 899
+open_loop = 4
+
+[journeys.intro-skip-cross]
+ticks = 899
+open_loop = 4
+
+[journeys.journey]
+ticks = 4005
+open_loop = 14
+
+[journeys.music-swap]
+ticks = 2755
+open_loop = 14
+
+[journeys.parity-barnacle]
+ticks = 5492
+open_loop = 12
+
+[journeys.parity-c1a1b-exit-grate]
+ticks = 9891
+open_loop = 12
+
+[journeys.parity-c1a1b-grate-rise]
+ticks = 8960
+open_loop = 12
+
+[journeys.parity-c1a1c-vent-bars]
+ticks = 3426
+open_loop = 6
+
+[journeys.parity-c1a1f-carry]
+ticks = 8321
+open_loop = 12
+
+[journeys.parity-c1a1f-crab]
+ticks = 4253
+open_loop = 12
+
+[journeys.parity-c1a1f-tower]
+ticks = 4076
+open_loop = 12
+
+[journeys.parity-c1a2-gun-crate]
+ticks = 2062
+open_loop = 6
+
+[journeys.parity-c1a2-gun-deploy]
+ticks = 3017
+open_loop = 6
+
+[journeys.parity-c1a2-pressure-crate]
+ticks = 4406
+open_loop = 6
+
+[journeys.pause-overlay]
+ticks = 3445
+open_loop = 15
+
+[journeys.present-cap]
+ticks = 5842
+open_loop = 0
+
+[journeys.save-repin]
+ticks = 5169
+open_loop = 18
+
+[journeys.segment-select]
+ticks = 3046
+open_loop = 19
+
+[journeys.settings-persist]
+ticks = 2738
+open_loop = 21
+
+[journeys.skill-easy]
+ticks = 1468
+open_loop = 7
+
+[journeys.skill-hard]
+ticks = 1468
+open_loop = 7
+
+[journeys.skill-medium]
+ticks = 1440
+open_loop = 6
+
+[journeys.skill-save]
+ticks = 5017
+open_loop = 18
+
+[journeys.smoke-boot-play]
+ticks = 2866
+open_loop = 0
+
+[journeys.smoke-movie]
+ticks = 789
+open_loop = 0
+
+[journeys.stage-c1a1c-canal]
+ticks = 8406
+open_loop = 10
+
+[journeys.stage-c1a1c-mid]
+ticks = 5129
+open_loop = 10
+
+[journeys.stage-c1a1c-return]
+ticks = 4640
+open_loop = 6
+
+[journeys.stage-c1a1c-vent]
+ticks = 3141
+open_loop = 6
+
+[journeys.stage-c1a1d]
+ticks = 8064
+open_loop = 10
+
+[journeys.stage-c1a2-part1]
+ticks = 14903
+open_loop = 16
+
+[journeys.stage-c1a2-part2]
+ticks = 7173
+open_loop = 10
+
+[journeys.stage-c1a2-part3]
+ticks = 5375
+open_loop = 10
+
+[journeys.unstick-vent]
+ticks = 987
+open_loop = 1
+
+[journeys.voice-pool]
+ticks = 2756
+open_loop = 14
+
+[journeys.weapon-models-c2a5e]
+ticks = 2353
+open_loop = 11
+
+[journeys.weapon-models-c3a2d]
+ticks = 2301
+open_loop = 11
+
+[journeys.weapon-switch]
+ticks = 2830
+open_loop = 20
+
+[journeys.weapons-357]
+ticks = 2366
+open_loop = 14
+
+[journeys.weapons-crossbow]
+ticks = 2746
+open_loop = 14
+
+[journeys.weapons-crowbar]
+ticks = 3583
+open_loop = 15
+
+[journeys.weapons-egon]
+ticks = 3198
+open_loop = 17
+
+[journeys.weapons-gauss]
+ticks = 3058
+open_loop = 16
+
+[journeys.weapons-glock]
+ticks = 2316
+open_loop = 15
+
+[journeys.weapons-grenade]
+ticks = 3327
+open_loop = 16
+
+[journeys.weapons-hornet]
+ticks = 3227
+open_loop = 15
+
+[journeys.weapons-mp5]
+ticks = 2553
+open_loop = 15
+
+[journeys.weapons-rpg]
+ticks = 2831
+open_loop = 14
+
+[journeys.weapons-satchel]
+ticks = 3375
+open_loop = 18
+
+[journeys.weapons-shotgun]
+ticks = 2749
+open_loop = 16
+
+[journeys.weapons-snark]
+ticks = 3570
+open_loop = 18
+
+[journeys.weapons-tripmine]
+ticks = 3607
+open_loop = 16
+
+[journeys.weapons-tripmine-floor]
+ticks = 3531
+open_loop = 16
+
+[host]
+
+[maps]
+ship = "3c10192860f8f1050ec4d016f1371520dde077021127768503da02eb22df4ecd"
