@@ -41,14 +41,16 @@ map = "hl-psx.map"
 build = "ship"
 
 # The anchored c4a3 window (land-d559 w11, c1b-hl/anc.sh): from the title, Start skips the splash
-# and the movie, the menu enters play-order map 94 (scripts/mapnav.sh), and the window runs from
-# the map's simulation tick 300 to tick 1300. The tape is that route transcribed onto the guest's
-# own pad polls; the window is found by game state.
+# and the movie, the menu enters play-order map 94 (scripts/mapnav.sh, presses held 8 ticks: at
+# 4 ticks a press can fall between two pad polls at this SDK), and the window runs from the map's
+# simulation tick 300 to tick 1300. The tape is that route transcribed onto the guest's own pad
+# polls. `from` is a range: before the game loads, the intro program's data at SIM_NOW's address
+# counts 0..294 and holds 2081, so ">= 300" would hold during the intro.
 [[speed]]
 name = "c4a3"
 build = "ship"
 tape = "tests/pgo/c4a3.pxtape"
-from = { kind = "ram", sym = "hl_psx::SIM_NOW (.0)", size = 2, op = "ge", value = 300 }
+from = { kind = "ram", sym = "hl_psx::SIM_NOW (.0)", size = 2, op = "between", value = 300, value_hi = 400 }
 until = { kind = "ram", sym = "hl_psx::SIM_NOW (.0)", size = 2, op = "ge", value = 1300 }
 max_polls = 3400
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
