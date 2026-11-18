@@ -1,0 +1,139 @@
+# Half-Life's test description for psoxide-test (the SDK's harness, tools/psoxide-test).
+# It declares what to build and check; the harness decides how. Baseline: psoxide-test.baseline.toml.
+# Counter-Strike (EBonura/cs-psx) is the same codebase and keeps the same file, stage for stage.
+schema = 1
+name = "Half-Life"
+repository = "EBonura/hl-psx"
+
+# The shipping disc: the full cook from the original game files (the startup movie through
+# ffmpeg), the profiled link with the committed layout, the intro stage, the pack. `cargo hl-build
+# build` cooks every time (the cook has no cache of its own), so this build also re-cooks;
+# journeys and the harness files stay out of its key.
+[[build]]
+name = "ship"
+out = "build/ship"
+commands = [
+  ["cargo", "hl-build", "build", "--half-life", "{input:half-life}"],
+  # The gate reads a map row `hl_psx::SIM_NOW (.0)` as `(.0)`: list those statics by name.
+  ["sh", "-c", "awk 'NF == 6 && $6 ~ /^[(][.][0-9]+[)]$/ {print $1, $5}' .hlpsx/hl-psx.map > {out}/symbols.txt"],
+]
+collect = { "hl-psx.bin" = "dist/hl-psx.bin", "hl-psx.cue" = "dist/hl-psx.cue", "hl-psx.exe" = "game/target/mipsel-sony-psx/release/hl-psx.exe", "hl-psx.map" = ".hlpsx/hl-psx.map", "hl-intro.map" = ".hlpsx/intro/hl-intro.map" }
+disc = "hl-psx.cue"
+map = "hl-psx.map"
+
+# The probe disc (scripts/gate.sh's): the interaction probe from tests/probes/gate.txt, no intro,
+# rooms t0a0b (98) and c1a1b (14); the journeys in tests/probe-journeys.txt play it. It runs
+# after the ship build: it rewrites dist/ and the link map, which the ship build collected first.
+[[build]]
+name = "probe"
+out = "build/probe"
+commands = [
+  ["cargo", "hl-build", "pack", "--no-intro", "--features", "interaction-probe", "--half-life", "{input:half-life}"],
+  ["sh", "-c", "awk 'NF == 6 && $6 ~ /^[(][.][0-9]+[)]$/ {print $1, $5}' .hlpsx/hl-psx.map > {out}/symbols.txt"],
+]
+env = { HLPSX_PROBE = "tests/probes/gate.txt", HLPSX_BENCH_MAPS = "98,14" }
+collect = { "hl-psx.bin" = "dist/hl-psx.bin", "hl-psx.cue" = "dist/hl-psx.cue", "hl-psx.map" = ".hlpsx/hl-psx.map" }
+disc = "hl-psx.cue"
+map = "hl-psx.map"
+
+[[size]]
+build = "ship"
+
+# The anchored c4a3 window (land-d559 w11, c1b-hl/anc.sh): from the title, Start skips the splash
+# and the movie, the menu enters play-order map 94 (scripts/mapnav.sh), and the window runs from
+# the map's simulation tick 300 to tick 1300. The tape is that route transcribed onto the guest's
+# own pad polls; the window is found by game state.
+[[speed]]
+name = "c4a3"
+build = "ship"
+tape = "tests/pgo/c4a3.pxtape"
+from = { kind = "ram", sym = "hl_psx::SIM_NOW (.0)", size = 2, op = "ge", value = 300 }
+until = { kind = "ram", sym = "hl_psx::SIM_NOW (.0)", size = 2, op = "ge", value = 1300 }
+max_polls = 3400
+offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
+launch_args = ["--embedded-playtest", "--no-memcard"]
+
+[journeys]
+files = "tests/*.toml"
+precheck = ["smoke-boot-play", "journey"]
+
+# The smoke plays the shipping disc: its state words (INTRO_MOVIE, MENU_STATE, SIM_NOW) ship.
+[cross]
+smoke = ["tests/smoke-boot-play.toml"]
+
+# The source CI's checks (.github/workflows/source-ci.yml), then the fleet's load-delay scanner.
+# Left out, red on the pinned tree and never run by the old lane scripts (findings for the owner):
+# rustfmt on the game, hl-content, hl-logic-tests and hl-format crates; scripts/golden.sh check
+# (three local goldens differ from tests/golden-manifest.tsv).
+[[host]]
+name = "source-only"
+command = ["bash", "scripts/check-source-only.sh"]
+
+[[host]]
+name = "no64"
+command = ["sh", "scripts/check-no64.sh"]
+
+[[host]]
+name = "fmt-builder"
+command = ["cargo", "fmt", "--manifest-path", "host/hl-build/Cargo.toml", "--package", "hl-psx-build", "--", "--check"]
+
+[[host]]
+name = "fmt-bsp"
+command = ["cargo", "fmt", "--manifest-path", "host/hl-bsp/Cargo.toml", "--package", "hl-bsp", "--", "--check"]
+
+[[host]]
+name = "fmt-intro-cook"
+command = ["cargo", "fmt", "--manifest-path", "host/hl-intro-cook/Cargo.toml", "--package", "hl-intro-cook", "--", "--check"]
+
+[[host]]
+name = "fmt-intro"
+command = ["cargo", "fmt", "--manifest-path", "intro/Cargo.toml", "--package", "hl-intro", "--", "--check"]
+
+[[host]]
+name = "fmt-census"
+command = ["cargo", "fmt", "--manifest-path", "host/hl-census/Cargo.toml", "--package", "hl-census", "--", "--check"]
+
+[[host]]
+name = "test-builder"
+command = ["cargo", "test", "--manifest-path", "host/hl-build/Cargo.toml", "--locked"]
+
+[[host]]
+name = "test-bsp"
+command = ["cargo", "test", "--manifest-path", "host/hl-bsp/Cargo.toml", "--locked"]
+
+[[host]]
+name = "test-content"
+command = ["cargo", "test", "--manifest-path", "host/hl-content/Cargo.toml", "--locked"]
+
+[[host]]
+name = "test-intro-cook"
+command = ["cargo", "test", "--manifest-path", "host/hl-intro-cook/Cargo.toml", "--locked"]
+
+[[host]]
+name = "test-census"
+command = ["cargo", "test", "--manifest-path", "host/hl-census/Cargo.toml", "--locked"]
+
+[[host]]
+name = "test-logic"
+command = ["cargo", "test", "--manifest-path", "host/hl-logic-tests/Cargo.toml", "--locked"]
+
+[[host]]
+name = "test-format"
+command = ["cargo", "test", "--manifest-path", "shared/hl-format/Cargo.toml"]
+
+# Load-delay hazards in guest asm (fleet rule since SDK 580daa02), with the pin's own scanner.
+[[host]]
+name = "check-mfc0"
+command = ["cargo", "run", "-q", "--release", "--locked", "--manifest-path", ".psoxide/tools/psoxide-hazard/Cargo.toml", "--bin", "check-mfc0", "--", "game", "intro", "host", "shared"]
+
+# The clone cooks from the original files like the working build (no cook store is seeded). The
+# intro's bytes depend on its stage path (HLPSX_INTRO_STAGE, host/hl-build/intro.rs): the working
+# build and the clone take it from the same environment.
+[clean]
+build = "ship"
+seed = [".psoxide"]
+compare = ["hl-psx.bin", "hl-psx.cue", "hl-psx.exe"]
+
+[[install]]
+build = "ship"
+name = "Half-Life (hl-psx)"
