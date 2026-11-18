@@ -1,43 +1,28 @@
-# Cross-emulator smoke (psoxide-test [cross]) on the shipping disc: the intro program plays the
-# startup movie to its end, the game boots to the title, the cursor moves to Hazard Course and its
-# map list opens, the first map loads, the simulation runs, and a jump moves the player. Closed
+# Cross-emulator smoke (psoxide-test [cross]) on the shipping disc: the intro program's movie
+# player returns (tests/smoke-movie.toml judges the movie itself), the game boots to the title,
+# the cursor moves to Hazard Course and its map list opens, the first map loads, the simulation
+# runs, and a jump moves the player. Closed
 # loop only: every press is held until the game's own state says it took, every wait ends on game
 # state, every checkpoint reads RAM. The same file runs on PSoXide (the gate), PCSX-ReARMed and
 # PCSX-Redux; the harness swaps the pad for each run of [cross] pads. Counter-Strike's smoke has
 # the same shape (it has no movie; its menu step opens Options and backs out).
 # INTRO_MOVIE (the intro program's map): +0 how the movie ended (0 still playing, 1 end,
-#   2 skipped, 3 stall, 4 cd-error, 5 wedged, 6 setup), +4 frames shown. A movie that stalls on an
-#   emulator ends early with few frames: the "movie" checkpoint fails and names it.
+#   2 skipped, 3 stall, 4 cd-error, 5 wedged, 6 setup), +4 frames shown.
 # MENU_STATE: +0 screen (0 outside the menu, 1 main, 3 maps), +1 highlighted row.
 # WORLD_ARENA +0 holds the cooked map's magic (0x4B4D5348) once a map is resident, +4 the map's
-#   identity (8690 for t0a0). The movie has 150 frames (host/hl-intro-cook).
+#   identity (8690 for t0a0).
 # SIM_NOW: the map's simulation tick. LOGIC_PLAYER_POS +4: the player's height; at the t0a0 spawn
 #   it rests at -12 and a jump lifts it to about 21.
 name = "hl-smoke"
-title = "Half-Life smoke: the movie plays, title, a menu, a load, in play, input moves the game"
+title = "Half-Life smoke: title, a menu, a load, in play, input moves the game"
 disc = "build/ship/hl-psx.cue"
 symbols = ["build/ship/hl-psx.map", "build/ship/symbols.txt", "build/ship/hl-intro.map"]
 pad = "dualshock"
 
 [[step]]
-label = "the startup movie plays to its end"
+label = "the intro program's movie player returns (smoke-movie.toml judges how)"
 wait_until = { kind = "ram", sym = "INTRO_MOVIE", offset = 0, op = "ne", value = 0 }
 timeout = 4000
-
-[[step]]
-checkpoint = "movie"
-golden = false
-[[step.assert]]
-kind = "ram"
-sym = "INTRO_MOVIE"
-offset = 0
-value = 1
-[[step.assert]]
-kind = "ram"
-sym = "INTRO_MOVIE"
-offset = 4
-op = "ge"
-value = 150
 
 [[step]]
 label = "boot to the title"

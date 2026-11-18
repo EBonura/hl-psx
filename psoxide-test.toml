@@ -56,11 +56,11 @@ launch_args = ["--embedded-playtest", "--no-memcard"]
 
 [journeys]
 files = "tests/*.toml"
-precheck = ["smoke-boot-play", "journey"]
+precheck = ["smoke-boot-play", "smoke-movie", "journey"]
 
 # The smoke plays the shipping disc: its state words (INTRO_MOVIE, MENU_STATE, SIM_NOW) ship.
 [cross]
-smoke = ["tests/smoke-boot-play.toml"]
+smoke = ["tests/smoke-boot-play.toml", "tests/smoke-movie.toml"]
 
 # The source CI's checks (.github/workflows/source-ci.yml), then the fleet's load-delay scanner.
 # Left out, red on the pinned tree and never run by the old lane scripts (findings for the owner):

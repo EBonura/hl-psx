@@ -1,0 +1,31 @@
+# Cross-emulator smoke (psoxide-test [cross]) of the startup movie on the shipping disc: the intro
+# program's player must play all 150 frames of the movie (host/hl-intro-cook) and end on its own.
+# A decoder that silently stalls ends the movie early (stop 3) or never starts it (stop 6, setup);
+# the counter makes that a red here instead of a black screen that the game then covers.
+# INTRO_MOVIE (the intro program's map): +0 how the movie ended (0 still playing, 1 end,
+#   2 skipped, 3 stall, 4 cd-error, 5 wedged, 6 setup), +4 frames shown.
+name = "hl-smoke-movie"
+title = "Half-Life smoke: the startup movie decodes and shows all 150 frames"
+disc = "build/ship/hl-psx.cue"
+symbols = ["build/ship/hl-intro.map"]
+pad = "dualshock"
+
+[[step]]
+label = "the movie player returns"
+wait_until = { kind = "ram", sym = "INTRO_MOVIE", offset = 0, op = "ne", value = 0 }
+timeout = 4000
+
+[[step]]
+checkpoint = "movie-decoded-150-frames"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "INTRO_MOVIE"
+offset = 0
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "INTRO_MOVIE"
+offset = 4
+op = "ge"
+value = 150
