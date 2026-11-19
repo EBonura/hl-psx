@@ -7391,7 +7391,7 @@ fn pipeline_static_submodels(ents: &[u8], n_models: usize) -> Vec<bool> {
             continue;
         }
         let rendermode = parse_f32_key(block, "rendermode", 0.0) as i32;
-        let renderamt = parse_f32_key(block, "renderamt", 255.0) as i32;
+        let renderamt = brush_render_amount(block, rendermode);
         let blended = matches!(rendermode, 2 | 3 if renderamt < 250) || rendermode == 5;
         let origin = ent_value(block, "origin")
             .and_then(parse_vec3)
@@ -7409,9 +7409,18 @@ fn pipeline_static_submodels(ents: &[u8], n_models: usize) -> Vec<bool> {
     eligible
 }
 
+/// A brush entity's render amount. GoldSrc leaves `renderamt` at 0 when the map does not set
+/// it, so a brush with a render mode and no amount is drawn at amount 0: invisible (c1a1d's
+/// fill2 func_illusionary over the hanging crates, c1a4f's !toxicgrn2 patches). The normal
+/// mode ignores the amount and stays opaque, so an absent key there keeps 255.
+fn brush_render_amount(block: &str, rendermode: i32) -> i32 {
+    let absent = if rendermode != 0 { 0.0 } else { 255.0 };
+    parse_f32_key(block, "renderamt", absent) as i32
+}
+
 fn brush_render_class(block: &str) -> u16 {
     let mode = parse_f32_key(block, "rendermode", 0.0) as i32;
-    let amount = parse_f32_key(block, "renderamt", 255.0) as i32;
+    let amount = brush_render_amount(block, mode);
     if mode != 0 && amount <= 0 {
         return 0x80;
     }
@@ -20546,6 +20555,41 @@ mod tests {
         assert_eq!(targets(controllers[1]), [1, 2]);
         assert!(!pipeline_static_submodels(ents, 4)[3]);
         assert_eq!(brush_render_class(r#""rendermode" "0" "renderamt" "0""#), 0);
+    }
+
+    #[test]
+    fn brush_with_render_mode_and_no_amount_is_invisible() {
+        // GoldSrc's renderamt is 0 unless the map sets it (c1a1d's fill2 bar, model *16).
+        for mode in ["1", "2", "3", "4", "5"] {
+            let block = format!(r#""classname" "func_illusionary" "rendermode" "{mode}""#);
+            assert_eq!(brush_render_class(&block), 0x80, "rendermode {mode}");
+        }
+        // The normal mode ignores the amount: an absent key stays opaque.
+        assert_eq!(brush_render_class(r#""classname" "func_wall""#), 0);
+        assert_eq!(brush_render_class(r#""rendermode" "0""#), 0);
+        // An authored amount is kept as before.
+        assert_eq!(
+            brush_render_class(r#""rendermode" "2" "renderamt" "255""#),
+            0
+        );
+        assert_eq!(
+            brush_render_class(r#""rendermode" "2" "renderamt" "120""#),
+            1
+        );
+        assert_eq!(
+            brush_render_class(r#""rendermode" "5" "renderamt" "200""#),
+            2
+        );
+        assert_eq!(
+            brush_render_class(r#""rendermode" "4" "renderamt" "255""#),
+            3
+        );
+        // The gated static pipeline must not take the invisible brush as an opaque wall.
+        let ents = br#"
+        { "classname" "func_illusionary" "model" "*1" "rendermode" "2" }
+        { "classname" "func_illusionary" "model" "*2" }
+        "#;
+        assert_eq!(pipeline_static_submodels(ents, 3), [false, false, true]);
     }
 
     #[test]
