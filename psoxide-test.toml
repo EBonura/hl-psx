@@ -16,7 +16,10 @@ commands = [
   # The sample profile is rebound through the git blob it was collected from (psoxide-pgo
   # rebind): the clean stage's depth-1 clone needs the history first.
   ["sh", "-c", "if [ -f .git/shallow ]; then git fetch -q --unshallow origin; fi"],
-  ["cargo", "hl-build", "build", "--half-life", "{input:half-life}"],
+  # The intro is staged inside this clone (build/intro-stage), never in the machine-wide default
+  # /tmp/hl-psx-intro-stage-v1, whose leftover target and staged SDK once linked an intro with other
+  # code than the pin's (2026-11-19). The stage path does not change the bytes.
+  ["sh", "-c", "HLPSX_INTRO_STAGE=\"$PWD/build/intro-stage\" exec cargo hl-build build --half-life \"$0\"", "{input:half-life}"],
   # The gate reads a map row `hl_psx::SIM_NOW (.0)` as `(.0)`: list those statics by name.
   ["sh", "-c", "awk 'NF == 6 && $6 ~ /^[(][.][0-9]+[)]$/ {print $1, $5}' .hlpsx/hl-psx.map > {out}/symbols.txt"],
 ]
@@ -129,9 +132,8 @@ command = ["cargo", "test", "--manifest-path", "shared/hl-format/Cargo.toml"]
 name = "check-mfc0"
 command = ["cargo", "run", "-q", "--release", "--locked", "--manifest-path", ".psoxide/tools/psoxide-hazard/Cargo.toml", "--bin", "check-mfc0", "--", "game", "intro", "host", "shared"]
 
-# The clone cooks from the original files like the working build (no cook store is seeded). The
-# intro's bytes depend on its stage path (HLPSX_INTRO_STAGE, host/hl-build/intro.rs): the working
-# build and the clone take it from the same environment.
+# The clone cooks from the original files like the working build (no cook store is seeded). Each
+# stages its intro inside itself (build/intro-stage).
 [clean]
 build = "ship"
 seed = [".psoxide"]
