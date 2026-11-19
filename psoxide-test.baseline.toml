@@ -1,7 +1,7 @@
 # Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
 # psoxide-test.toml with a reason, never by hand-editing these numbers).
 schema = 1
-blessed_commit = "1d1ebbceb57c6619b18fc0623b59c4743b33acb9"
+blessed_commit = "d004d694c5a3a2053e73714d5626da647efbdcc2"
 sdk_pin = "0187c5f4fab876cbeaa9a99a37df305ccae1e4a3"
 
 [size.ship]
@@ -12,10 +12,10 @@ free = 6308
 
 [speed.c4a3]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [1013, 1013, 1013, 1013, 1013, 1012, 1011, 1009]
-work_per_frame = [1636556, 1634779, 1634069, 1633357, 1633774, 1634117, 1635587, 1638115]
-frame_work_p99 = [2801076, 2801077, 2801077, 2801077, 2801077, 2801077, 2801077, 2801077]
-vblanks = ["2:173,3:716,4:112,5:11", "2:173,3:718,4:110,5:11", "2:173,3:718,4:110,5:11", "2:173,3:718,4:110,5:11", "2:172,3:718,4:111,5:11", "2:169,3:720,4:111,5:11", "2:165,3:723,4:111,5:11", "2:159,3:726,4:112,5:11"]
+flips = [1014, 1015, 1015, 1015, 1015, 1014, 1013, 1011]
+work_per_frame = [1634305, 1633109, 1631837, 1631128, 1630399, 1631301, 1632741, 1635264]
+frame_work_p99 = [2261297, 2261297, 2261296, 2261297, 2261297, 2261296, 2261296, 2261296]
+vblanks = ["2:168,3:729,4:107,5:9", "2:169,3:729,4:107,5:9", "2:169,3:730,4:106,5:9", "2:170,3:727,4:108,5:9", "2:170,3:727,4:108,5:9", "2:170,3:723,4:111,5:9", "2:166,3:726,4:111,5:9", "2:163,3:724,4:114,5:9"]
 
 [journeys.chain-hazard]
 ticks = 7381
@@ -38,7 +38,7 @@ open_loop = 6
 clock_waits = 0
 
 [journeys.dev-c1a2a-arrival]
-ticks = 4564
+ticks = 4563
 open_loop = 17
 clock_waits = 0
 
@@ -53,7 +53,7 @@ open_loop = 9
 clock_waits = 0
 
 [journeys.hud-damage]
-ticks = 4397
+ticks = 4398
 open_loop = 43
 clock_waits = 0
 
@@ -103,17 +103,17 @@ open_loop = 14
 clock_waits = 0
 
 [journeys.parity-barnacle]
-ticks = 5492
+ticks = 5490
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-barnacle-bullets]
-ticks = 0
+ticks = 5608
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a1b-exit-grate]
-ticks = 9891
+ticks = 9890
 open_loop = 12
 clock_waits = 0
 
@@ -123,12 +123,12 @@ open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a1c-vent-bars]
-ticks = 3426
+ticks = 3428
 open_loop = 6
 clock_waits = 0
 
 [journeys.parity-c1a1f-carry]
-ticks = 8321
+ticks = 8320
 open_loop = 12
 clock_waits = 0
 
@@ -143,17 +143,17 @@ open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a2-gun-crate]
-ticks = 2062
+ticks = 2060
 open_loop = 6
 clock_waits = 0
 
 [journeys.parity-c1a2-gun-deploy]
-ticks = 3017
+ticks = 3018
 open_loop = 6
 clock_waits = 0
 
 [journeys.parity-c1a2-pressure-crate]
-ticks = 4406
+ticks = 4405
 open_loop = 6
 clock_waits = 0
 
@@ -163,7 +163,7 @@ open_loop = 15
 clock_waits = 0
 
 [journeys.present-cap]
-ticks = 5841
+ticks = 5839
 open_loop = 0
 clock_waits = 0
 
@@ -228,17 +228,17 @@ open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1c-vent]
-ticks = 3141
+ticks = 3140
 open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1d]
-ticks = 8064
+ticks = 8063
 open_loop = 10
 clock_waits = 0
 
 [journeys.stage-c1a2-part1]
-ticks = 14903
+ticks = 14899
 open_loop = 16
 clock_waits = 0
 
@@ -248,12 +248,12 @@ open_loop = 10
 clock_waits = 0
 
 [journeys.stage-c1a2-part3]
-ticks = 5375
+ticks = 5372
 open_loop = 10
 clock_waits = 0
 
 [journeys.unstick-vent]
-ticks = 987
+ticks = 986
 open_loop = 1
 clock_waits = 0
 
@@ -355,4 +355,4 @@ clock_waits = 0
 [host]
 
 [maps]
-ship = "3c10192860f8f1050ec4d016f1371520dde077021127768503da02eb22df4ecd"
+ship = "0e8c165e0be4dddd731bf4e4f63e8be3d7384a8e7fdb1112456ec65b783692f3"
