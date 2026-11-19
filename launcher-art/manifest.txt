@@ -1,0 +1,5 @@
+# Cover art for the PSoXide demo disc launcher. Format: tools/menu-art (demo-disc repo).
+# Pictures are cut but not drawn on; the baker scales them (and stretches a non-4:3 one).
+id halflife
+front halflife.png
+back halflife.png
