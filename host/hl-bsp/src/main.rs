@@ -11422,6 +11422,59 @@ fn collect_grunt_equipment(
     Ok(result)
 }
 
+/// The vertical span of an actor class's GoldSrc hull (UTIL_SetSize), in HL units relative to
+/// its origin. Most monsters stand on their origin; a barnacle hangs below it from the ceiling,
+/// turrets, tripmines and the ichthyosaur straddle it, the apache and osprey hang below it.
+fn actor_hull_z(model_type: u16) -> (i32, i32) {
+    match model_type {
+        12 => (-32, 0),                             // barnacle
+        19 => (-32, 32),                            // ichthyosaur
+        20 => (-64, 64),                            // sentry (retract height 64)
+        21 | 22 => (-16, 16),                       // turret, miniturret (retract height 16)
+        23 => (-64, 0),                             // apache
+        57 => (-8, 8),                              // tripmine
+        61 => (-100, 32),                           // osprey
+        13 | 14 => (0, 2),                          // leech, cockroach
+        2 | 59 => (0, 24),                          // headcrab, baby headcrab
+        6 => (0, 36),                               // houndeye
+        25 => (0, 36),                              // sitting scientist
+        7 | 10 | 11 | 16 | 17 | 18 | 50 => (0, 64), // bullsquid .. tentacle
+        68 | 73 => (0, 32),                         // xen_hair, xen_plantlight
+        70 => (0, 64),                              // xen_spore_small
+        69 => (0, 120),                             // xen_spore_medium
+        71 => (110, 240),                           // xen_spore_large
+        74 => (0, 188),                             // xen_tree
+        3 | 4 | 40..=48 => (0, 16),                 // items and ammo
+        _ => (0, 72),                               // the human hull
+    }
+}
+
+/// The BSP leaf an actor is seen from. GoldSrc links an entity into every leaf its hull
+/// touches, so an origin inside solid (a barnacle's ceiling, a turret's mount) is still seen
+/// through the open leaves around its body. The renderer's visibility test needs one real leaf:
+/// the origin's own leaf when it is open, else the open point nearest the origin on the
+/// vertical line through it inside the class's hull, else 0 (solid, as before).
+fn actor_leaf(origin_hl: [f32; 3], model_type: u16, nodes: &[u8], planes: &[u8]) -> i16 {
+    let leaf = point_leaf(origin_hl, nodes, planes);
+    if leaf != 0 {
+        return leaf;
+    }
+    let (lo, hi) = actor_hull_z(model_type);
+    for distance in 1..=lo.abs().max(hi.abs()) {
+        for dz in [-distance, distance] {
+            if dz < lo || dz > hi {
+                continue;
+            }
+            let probe = [origin_hl[0], origin_hl[1], origin_hl[2] + dz as f32];
+            let leaf = point_leaf(probe, nodes, planes);
+            if leaf != 0 {
+                return leaf;
+            }
+        }
+    }
+    0
+}
+
 fn collect_props(
     ents: &[u8],
     nodes: &[u8],
@@ -11814,7 +11867,7 @@ fn collect_props(
             0
         };
         let owner_index = out.len();
-        let leaf = point_leaf(origin_hl, nodes, planes);
+        let leaf = actor_leaf(origin_hl, model_type, nodes, planes);
         out.push((ty, origin, orientation, leaf, name_id, carry_id));
         if ty & DEAD == 0 && cls.starts_with("monster_") {
             if let Some((condition, target)) = monster_trigger_condition(block) {
@@ -20349,6 +20402,43 @@ mod tests {
 
         assert_eq!(point_leaf([8.0, 0.0, 0.0], &nodes, &planes), 1);
         assert_eq!(point_leaf([-8.0, 0.0, 0.0], &nodes, &planes), 2);
+    }
+
+    #[test]
+    fn actor_in_solid_takes_the_open_leaf_inside_its_hull() {
+        // A room (leaf 1) from z 0 to 100 under a 10-unit ceiling slab, a second room (leaf 2)
+        // above z 110, solid (leaf 0) in the slab and under the floor.
+        let mut planes = Vec::new();
+        for z in [110.0f32, 100.0, 0.0] {
+            for v in [0.0f32, 0.0, 1.0, z] {
+                planes.extend_from_slice(&v.to_le_bytes());
+            }
+            planes.extend_from_slice(&2i32.to_le_bytes()); // PLANE_Z
+        }
+        let mut nodes = Vec::new();
+        for (plane, front, back) in [(0i32, -3i16, 1i16), (1, -1, 2), (2, -2, -1)] {
+            let start = nodes.len();
+            nodes.extend_from_slice(&plane.to_le_bytes());
+            nodes.extend_from_slice(&front.to_le_bytes());
+            nodes.extend_from_slice(&back.to_le_bytes());
+            nodes.resize(start + SZ_NODE, 0);
+        }
+        let leaf = |z: f32, model_type: u16| actor_leaf([0.0, 0.0, z], model_type, &nodes, &planes);
+        assert_eq!(point_leaf([0.0, 0.0, 108.0], &nodes, &planes), 0);
+        // A barnacle hangs below its origin: the room under the ceiling, never the room above,
+        // though that one is nearer to an origin 2 units under its floor.
+        assert_eq!(leaf(108.0, 12), 1);
+        // A ceiling miniturret straddles its origin: the nearer open side.
+        assert_eq!(leaf(103.0, 22), 1);
+        assert_eq!(leaf(108.0, 22), 2);
+        // A scientist stands on his origin: 3 units into the floor finds the room above it.
+        assert_eq!(leaf(-3.0, 0), 1);
+        // Deeper in solid than the hull reaches: solid, as before.
+        assert_eq!(leaf(-80.0, 0), 0);
+        // In open space the origin's own leaf, unchanged.
+        assert_eq!(leaf(50.0, 12), 1);
+        assert_eq!(leaf(50.0, 0), 1);
+        assert_eq!(leaf(150.0, 0), 2);
     }
 
     #[test]
