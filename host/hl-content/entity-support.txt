@@ -42,7 +42,7 @@ func_door_rotating|runtime|rotating door logic and collision
 func_friction|missing_gameplay|friction trigger volume is absent
 func_guntarget|runtime|moving damageable target
 func_healthcharger|runtime|health charger logic
-func_illusionary|runtime|rendered brush and optional frame control
+func_illusionary|runtime|rendered brush and optional frame control; a render mode without renderamt is invisible, as in GoldSrc
 func_ladder|runtime|ladder volume participates in player movement
 func_monsterclip|runtime|NPC-only collision volume
 func_mortar_field|runtime|random, activator and momentary-table targeting; delayed shells, blast column and shake
@@ -87,7 +87,7 @@ monster_alien_controller|approximated|shared ranged actor behavior
 monster_alien_grunt|approximated|shared melee actor behavior
 monster_alien_slave|approximated|shared ranged actor behavior
 monster_apache|approximated|CApache flight, path, gun, HVR rockets and crash; no rotor sound or hitgroups
-monster_barnacle|approximated|rendered actor without complete barnacle AI
+monster_barnacle|approximated|drawn ceiling actor (leaf from its hull), tongue, haul and club kill; prey and chew differ (docs/parity BN02-BN05)
 monster_barney|approximated|compact ally behavior
 monster_barney_dead|runtime|static authored corpse
 monster_bigmomma|approximated|walks its info_bigmomma path and fires its node targets; no attacks or crab laying
