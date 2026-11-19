@@ -14,3 +14,5 @@ Without it the launcher still builds and Half-Life gets the plain cover.
 The baker scales every picture to the cover sizes (104x78, 68x51, 52x39) and to
 the 64x48 back-cover shots without cropping, and stretches anything that is not
 4:3. The front and the back are the same capture.
+
+The `shots` line of the manifest lists the pictures of the shelf's screenshot panel, in order; the disc build cooks them itself.

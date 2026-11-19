@@ -20,6 +20,7 @@ graphify-out/
 # Never commit Half-Life assets or anything derived from them. Point the
 # extractor at your own Half-Life install (Steam/retail). Source assets and
 # everything cooked from them stay local only.
+# launcher-art/ (a few screenshots for the demo disc launcher) is the owner's stated exception, 2026-11-19.
 data/
 assets/
 *.wad

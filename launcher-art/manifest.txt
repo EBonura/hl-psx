@@ -3,3 +3,4 @@
 id halflife
 front halflife.png
 back halflife.png
+shots halflife.png
