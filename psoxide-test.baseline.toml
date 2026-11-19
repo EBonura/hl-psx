@@ -107,6 +107,11 @@ ticks = 5492
 open_loop = 12
 clock_waits = 0
 
+[journeys.parity-barnacle-bullets]
+ticks = 0
+open_loop = 12
+clock_waits = 0
+
 [journeys.parity-c1a1b-exit-grate]
 ticks = 9891
 open_loop = 12
