@@ -17322,6 +17322,15 @@ fn simplify_mdl_animated_mesh(
     }
 }
 
+/// The studio header's authored bounding box (bbmin at 112, bbmax at 124) lies at or below
+/// the model origin: the model hangs from its origin instead of standing on it.
+fn mdl_hangs_from_origin(mdl: &[u8]) -> bool {
+    let (Some(bbmin_z), Some(bbmax_z)) = (f32le(mdl, 120), f32le(mdl, 132)) else {
+        return false;
+    };
+    bbmax_z <= 0.0 && bbmin_z < bbmax_z
+}
+
 /// Anchor baked frames to the floor. The 5 canonical clips (idle/walk/attack/
 /// pain/death) anchor PER FRAME (min_y -> 0) so feet stay planted. Named
 /// script clips (sit1, ...) instead shift by the CONSTANT baseline taken from
@@ -18233,8 +18242,14 @@ fn cook_mdl(
                 .map(|n| n.to_ascii_lowercase().starts_with("sit"))
                 .unwrap_or(false)
         };
-        hma_seated = seated;
-        if !seated {
+        // A model whose authored bounds lie at or below its origin hangs from it (the
+        // barnacle: bbox z -1024..0, the body below the ceiling attachment). GoldSrc draws
+        // it at the entity origin as authored; lifting its lowest vertex to the origin put
+        // the body above the ceiling it hangs from. It keeps its authored offset, as a
+        // seated model does.
+        let hangs = mdl_hangs_from_origin(&b);
+        hma_seated = seated || hangs;
+        if !seated && !hangs {
             floor_shifts = floor_anchor_mdl_frames(&mut frames, &clips, 5);
         }
     }
@@ -20402,6 +20417,23 @@ mod tests {
 
         assert_eq!(point_leaf([8.0, 0.0, 0.0], &nodes, &planes), 1);
         assert_eq!(point_leaf([-8.0, 0.0, 0.0], &nodes, &planes), 2);
+    }
+
+    #[test]
+    fn a_model_bounded_below_its_origin_hangs_from_it() {
+        let header = |bbmin_z: f32, bbmax_z: f32| {
+            let mut mdl = vec![0u8; 136];
+            mdl[120..124].copy_from_slice(&bbmin_z.to_le_bytes());
+            mdl[132..136].copy_from_slice(&bbmax_z.to_le_bytes());
+            mdl
+        };
+        // barnacle.mdl: z -1024..0, the body hangs below the ceiling attachment.
+        assert!(mdl_hangs_from_origin(&header(-1024.0, 0.0)));
+        // Most studio models leave the box empty, or stand above their origin.
+        assert!(!mdl_hangs_from_origin(&header(0.0, 0.0)));
+        assert!(!mdl_hangs_from_origin(&header(0.0, 72.0)));
+        assert!(!mdl_hangs_from_origin(&header(-36.0, 36.0)));
+        assert!(!mdl_hangs_from_origin(&[0u8; 64]));
     }
 
     #[test]
