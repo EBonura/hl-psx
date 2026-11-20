@@ -174,13 +174,15 @@ pub unsafe fn apply_room(room: u8) {
         let spu = (*core::ptr::addr_of_mut!(SPU))
             .as_mut()
             .expect("room effect before SPU init");
-        spu.start_reverb(
+        let started = spu.start_reverb(
             ReverbArea::new(work.base, work.bytes),
             &ReverbPreset::new(program.registers, work.bytes),
             ReverbInput::ALL_VOICES,
             program.wet as i16,
         );
-        ROOM_EFFECT_BYTES = work.bytes;
+        if started.is_ok() {
+            ROOM_EFFECT_BYTES = work.bytes;
+        }
     }
     ROOM_APPLIED = room;
 }
@@ -272,9 +274,16 @@ pub unsafe fn load_bank(wm: usize, pack: &[u8]) -> bool {
             (at / 8) as u16,
             u32::from_le_bytes(sample[16..20].try_into().unwrap()) as u16,
         );
-        spu.upload_adpcm(psx_spu::SpuAddr::new(at), adpcm);
+        if spu.upload_adpcm(psx_spu::SpuAddr::new(at), adpcm).is_err() {
+            return false;
+        }
         at = (at + adpcm.len() as u32 + 15) & !15;
-        spu.upload_adpcm(psx_spu::SpuAddr::new(at), &PARKING_TAIL);
+        if spu
+            .upload_adpcm(psx_spu::SpuAddr::new(at), psx_sfx::parking_tail())
+            .is_err()
+        {
+            return false;
+        }
         at += PARKING_TAIL.len() as u32;
         k += 1;
     }

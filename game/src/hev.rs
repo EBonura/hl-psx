@@ -20,7 +20,7 @@
 use hl_format::hev as table;
 use hl_format::hev::{NO_WORD, SENTENCES, SENTENCE_COUNT, WORD_COUNT};
 use psx_math::Mask64;
-use psx_sfx::{OneShot, Sample, PARKING_TAIL};
+use psx_sfx::{parking_tail, OneShot, Sample, PARKING_TAIL};
 use psx_spu::{Spu, SpuAddr, Voice, Volume};
 
 /// CSUITPLAYLIST: sentences waiting.
@@ -336,9 +336,13 @@ pub unsafe fn load(spu: &mut Spu, chunk: &[u8], base: u32) {
             WORD_ADDR[word] = (next / 8) as u16;
             WORD_RATE[word] = rate as u16;
             WORD_TICKS[word] = ((rd_u32(sample, 20) * 20 + rate - 1) / rate).min(255) as u8;
-            spu.upload_adpcm(SpuAddr::new(next), &sample[32..]);
+            let body = spu.upload_adpcm(SpuAddr::new(next), &sample[32..]);
             next += (len as u32 - 32 + 15) & !15;
-            spu.upload_adpcm(SpuAddr::new(next), &PARKING_TAIL);
+            let tail = spu.upload_adpcm(SpuAddr::new(next), parking_tail());
+            if body.is_err() || tail.is_err() {
+                // A word that did not land is not ready: no sentence that uses it plays.
+                WORD_ADDR[word] = 0;
+            }
             next += PARKING_TAIL.len() as u32;
         }
         word += 1;
