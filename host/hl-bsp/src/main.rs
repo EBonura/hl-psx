@@ -11484,8 +11484,67 @@ fn collect_props(
     logic_names: &mut Vec<String>,
     trigger_links: &mut Vec<MonsterTriggerLink>,
 ) -> Vec<(u16, [i32; 3], i32, i16, u16, u16)> {
+    let names = logic_names.clone();
+    let links = trigger_links.len();
+    let props = collect_props_trimmed(
+        ents,
+        nodes,
+        planes,
+        models,
+        scale,
+        logic_names,
+        trigger_links,
+        0,
+    );
+    if props.len() <= MAX_RUNTIME_LIVE_PROPS {
+        return props;
+    }
+    // Over the live-prop cap: take the excess from the last snark stock copies (a maker whose
+    // stock runs short remakes its dead children, as for any maker making more than it stocks)
+    // and collect again from the same starting state.
+    *logic_names = names;
+    trigger_links.truncate(links);
+    collect_props_trimmed(
+        ents,
+        nodes,
+        planes,
+        models,
+        scale,
+        logic_names,
+        trigger_links,
+        props.len() - MAX_RUNTIME_LIVE_PROPS,
+    )
+}
+
+/// How many dormant copies a monstermaker stocks: its `monstercount`, at most four.
+fn maker_stock_count(block: &str) -> usize {
+    parse_f32_key(block, "monstercount", 1.0)
+        .round()
+        .clamp(1.0, 4.0) as usize
+}
+
+/// `collect_props` with the last `drop_snark` snark stock copies left out.
+fn collect_props_trimmed(
+    ents: &[u8],
+    nodes: &[u8],
+    planes: &[u8],
+    models: &[u8],
+    scale: f32,
+    logic_names: &mut Vec<String>,
+    trigger_links: &mut Vec<MonsterTriggerLink>,
+    drop_snark: usize,
+) -> Vec<(u16, [i32; 3], i32, i16, u16, u16)> {
     let s = entity_text(ents);
     let mut out = Vec::new();
+    let snark_total: usize = s
+        .split('{')
+        .filter(|block| {
+            ent_value(block, "classname") == Some("monstermaker")
+                && ent_value(block, "monstertype") == Some("monster_snark")
+        })
+        .map(maker_stock_count)
+        .sum();
+    let mut snark_seen = 0usize;
     let map_uses_scripted_sitter = s.split('{').any(|candidate| {
         ent_value(candidate, "classname") == Some("monster_scientist")
             && ent_value(candidate, "targetname")
@@ -11676,9 +11735,7 @@ fn collect_props(
                 let Some(base) = maker_child_type(mt) else {
                     continue;
                 };
-                let count = parse_f32_key(block, "monstercount", 1.0)
-                    .round()
-                    .clamp(1.0, 4.0) as usize;
+                let count = maker_stock_count(block);
                 let origin_hl = ent_value(block, "origin")
                     .and_then(parse_vec3)
                     .unwrap_or([0.0; 3]);
@@ -11708,6 +11765,12 @@ fn collect_props(
                     .map(|p| (p + 1).min(u16::MAX as usize) as u16)
                     .unwrap_or(0);
                 for _ in 0..count {
+                    if mt == "monster_snark" {
+                        snark_seen += 1;
+                        if snark_seen > snark_total.saturating_sub(drop_snark) {
+                            continue;
+                        }
+                    }
                     let owner_index = out.len();
                     out.push((
                         base | 0x4000,
@@ -11969,11 +12032,13 @@ fn monster_type_id(cls: &str) -> Option<u16> {
 }
 
 /// What a monstermaker's `monstertype` makes: the monster classes of `monster_type_id`, the baby
-/// headcrab (the Gonarch fight's `babies` makers) and the .357 ammo box of c2a1 and c2a1a. Kept
+/// headcrab (the Gonarch fight's `babies` makers), the snark (c2a5f, c3a1) and the .357 ammo box
+/// of c2a1 and c2a1a. Kept
 /// apart from `monster_type_id` so scripted sequences keep matching the classes they matched.
 fn maker_child_type(cls: &str) -> Option<u16> {
     match cls {
         "monster_babycrab" => Some(59),
+        "monster_snark" => Some(58),
         "ammo_357" => Some(43),
         _ => monster_type_id(cls),
     }
@@ -20460,12 +20525,32 @@ mod tests {
     }
 
     #[test]
+    fn snark_stock_gives_up_its_last_copies_when_the_room_is_over_the_prop_cap() {
+        let ents = br#"
+        { "classname" "monstermaker" "targetname" "a" "monstertype" "monster_snark"
+          "monstercount" "2" "origin" "0 0 0" }
+        { "classname" "monstermaker" "targetname" "b" "monstertype" "monster_snark"
+          "monstercount" "3" "origin" "64 0 0" }
+        "#;
+        let mut names = vec!["a".to_string(), "b".to_string()];
+        let all = collect_props_trimmed(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new(), 0);
+        assert_eq!(all.len(), 5);
+        assert!(all.iter().all(|p| p.0 == 0x4000 | 58));
+        // Dropping two takes them from the last maker, never the first.
+        let less = collect_props_trimmed(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new(), 2);
+        assert_eq!(less.len(), 3);
+        assert_eq!(less.iter().filter(|p| p.4 == 1).count(), 2);
+        assert_eq!(less.iter().filter(|p| p.4 == 2).count(), 1);
+    }
+
+    #[test]
     fn a_monstermaker_makes_the_baby_headcrab_and_the_357_box() {
         assert_eq!(maker_child_type("monster_babycrab"), Some(59));
         assert_eq!(maker_child_type("ammo_357"), Some(43));
         assert_eq!(maker_child_type("monster_zombie"), Some(5));
-        // Not a maker's child: a class monster_type_id does not know stays dropped.
-        assert_eq!(maker_child_type("monster_snark"), None);
+        assert_eq!(maker_child_type("monster_snark"), Some(58));
+        // Not a maker's child: a class nothing knows stays dropped.
+        assert_eq!(maker_child_type("monster_cat"), None);
         // Scripted sequences keep their old class table.
         assert_eq!(monster_type_id("monster_babycrab"), None);
     }
