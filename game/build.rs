@@ -1002,7 +1002,7 @@ fn room_pvs_capacity(data: &[u8]) -> (usize, usize) {
 }
 
 /// Model type count, mirrored by game/src/main.rs N_MODEL_TYPES.
-const MODEL_TYPES: usize = 77;
+const MODEL_TYPES: usize = 78;
 
 struct ModelBudget {
     model_words: usize,

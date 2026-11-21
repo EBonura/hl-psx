@@ -12071,6 +12071,8 @@ fn monster_generic_type(block: &str) -> Option<u16> {
         "fungus(small).mdl" => Some(70),
         "fungus(large).mdl" => Some(71),
         "pipe_bubbles.mdl" => Some(72),
+        // c1a4i's rocket engine cycler.
+        "rengine.mdl" => Some(77),
         _ => None,
     }
 }
