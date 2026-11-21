@@ -290,34 +290,53 @@ const MODEL_PROJECTED_WORDS: usize = MAX_MODEL_VERTS + MAX_MODEL_VERTS.div_ceil(
 // World/brush packets retain their existing fixed arena. Studio actors borrow
 // the unused map/model arena tail when it is larger, so dense BSP views cannot
 // consume their entire packet budget before the actor pass begins.
+#[cfg(any(
+    feature = "probe-full-arena",
+    not(any(
+        feature = "reference-trace",
+        feature = "performance-telemetry",
+        feature = "emulator-telemetry"
+    ))
+))]
+const SHIP_RENDER_PACKETS: usize = 1432;
 #[cfg(not(any(
     feature = "reference-trace",
     feature = "performance-telemetry",
     feature = "emulator-telemetry"
 )))]
-const MAX_RENDER_PACKETS: usize = 1432;
+const MAX_RENDER_PACKETS: usize = SHIP_RENDER_PACKETS;
 // Diagnostic code and trace storage retain their smaller packet budgets.
 #[cfg(any(
     feature = "reference-trace",
     feature = "performance-telemetry",
     feature = "emulator-telemetry"
 ))]
+#[cfg_attr(feature = "probe-full-arena", allow(dead_code))]
 const BEAM_FX_TRIM: usize = 331;
 #[cfg(any(
     feature = "reference-trace",
     feature = "performance-telemetry",
     feature = "emulator-telemetry"
 ))]
+#[cfg_attr(feature = "probe-full-arena", allow(dead_code))]
 const MODEL_STREAM_CODE_TRIM: usize = 37;
 
 // The interaction probe bakes its script into the executable; it gives up
-// render packets (drawing only) to stay inside the free-RAM floor.
+// render packets (drawing only) to stay inside the free-RAM floor. That leaves
+// 444 slots, under a third of the shipping 1432: a dense view (the c1a4i silo
+// from its floor) fills them with world faces and the actor pass that follows
+// gets none, so probe frames lose actors the shipping disc draws.
 #[cfg(all(feature = "reference-trace", feature = "interaction-probe"))]
+#[cfg_attr(feature = "probe-full-arena", allow(dead_code))]
 const PROBE_RAM_TRIM: usize = 660;
 #[cfg(all(feature = "reference-trace", not(feature = "interaction-probe")))]
 const PROBE_RAM_TRIM: usize = 0;
-#[cfg(feature = "reference-trace")]
+#[cfg(all(feature = "reference-trace", not(feature = "probe-full-arena")))]
 const MAX_RENDER_PACKETS: usize = 1472 - BEAM_FX_TRIM - MODEL_STREAM_CODE_TRIM - PROBE_RAM_TRIM;
+// Review-frame probes take the shipping arena when their few packed rooms
+// leave the RAM for it (the link fails loudly when they do not).
+#[cfg(feature = "probe-full-arena")]
+const MAX_RENDER_PACKETS: usize = SHIP_RENDER_PACKETS;
 // Telemetry and its interpolation state displace packet storage. Packet-drop
 // counters expose that diagnostic trade; release discs keep the full budget.
 #[cfg(all(

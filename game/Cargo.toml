@@ -78,6 +78,10 @@ interaction-probe = ["reference-trace"]
 # More probe ops (hp, follow, explode, weapon, club) and the leech and heal trace
 # lines, for checking those fixes; the plain probe build has no RAM left for them.
 probe-fixes = ["interaction-probe"]
+# A probe disc for review frames: the shipping packet arena (MAX_RENDER_PACKETS) instead of
+# the trimmed probe one, so a heavy view draws the actors the shipping disc draws. It links only
+# when the packed maps leave the RAM (a probe of one or two rooms does; the gate's probe does not).
+probe-full-arena = ["interaction-probe"]
 # SDK crates from the PSoXide source tree hydrated by the root Rust build
 # driver. Keeping one pinned source snapshot makes the linker, runtime decoder,
 # audio encoder, and disc writer a reproducible set. `--psoxide` can seed this
