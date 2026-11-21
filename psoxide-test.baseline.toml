@@ -1,7 +1,7 @@
 # Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
 # psoxide-test.toml with a reason, never by hand-editing these numbers).
 schema = 1
-blessed_commit = "f9ae4a15ff03d3d71fa2a94010c4a26f52543429"
+blessed_commit = "f5e37d6cb947afa417e4a046681e21872bd756d5"
 sdk_pin = "fce1f6855bc1c3e8336cc68be98a3df06ef9a967"
 
 [size.ship]
@@ -12,10 +12,10 @@ free = 5644
 
 [speed.c4a3]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [1024, 1024, 1024, 1024, 1024, 1023, 1021, 1020]
-work_per_frame = [1619720, 1618459, 1616621, 1615898, 1615752, 1616629, 1618536, 1620436]
-frame_work_p99 = [2261167, 2261167, 2261167, 2261167, 2261167, 2261167, 2261167, 2261167]
-vblanks = ["2:201,3:698,4:117,5:7", "2:203,3:695,4:118,5:7", "2:205,3:692,4:119,5:7", "2:208,3:686,4:122,5:7", "2:211,3:680,4:125,5:7", "2:209,3:679,4:127,5:7", "2:205,3:680,4:128,5:7", "2:200,3:683,4:129,5:7"]
+flips = [1020, 1021, 1021, 1021, 1021, 1020, 1018, 1017]
+work_per_frame = [1624676, 1622939, 1621674, 1620890, 1620185, 1621070, 1623547, 1624998]
+frame_work_p99 = [2261351, 2261351, 2261351, 2261351, 2261351, 2261351, 2261351, 2261351]
+vblanks = ["2:194,3:699,4:119,5:7", "2:194,3:702,4:117,5:7", "2:194,3:702,4:117,5:7", "2:194,3:703,4:116,5:7", "2:196,3:698,4:119,5:7", "2:196,3:694,4:122,5:7", "2:192,3:695,4:123,5:7", "2:190,3:693,4:126,5:7"]
 
 [journeys.chain-hazard]
 ticks = 7381
@@ -38,8 +38,8 @@ open_loop = 6
 clock_waits = 0
 
 [journeys.dev-c1a2a-arrival]
-ticks = 4561
-open_loop = 17
+ticks = 4322
+open_loop = 13
 clock_waits = 0
 
 [journeys.hazard-load]
@@ -48,7 +48,7 @@ open_loop = 26
 clock_waits = 0
 
 [journeys.hazard-panels]
-ticks = 2278
+ticks = 2733
 open_loop = 9
 clock_waits = 0
 
@@ -95,6 +95,31 @@ clock_waits = 0
 [journeys.journey]
 ticks = 3999
 open_loop = 14
+clock_waits = 0
+
+[journeys.maker-ammo357-c2a1]
+ticks = 3286
+open_loop = 0
+clock_waits = 0
+
+[journeys.maker-ammo357-c2a1a]
+ticks = 3400
+open_loop = 0
+clock_waits = 0
+
+[journeys.maker-babycrab-c4a2b]
+ticks = 1928
+open_loop = 0
+clock_waits = 0
+
+[journeys.maker-snark-c2a5f]
+ticks = 2322
+open_loop = 0
+clock_waits = 0
+
+[journeys.maker-snark-c3a1]
+ticks = 1821
+open_loop = 0
 clock_waits = 0
 
 [journeys.music-swap]
@@ -168,8 +193,8 @@ open_loop = 0
 clock_waits = 0
 
 [journeys.save-repin]
-ticks = 5169
-open_loop = 18
+ticks = 4911
+open_loop = 14
 clock_waits = 0
 
 [journeys.segment-select]
@@ -198,8 +223,8 @@ open_loop = 6
 clock_waits = 0
 
 [journeys.skill-save]
-ticks = 5017
-open_loop = 18
+ticks = 4754
+open_loop = 14
 clock_waits = 0
 
 [journeys.smoke-boot-play]
@@ -213,13 +238,13 @@ open_loop = 0
 clock_waits = 0
 
 [journeys.stage-c1a1c-canal]
-ticks = 8403
-open_loop = 10
+ticks = 8137
+open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1c-mid]
-ticks = 5130
-open_loop = 10
+ticks = 4880
+open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1c-return]
@@ -233,27 +258,27 @@ open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1d]
-ticks = 8061
-open_loop = 10
+ticks = 7803
+open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a2-part1]
-ticks = 14976
-open_loop = 16
+ticks = 14743
+open_loop = 12
 clock_waits = 0
 
 [journeys.stage-c1a2-part2]
-ticks = 7170
-open_loop = 10
+ticks = 6939
+open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a2-part3]
-ticks = 5370
-open_loop = 10
+ticks = 5134
+open_loop = 6
 clock_waits = 0
 
 [journeys.unstick-vent]
-ticks = 988
+ticks = 1082
 open_loop = 1
 clock_waits = 0
 
@@ -355,4 +380,4 @@ clock_waits = 0
 [host]
 
 [maps]
-ship = "130a7f86d80dc24f8e724b5a517c498c5a79616cd09a1c6f78a180adaff8f047"
+ship = "c9b749603bd766dcaf1b1ec121706a8e591a8bbdff6437f99d4377f46c371780"
