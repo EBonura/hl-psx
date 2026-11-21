@@ -1,9 +1,10 @@
 floor 2048 B, step 50, candidates 1
-free_B is `psoxide-size ram` (the exact measure), packed with the shipped profile at each rung, no layout
+free_B is `psoxide-size ram` (the exact measure), linked with the shipped profile at each rung, no layout
 threshold  free_B  fits  geomean  worst
-      650    1772  under floor  -  -
-      550    1772  under floor  -  -
-      450    4700  yes  -  -  <- chosen
-      350    5852  yes  -  -
-(percentages are against the baseline; a candidate more than 1% under it on any metric is not eligible)
-chosen threshold 450
+     1000       -  no link  -  -
+      600       -  no link  -  -
+      400       -  no link  -  -
+      350    1084  under floor  -  -
+      300    2172  yes  -  -  <- chosen
+chosen threshold 300
+450 (the rung shipped before the tentacle) links but leaves -52 B; the profile is carried across unchanged
