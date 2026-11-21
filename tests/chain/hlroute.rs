@@ -1289,7 +1289,7 @@ const SAVE_STEPS: &str = "
 [[step]]
 label = \"pause and open Save Game\"
 press = [\"start\"]
-hold = 8
+hold = 20
 wait = 25
 
 [[step]]

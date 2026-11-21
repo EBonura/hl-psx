@@ -1625,7 +1625,7 @@ expr="i32(LOGIC_PLAYER_POS[1]) <= -2990 && i32(LOGIC_PLAYER_POS[0]) >= -1060 && 
 [[step]]
 label = "pause and open Save Game"
 press = ["start"]
-hold = 8
+hold = 20
 wait = 25
 
 [[step]]
