@@ -108,7 +108,7 @@ fn room_staging_words(rooms: &Path) -> Result<usize> {
 const MAX_LOADED_MODELS: usize = 26;
 const POOL_FACE_RUN_CAP: usize = 192;
 const POOL_TEX_SLOTS: usize = 176;
-const N_MODEL_TYPES: usize = 77;
+const N_MODEL_TYPES: usize = 78;
 const MODEL_GEOM_CHUNK_BASE: usize = 1300;
 const MODEL_TEX_CHUNK_BASE: usize = 1100;
 const MODEL_CARRY_CHUNK_BASE: usize = 1500;
@@ -2360,7 +2360,7 @@ mod tests {
         let defs = include_str!("../../game/src/combat_defs.rs");
         let build = include_str!("../../game/build.rs");
         assert!(
-            defs.contains("pub const N_MODEL_TYPES: usize = 77;"),
+            defs.contains("pub const N_MODEL_TYPES: usize = 78;"),
             "runtime drift: N_MODEL_TYPES"
         );
         for declaration in [

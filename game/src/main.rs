@@ -8104,7 +8104,7 @@ unsafe fn push_from_rotation(
 /// stood still for the whole map under a small fungus.
 #[inline(always)]
 fn prop_ignores_pushers(kind: u8) -> bool {
-    matches!(kind, 12 | 57 | 67..=74)
+    matches!(kind, 12 | 57 | 67..=74 | 77)
 }
 
 /// SV_PushMove for monsters: an actor the moved brush now overlaps (its
@@ -22325,7 +22325,7 @@ fn prop_blood_kind(ty: u8) -> u8 {
         }
         // leech, G-Man, turrets, apache, Hazard Course hologram, tripmine,
         // osprey, gibs and scenery props
-        13 | 15 | 20..=23 | 56 | 57 | 61..=75 => IMPACT_KIND_NONE,
+        13 | 15 | 20..=23 | 56 | 57 | 61..=75 | 77 => IMPACT_KIND_NONE,
         _ => IMPACT_KIND_BLOOD,
     }
 }

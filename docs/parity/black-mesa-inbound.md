@@ -93,7 +93,7 @@ Inventory rows first met here (10-15 inventory, 5 DIFF or MISSING): 0 fixed on m
 | inventory row | difference (inventory wording, shortened) | state |
 |---|---|---|
 | env_sprite and env_glow rendering | Every sprite animates at a fixed 10 fps and draws additive, ignoring framerate (126 env_sprites use 20 to 40), rendermode (texture and solid modes drawn additive), render | limit-claimed |
-| GN2 cycler (studio props): apache.mdl, base.mdl, rip.mdl, protozoa.mdl | c0a0b apache cycler, c1a4g base/rip, c1a0e protozoa, c1a4i rengine, c2a2h sat_globe are absent. Fungus, hair, pipe_bubbles cyclers are cooked. Recorded in entity-support. | open |
+| GN2 cycler (studio props): apache.mdl, base.mdl, rip.mdl, protozoa.mdl | c0a0b apache cycler, c1a4g base/rip, c1a0e protozoa, c2a2h sat_globe are absent. Fungus, hair, pipe_bubbles and c1a4i's rengine (type 77) cyclers are cooked. Recorded in entity-support. | open |
 | GN3 cycler animation cycling / damage response (Use toggles, hits adva | Props are inert. Recorded. | open |
 | func_trackchange and func_trackautochange | The platform never rotates or carries the train between tracks; a use of the junction just routes the cooked path. 6 placements (c0a0b, c0a0d, c2a1, c2a2, c2a2b1, c2a2e). | open |
 | ambient_generic pitch, fade and LFO | 146 placements with a pitch other than 100 and 67 with fade, spin or LFO keys play at native pitch and level. Recorded as cosmetic in entity-contract.txt. | open |
