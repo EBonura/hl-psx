@@ -434,26 +434,14 @@ impl tentacle::World for TentacleWorld {
 
     #[inline(never)]
     fn hear(&mut self, ear: [i32; 3]) -> Option<[i32; 3]> {
+        // The player's own sound is weighed first, so it wins a tie.
         unsafe {
-            let reach = crate::PLAYER_NOISE.volume() as i32 * tentacle::HEARING;
-            let d = [
-                self.player[0] - ear[0],
-                self.player[1] - ear[1],
-                self.player[2] - ear[2],
-            ];
-            let player_d2 =
-                if reach > 0 && d[0].abs() <= reach && d[1].abs() <= reach && d[2].abs() <= reach {
-                    let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-                    (d2 <= reach * reach).then_some(d2)
-                } else {
-                    None
-                };
-            let other = crate::noise_heard_by(ear, tentacle::HEARING);
-            match (player_d2, other) {
-                (Some(pd), Some(o)) if dist2_3(o, ear) < pd => Some(o),
-                (Some(_), _) => Some(self.player),
-                (None, o) => o,
-            }
+            crate::noise_heard_with(
+                ear,
+                tentacle::HEARING,
+                self.player,
+                crate::PLAYER_NOISE.volume(),
+            )
         }
     }
 

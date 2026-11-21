@@ -119,6 +119,25 @@ pub const fn level_for(dz: i32) -> u8 {
 
 /// The level a sequence holds the tentacle at (`MyLevel`); -1 in the pit.
 pub const fn level_of(seq: u8) -> i8 {
+    if (seq as usize) < LEVEL_OF.len() {
+        LEVEL_OF[seq as usize]
+    } else {
+        -1
+    }
+}
+
+/// `level_of` for each cooked clip slot, looked up rather than branched.
+const LEVEL_OF: [i8; 19] = {
+    let mut t = [0; 19];
+    let mut seq = 0;
+    while seq < t.len() {
+        t[seq] = seq_level(seq as u8);
+        seq += 1;
+    }
+    t
+};
+
+const fn seq_level(seq: u8) -> i8 {
     match seq {
         RISE | TO_FLOOR | FLOOR_TO_L1 => 0,
         3 | 5 | 6 => 0,
@@ -130,7 +149,26 @@ pub const fn level_of(seq: u8) -> i8 {
 }
 
 /// Entry and exit node of a sequence.
-const fn ends(seq: u8) -> (u8, u8) {
+fn ends(seq: u8) -> (u8, u8) {
+    if (seq as usize) < ENDS.len() {
+        ENDS[seq as usize]
+    } else {
+        (N_PIT, N_PIT)
+    }
+}
+
+/// `seq_ends` for each cooked clip slot.
+const ENDS: [(u8, u8); 19] = {
+    let mut t = [(N_PIT, N_PIT); 19];
+    let mut seq = 0;
+    while seq < t.len() {
+        t[seq] = seq_ends(seq as u8);
+        seq += 1;
+    }
+    t
+};
+
+const fn seq_ends(seq: u8) -> (u8, u8) {
     match seq {
         RISE => (N_PIT, N_L1),
         TO_FLOOR => (N_L1, N_FLOOR),

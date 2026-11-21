@@ -18138,10 +18138,16 @@ unsafe fn make_world_noise(pos: [i32; 3], volume: u16) {
     (*core::ptr::addr_of_mut!(SOUNDS)).insert(pos, volume, senses::WORLD_NOISE_TICKS);
 }
 
-/// The nearest carrying noise an ear `sensitivity` times as keen hears.
+/// The nearest carrying noise an ear `sensitivity` times as keen hears,
+/// `first` (of loudness `first_vol`) weighed first.
 #[inline(never)]
-unsafe fn noise_heard_by(ear: [i32; 3], sensitivity: i32) -> Option<[i32; 3]> {
-    (*core::ptr::addr_of!(SOUNDS)).heard_by(ear, sensitivity)
+unsafe fn noise_heard_with(
+    ear: [i32; 3],
+    sensitivity: i32,
+    first: [i32; 3],
+    first_vol: u16,
+) -> Option<[i32; 3]> {
+    (*core::ptr::addr_of!(SOUNDS)).heard_with(ear, sensitivity, first, first_vol)
 }
 
 /// The player's own sound slot: his footsteps and his last shot. Only the

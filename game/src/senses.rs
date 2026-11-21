@@ -277,25 +277,42 @@ impl Sounds {
 
     /// `heard` for an ear `sensitivity` times as keen (`HearingSensitivity`):
     /// a noise carries its loudness times the sensitivity.
-    #[optimize(size)]
+    #[inline]
     pub fn heard_by(&self, ear: [i32; 3], sensitivity: i32) -> Option<[i32; 3]> {
+        self.heard_with(ear, sensitivity, [0; 3], 0)
+    }
+
+    /// `heard_by` with one more noise, `first` of loudness `first_vol`,
+    /// weighed before the slots: it wins a tie of distance.
+    #[optimize(size)]
+    pub fn heard_with(
+        &self,
+        ear: [i32; 3],
+        sensitivity: i32,
+        first: [i32; 3],
+        first_vol: u16,
+    ) -> Option<[i32; 3]> {
         let mut best: Option<([i32; 3], i32)> = None;
-        for i in 0..SLOTS {
-            if self.ttl[i] == 0 {
+        for i in 0..=SLOTS {
+            let (pos, vol) = if i == 0 {
+                (first, first_vol)
+            } else if self.ttl[i - 1] != 0 {
+                (self.pos[i - 1], self.vol[i - 1])
+            } else {
+                continue;
+            };
+            // A slot never holds a silent noise (`insert` drops it).
+            if vol == 0 {
                 continue;
             }
-            let r = self.vol[i] as i32 * sensitivity;
-            let d = [
-                self.pos[i][0] - ear[0],
-                self.pos[i][1] - ear[1],
-                self.pos[i][2] - ear[2],
-            ];
+            let r = vol as i32 * sensitivity;
+            let d = [pos[0] - ear[0], pos[1] - ear[1], pos[2] - ear[2]];
             if d[0].abs() > r || d[1].abs() > r || d[2].abs() > r {
                 continue;
             }
             let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             if d2 <= r * r && best.map_or(true, |b| d2 < b.1) {
-                best = Some((self.pos[i], d2));
+                best = Some((pos, d2));
             }
         }
         best.map(|b| b.0)
@@ -457,6 +474,32 @@ mod tests {
         assert!(s.heard([1200, 0, 0]).is_none());
         assert!(s.heard_by([1200, 0, 0], 2).is_some());
         assert!(s.heard_by([1201, 0, 0], 2).is_none());
+    }
+
+    #[test]
+    fn the_first_noise_wins_a_tie_and_a_nearer_slot_beats_it() {
+        let mut s = Sounds::EMPTY;
+        s.insert([300, 0, 0], VOL_NORMAL_GUN, 4);
+        // the extra noise as near as the slot: it is the one heard
+        assert_eq!(
+            s.heard_with([0; 3], 2, [-300, 0, 0], 200),
+            Some([-300, 0, 0])
+        );
+        // the slot nearer: the slot
+        assert_eq!(
+            s.heard_with([0; 3], 2, [-301, 0, 0], 200),
+            Some([300, 0, 0])
+        );
+        // a silent extra noise is not heard, even where the ear is
+        assert_eq!(s.heard_with([0; 3], 2, [0; 3], 0), Some([300, 0, 0]));
+        let quiet = Sounds::EMPTY;
+        assert_eq!(quiet.heard_with([0; 3], 2, [0; 3], 0), None);
+        // beyond twice its loudness the extra noise is not heard
+        assert_eq!(quiet.heard_with([0; 3], 2, [401, 0, 0], 200), None);
+        assert_eq!(
+            quiet.heard_with([0; 3], 2, [400, 0, 0], 200),
+            Some([400, 0, 0])
+        );
     }
 
     #[test]
