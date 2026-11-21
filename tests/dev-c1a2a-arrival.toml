@@ -265,26 +265,36 @@ kind="expr"
 expr="i16(LOGIC_PLAYER_HEALTH) >= 90"
 
 [[step]]
-label = "pause and open Save Game"
+label = "pause: the game reads Start at its next pad poll"
 press = ["start"]
-hold = 8
-wait = 25
+sync = "poll"
+hold = 2
 
 [[step]]
+label = "the pause menu is open when Down moves its cursor to Save Game (PAUSE_STATE.sel 1)"
 press = ["down"]
-hold = 8
-wait = 12
+sync = "poll"
+hold_until = { kind = "ram", sym = "PAUSE_STATE", size = 4, op = "eq", value = 1 }
+timeout = 900
 
 [[step]]
+label = "open Save Game: the card slot page (PAUSE_STATE.page 0 is the slot page for saving)"
 press = ["cross"]
-hold = 8
-wait = 35
+sync = "poll"
+hold_until = { kind = "ram", sym = "PAUSE_STATE", offset = 24, size = 1, op = "eq", value = 0 }
+timeout = 900
 
 [[step]]
-label = "save to Card 1 Manual"
+label = "let go of Cross so the next press is a new one"
+sync = "poll"
+wait = 2
+
+[[step]]
+label = "save to Card 1 Manual: the write blocks the game, so the polls counted after it start once it is done"
 press = ["cross"]
-hold = 8
-wait = 400
+sync = "poll"
+hold = 2
+wait = 120
 
 [[step]]
 checkpoint = "game-saved"
