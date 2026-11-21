@@ -835,6 +835,18 @@ const DBG_CAM_YAW: u16 = 0;
 const DBG_CAM_PITCH: i16 = -200;
 const MODEL_HIT_SHADE: u8 = 180; // brief flash when the player lands a shot
 const SIM_VBLANKS: u32 = 3; // 60 Hz NTSC / 3 = 20 Hz gameplay tick
+/// The gameplay clock: every owed tick is caught up before the next render.
+#[cfg(not(feature = "interaction-probe"))]
+const SIM_CLOCK: psx_tick::TickConfig =
+    psx_tick::TickConfig::new(psx_tick::TickRate::every_vblanks(SIM_VBLANKS as u16));
+/// The probe disc renders after every tick and carries the debt forward. Its trace lines can
+/// cost more than a tick's three VBlanks for the whole run (a busy map's entity dump alone takes
+/// about seventy), and an unbounded catch-up would then never reach the render: the picture
+/// stayed on the loading strip or the map's first frame. The ticks themselves are unchanged.
+#[cfg(feature = "interaction-probe")]
+const SIM_CLOCK: psx_tick::TickConfig =
+    psx_tick::TickConfig::new(psx_tick::TickRate::every_vblanks(SIM_VBLANKS as u16))
+        .with_interleave(1);
 
 /// Camera pose snapshot at a simulation tick: position, eye height, yaw,
 /// pitch. Decoupled presentation interpolates the view between the last two
@@ -36603,7 +36615,7 @@ fn play(
     // Gameplay ticks at SIM_VBLANKS on the shared psx-tick clock, with every
     // owed tick caught up before the next render.
     let mut sim_clock = psx_tick::FixedClock::new(
-        psx_tick::TickConfig::new(psx_tick::TickRate::every_vblanks(SIM_VBLANKS as u16)),
+        SIM_CLOCK,
         interrupts::vblank_count().wrapping_add(SIM_VBLANKS),
     );
     unsafe {

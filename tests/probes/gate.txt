@@ -29,7 +29,7 @@ map c1a1b
 # maker-babycrab-c4a2b.toml). The retail maps fire these makers from a broken wall (c2a1 and c2a1a,
 # `ammo3`) and from the Gonarch fight (c4a2b, `babies`); `fire` runs the same switch as the
 # trigger's target would.
-# c2a1 (room 37): the maker is at HL (-816, -16, -96); the player stands on it until the fire (the maker will not spawn into a player), then steps seventy units off. The probe's camera stays on the map's start view in these two maps (cause not found), so these two journeys read RAM and take no picture.
+# c2a1 (room 37): the maker is at HL (-816, -16, -96); the player stands on it until the fire (the maker will not spawn into a player), then steps seventy units off. The maker sits inside a wooden crate (the retail map breaks it to drop the box), so the pictures show the crate from inside; the journeys judge by RAM.
 map c2a1
 0 god 2
 30 tp -816 -16 -96 0 0 700
@@ -37,7 +37,7 @@ map c2a1
 100 fire ammo3 on
 130 tp -886 -16 -96 0 0 700
 
-# c2a1a (room 38): the maker is at HL (912, 2496, 320); the player stands on it until the fire (the maker will not spawn into a player), then steps seventy units off. The probe's camera stays on the map's start view in these two maps (cause not found), so these two journeys read RAM and take no picture.
+# c2a1a (room 38): the maker is at HL (912, 2496, 320); the player stands on it until the fire (the maker will not spawn into a player), then steps seventy units off. The maker sits inside a wooden crate (the retail map breaks it to drop the box), so the pictures show the crate from inside; the journeys judge by RAM.
 map c2a1a
 0 god 2
 30 tp 912 2496 320 0 0 700
@@ -53,8 +53,8 @@ map c4a2b
 100 fire babies on
 
 # monstermaker snarks (tests/maker-snark-c2a5f.toml, maker-snark-c3a1.toml). The player is mortal
-# and stands a hundred units from the first maker; the snarks must wake and bite. The picture is
-# black in both maps (the probe's position is out of sight of the world), so the journeys read RAM.
+# and stands a hundred units from the first maker; the snarks must wake and bite. A snark is small and
+# at the player's feet when it bites, so the journeys judge by RAM.
 # c2a5f (room 70): `snark_spawner` is at HL (-1530, 1370, -1360).
 map c2a5f
 30 tp -1430 1370 -1388 180 0 3000
