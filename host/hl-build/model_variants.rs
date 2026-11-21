@@ -224,6 +224,7 @@ fn generic_monster_type(entity: &Entity) -> Option<u8> {
         "fungus(small).mdl" => 70,
         "fungus(large).mdl" => 71,
         "pipe_bubbles.mdl" => 72,
+        "rengine.mdl" => 77,
         _ => return None,
     })
 }

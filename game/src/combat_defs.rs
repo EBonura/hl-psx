@@ -6,7 +6,7 @@
 //! retail behaviour (`parity.rs`). Gameplay code reads these tables directly;
 //! nothing here is a copy.
 
-pub const N_MODEL_TYPES: usize = 77;
+pub const N_MODEL_TYPES: usize = 78;
 
 pub const SCIENTIST_HEALTH: u8 = 20;
 pub const BARNEY_HEALTH: u8 = 35;
@@ -266,6 +266,8 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(8, 60, 140, AI_IDLE), // 74 Xen tree
     mdef(0, 8, 16, AI_ITEM), // 75 dispenser can
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM), // 76 authored ammunition box
+    // c1a4i's rocket engine (the `rengine` cycler the engine test fires): one 172-unit pose.
+    mdef(8, 86, 200, AI_IDLE), // 77 rocket engine
 ];
 
 // (ammo pool, rounds) per ammo pickup type 40..=47.
