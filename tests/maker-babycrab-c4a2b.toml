@@ -1,0 +1,55 @@
+# c4a2b `babies`: ten makers of three baby headcrabs (type 59, two live at most each). The cook used to drop them.
+name = "maker-babycrab-c4a2b"
+title = "Half-Life: c4a2b babies makers make baby headcrabs"
+disc = "build/probe/hl-psx.cue"
+symbols = ["build/probe/hl-psx.map", "build/probe/symbols.txt"]
+pad = "dualshock"
+max_ticks = 6000
+
+[[step]]
+label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad"
+press = ["l1", "down", "up", "start", "r3", "select"]
+hold = 180
+
+[[step]]
+label = "wait for the world"
+wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 1022 }
+timeout = 3000
+
+[[step]]
+label = "the probe stands the player at the maker at map tick 30 and fires it at 100: the stock is dormant before"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "ge", value = 90 }
+timeout = 3000
+
+[[step]]
+checkpoint = "before"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[27])+u8(PROP_ACTIVE[28])+u8(PROP_ACTIVE[29])+u8(PROP_ACTIVE[30])+u8(PROP_ACTIVE[31])+u8(PROP_ACTIVE[32])+u8(PROP_ACTIVE[33])+u8(PROP_ACTIVE[34])+u8(PROP_ACTIVE[35])+u8(PROP_ACTIVE[36])+u8(PROP_ACTIVE[37])+u8(PROP_ACTIVE[38])+u8(PROP_ACTIVE[39])+u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])+u8(PROP_ACTIVE[45])+u8(PROP_ACTIVE[46])+u8(PROP_ACTIVE[47])+u8(PROP_ACTIVE[48])+u8(PROP_ACTIVE[49])+u8(PROP_ACTIVE[50])+u8(PROP_ACTIVE[51])+u8(PROP_ACTIVE[52])+u8(PROP_ACTIVE[53])+u8(PROP_ACTIVE[54])+u8(PROP_ACTIVE[55])+u8(PROP_ACTIVE[56])) == 0"
+[[step.assert]]
+kind = "expr"
+expr = "u8(PROP_KIND[27]) == 59"
+
+[[step]]
+label = "the maker wakes stock"
+wait_until = { kind = "expr", expr = "(u8(PROP_ACTIVE[27])+u8(PROP_ACTIVE[28])+u8(PROP_ACTIVE[29])+u8(PROP_ACTIVE[30])+u8(PROP_ACTIVE[31])+u8(PROP_ACTIVE[32])+u8(PROP_ACTIVE[33])+u8(PROP_ACTIVE[34])+u8(PROP_ACTIVE[35])+u8(PROP_ACTIVE[36])+u8(PROP_ACTIVE[37])+u8(PROP_ACTIVE[38])+u8(PROP_ACTIVE[39])+u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])+u8(PROP_ACTIVE[45])+u8(PROP_ACTIVE[46])+u8(PROP_ACTIVE[47])+u8(PROP_ACTIVE[48])+u8(PROP_ACTIVE[49])+u8(PROP_ACTIVE[50])+u8(PROP_ACTIVE[51])+u8(PROP_ACTIVE[52])+u8(PROP_ACTIVE[53])+u8(PROP_ACTIVE[54])+u8(PROP_ACTIVE[55])+u8(PROP_ACTIVE[56])) >= 2" }
+timeout = 900
+
+[[step]]
+label = "give the spawn a moment to show"
+wait = 60
+
+[[step]]
+checkpoint = "spawned"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[27])+u8(PROP_ACTIVE[28])+u8(PROP_ACTIVE[29])+u8(PROP_ACTIVE[30])+u8(PROP_ACTIVE[31])+u8(PROP_ACTIVE[32])+u8(PROP_ACTIVE[33])+u8(PROP_ACTIVE[34])+u8(PROP_ACTIVE[35])+u8(PROP_ACTIVE[36])+u8(PROP_ACTIVE[37])+u8(PROP_ACTIVE[38])+u8(PROP_ACTIVE[39])+u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])+u8(PROP_ACTIVE[45])+u8(PROP_ACTIVE[46])+u8(PROP_ACTIVE[47])+u8(PROP_ACTIVE[48])+u8(PROP_ACTIVE[49])+u8(PROP_ACTIVE[50])+u8(PROP_ACTIVE[51])+u8(PROP_ACTIVE[52])+u8(PROP_ACTIVE[53])+u8(PROP_ACTIVE[54])+u8(PROP_ACTIVE[55])+u8(PROP_ACTIVE[56])) >= 2"
+[[step.assert]]
+kind = "expr"
+expr = "u8(PROP_KIND[27]) == 59"

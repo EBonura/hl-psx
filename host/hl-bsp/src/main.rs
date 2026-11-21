@@ -11673,7 +11673,7 @@ fn collect_props(
                 // Spawner: cook up to 4 DORMANT copies (bit 0x4000) of the
                 // monster it makes; the runtime activates them one per fire.
                 let mt = ent_value(block, "monstertype").unwrap_or("");
-                let Some(base) = monster_type_id(mt) else {
+                let Some(base) = maker_child_type(mt) else {
                     continue;
                 };
                 let count = parse_f32_key(block, "monstercount", 1.0)
@@ -11966,6 +11966,17 @@ fn monster_type_id(cls: &str) -> Option<u16> {
         "monster_sentry" => 20,
         _ => return None,
     })
+}
+
+/// What a monstermaker's `monstertype` makes: the monster classes of `monster_type_id`, the baby
+/// headcrab (the Gonarch fight's `babies` makers) and the .357 ammo box of c2a1 and c2a1a. Kept
+/// apart from `monster_type_id` so scripted sequences keep matching the classes they matched.
+fn maker_child_type(cls: &str) -> Option<u16> {
+    match cls {
+        "monster_babycrab" => Some(59),
+        "ammo_357" => Some(43),
+        _ => monster_type_id(cls),
+    }
 }
 
 /// `monster_generic` selects its studio model through the entity's `model`
@@ -20446,6 +20457,17 @@ mod tests {
 
         assert_eq!(point_leaf([8.0, 0.0, 0.0], &nodes, &planes), 1);
         assert_eq!(point_leaf([-8.0, 0.0, 0.0], &nodes, &planes), 2);
+    }
+
+    #[test]
+    fn a_monstermaker_makes_the_baby_headcrab_and_the_357_box() {
+        assert_eq!(maker_child_type("monster_babycrab"), Some(59));
+        assert_eq!(maker_child_type("ammo_357"), Some(43));
+        assert_eq!(maker_child_type("monster_zombie"), Some(5));
+        // Not a maker's child: a class monster_type_id does not know stays dropped.
+        assert_eq!(maker_child_type("monster_snark"), None);
+        // Scripted sequences keep their old class table.
+        assert_eq!(monster_type_id("monster_babycrab"), None);
     }
 
     #[test]

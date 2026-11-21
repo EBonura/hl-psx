@@ -1,0 +1,52 @@
+# c2a1a `ammo3` is a monstermaker of ammo_357 (type 43), one box.
+name = "maker-ammo357-c2a1a"
+title = "Half-Life: c2a1a monstermaker makes the .357 ammo box"
+disc = "build/probe/hl-psx.cue"
+symbols = ["build/probe/hl-psx.map", "build/probe/symbols.txt"]
+pad = "dualshock"
+max_ticks = 6000
+
+[[step]]
+label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad"
+press = ["l1", "right", "r3", "l3"]
+hold = 180
+
+[[step]]
+label = "wait for the world"
+wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 9875 }
+timeout = 3000
+
+[[step]]
+label = "the probe stands the player at the maker at map tick 30 and fires it at 100: the stock is dormant before"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "ge", value = 90 }
+timeout = 3000
+
+[[step]]
+checkpoint = "before"
+golden = false
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[47])) == 0"
+[[step.assert]]
+kind = "expr"
+expr = "u8(PROP_KIND[47]) == 43"
+
+[[step]]
+label = "the maker wakes stock"
+wait_until = { kind = "expr", expr = "(u8(PROP_ACTIVE[47])) >= 1" }
+timeout = 900
+
+[[step]]
+label = "give the spawn a moment to show"
+wait = 60
+
+[[step]]
+checkpoint = "spawned"
+golden = false
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[47])) >= 1"
+[[step.assert]]
+kind = "expr"
+expr = "u8(PROP_KIND[47]) == 43"
+

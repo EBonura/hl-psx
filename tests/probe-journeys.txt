@@ -3,3 +3,6 @@
 # line. Their `disc` and `symbols` already name dist/probe and .hlpsx/probe.
 hazard-panels.toml
 unstick-vent.toml
+maker-ammo357-c2a1.toml
+maker-ammo357-c2a1a.toml
+maker-babycrab-c4a2b.toml

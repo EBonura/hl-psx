@@ -24,3 +24,31 @@ map t0a0b
 map c1a1b
 0 god 1
 30 tp -511 -718 -180 90 0
+
+# monstermaker children (tests/maker-ammo357-c2a1.toml, maker-ammo357-c2a1a.toml and
+# maker-babycrab-c4a2b.toml). The retail maps fire these makers from a broken wall (c2a1 and c2a1a,
+# `ammo3`) and from the Gonarch fight (c4a2b, `babies`); `fire` runs the same switch as the
+# trigger's target would.
+# c2a1 (room 37): the maker is at HL (-816, -16, -96); the player stands on it until the fire (the maker will not spawn into a player), then steps seventy units off. The probe's camera stays on the map's start view in these two maps (cause not found), so these two journeys read RAM and take no picture.
+map c2a1
+0 god 2
+30 tp -816 -16 -96 0 0 700
+31 view 0 -15
+100 fire ammo3 on
+130 tp -886 -16 -96 0 0 700
+
+# c2a1a (room 38): the maker is at HL (912, 2496, 320); the player stands on it until the fire (the maker will not spawn into a player), then steps seventy units off. The probe's camera stays on the map's start view in these two maps (cause not found), so these two journeys read RAM and take no picture.
+map c2a1a
+0 god 2
+30 tp 912 2496 320 0 0 700
+31 view 0 -15
+100 fire ammo3 on
+130 tp 842 2496 320 0 0 700
+
+# c4a2b (room 93): ten makers of three baby headcrabs, the first at HL (64, 464, -216).
+map c4a2b
+0 god 2
+30 tp 64 364 -244 90 0 700
+31 view 90 0
+100 fire babies on
+

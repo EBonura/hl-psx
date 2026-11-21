@@ -42,7 +42,7 @@ commands = [
   ["sh", "-c", "awk 'NF == 6 && $6 ~ /^[(][.][0-9]+[)]$/ {print $1, $5}' .hlpsx/hl-psx.map > {out}/symbols.txt"],
 ]
 # HLPSX_PROBE is read by game/build.rs, which runs in game/.
-env = { HLPSX_PROBE = "../tests/probes/gate.txt", HLPSX_BENCH_MAPS = "98,14" }
+env = { HLPSX_PROBE = "../tests/probes/gate.txt", HLPSX_BENCH_MAPS = "98,14,37,38,93" }
 collect = { "hl-psx.bin" = "dist/hl-psx.bin", "hl-psx.cue" = "dist/hl-psx.cue", "hl-psx.map" = ".hlpsx/hl-psx.map" }
 disc = "hl-psx.cue"
 map = "hl-psx.map"
