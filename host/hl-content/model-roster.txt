@@ -49,7 +49,10 @@
 47|w_ARgrenade|0:1
 48|w_medkit|0:1
 49|w_longjump|0:1
-50|tentacle2|0:2,0:2,7:4,5:3,48:2
+# The tentacle is drawn as authored (MOVETYPE_FLY): its Pit_Idle (0) lies wholly below the pit
+# mouth, where CTentacle keeps it until it hears a sound. The port has no hearing yet, so it rests
+# risen at level 3: Lev3_Idle, Lev3_Strike, Lev3_Fidget_Shake, Engine_death1.
+50|tentacle2|33:2,33:2,37:4,34:3,48:2
 51|hassassin|0:4,3:4,5:4,2:2,10:3
 52|loader|idle:2,boxwalk:4,0:1,0:1,herodie:6,rampwalk:10,idle1=idle
 53|forklift|idle2:4,0:1,0:1,0:1,0:1,patha:8,pathb:12,idle1=idle2

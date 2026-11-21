@@ -17409,17 +17409,17 @@ fn mdl_hangs_from_origin(mdl: &[u8]) -> bool {
 
 /// How far, in HL units, a model's first pose may reach below its origin and still count as
 /// standing on it: half the 72-unit human hull. Every walking model in the roster stays within
-/// 3 units; the osprey (112), the ichthyosaur (56) and the barnacle (92) reach far deeper
-/// because their origin lies inside the body.
+/// 3 units. Every model that reaches deeper is one GoldSrc never stands on the floor: its
+/// monster spawns MOVETYPE_FLY (or hangs, the barnacle) and is drawn at the entity origin as
+/// authored. Clip 0 depths: ichthyosaur 56, barnacle 92, osprey 112, apache 172 (the rotor hub is
+/// the origin, the body hangs below it), tentacle 986 (Pit_Idle: the whole tentacle is down its
+/// pit), nihilanth 1086 (the origin is at his chest).
 const MDL_STANDING_DEPTH_LIMIT: f32 = 36.0;
-/// Deeper than this the first pose is a root-motion offset, not a body centred on its origin
-/// (apache 172, tentacle 986, nihilanth 1086 in clip 0): those keep the floor anchor until
-/// their placement is established on its own evidence.
-const MDL_CENTRED_DEPTH_MAX: f32 = 128.0;
 
-/// The first pose of clip 0 reaches between `MDL_STANDING_DEPTH_LIMIT` and `MDL_CENTRED_DEPTH_MAX` below the origin: the
-/// origin is the body's centre (a flyer or swimmer), and GoldSrc draws the model at the entity
-/// origin as authored. `frames` hold cooked coordinates (Y up, `vertex_scale` per unit).
+/// The first pose of clip 0 reaches more than `MDL_STANDING_DEPTH_LIMIT` below the origin: the
+/// model is not one that stands on its origin (a flyer, swimmer or pit dweller), and GoldSrc
+/// draws it at the entity origin as authored. `frames` hold cooked coordinates (Y up,
+/// `vertex_scale` per unit).
 fn mdl_body_centred_on_origin(
     frames: &[Vec<[i16; 3]>],
     clips: &[(u16, u16)],
@@ -17431,7 +17431,7 @@ fn mdl_body_centred_on_origin(
         .and_then(|frame| frame.iter().map(|v| v[1]).min());
     lowest.is_some_and(|y| {
         let depth = -(y as f32) / vertex_scale.max(1) as f32;
-        depth > MDL_STANDING_DEPTH_LIMIT && depth <= MDL_CENTRED_DEPTH_MAX
+        depth > MDL_STANDING_DEPTH_LIMIT
     })
 }
 
@@ -20569,8 +20569,8 @@ mod tests {
             &clips,
             4
         ));
-        // clip 0 of the apache reaches 172 units down: root motion, not a centred body.
-        assert!(!mdl_body_centred_on_origin(
+        // clip 0 of the apache reaches 172 units down: the body hangs below the rotor hub.
+        assert!(mdl_body_centred_on_origin(
             &[vec![[0, -689, 0]]],
             &clips,
             4
