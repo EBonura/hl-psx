@@ -1,0 +1,49 @@
+# c2a5f `snark_spawner` is a monstermaker of monster_snark (type 58). The cook used to drop it.
+name = "maker-snark-c2a5f"
+title = "Half-Life: c2a5f monstermaker makes a snark that bites"
+disc = "build/probe/hl-psx.cue"
+symbols = ["build/probe/hl-psx.map", "build/probe/symbols.txt"]
+pad = "dualshock"
+max_ticks = 8000
+
+[[step]]
+label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad"
+press = ["l1", "down", "r3", "l3"]
+sync = "poll"
+hold_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 10913 }
+timeout = 3000
+
+[[step]]
+label = "the probe stands the player near the maker at map tick 30 and fires it at 100: the stock is dormant before"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "ge", value = 90 }
+timeout = 3000
+
+[[step]]
+checkpoint = "before"
+golden = false
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[58])) == 0"
+[[step.assert]]
+kind = "expr"
+expr = "u8(PROP_KIND[58]) == 58"
+[[step.assert]]
+kind = "expr"
+expr = "i16(LOGIC_PLAYER_HEALTH) == 100"
+
+[[step]]
+label = "the maker wakes snarks"
+wait_until = { kind = "expr", expr = "(u8(PROP_ACTIVE[58])) >= 1" }
+timeout = 900
+
+[[step]]
+label = "a snark runs to the player and bites"
+wait_until = { kind = "expr", expr = "i16(LOGIC_PLAYER_HEALTH) < 100" }
+timeout = 3000
+
+[[step]]
+checkpoint = "bitten"
+golden = false
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[58])) >= 1"

@@ -1,0 +1,43 @@
+# c3a1 `snarkegg1spawn` is five monstermakers of monster_snark (type 58). The cook used to drop them. The map's own triggers fire the eggs (the stock is awake by tick 90), so the journey checks the awake snarks and the bite, not the fire.
+name = "maker-snark-c3a1"
+title = "Half-Life: c3a1 monstermaker makes snarks that bite"
+disc = "build/probe/hl-psx.cue"
+symbols = ["build/probe/hl-psx.map", "build/probe/symbols.txt"]
+pad = "dualshock"
+max_ticks = 8000
+
+[[step]]
+label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad"
+press = ["l1", "down", "start", "l3"]
+sync = "poll"
+hold_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 7286 }
+timeout = 3000
+
+[[step]]
+label = "the probe stands the player near the maker at map tick 30 and fires it at 100: the map may already have woken some of the stock"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "ge", value = 90 }
+timeout = 3000
+
+[[step]]
+checkpoint = "before"
+golden = false
+[[step.assert]]
+kind = "expr"
+expr = "u8(PROP_KIND[40]) == 58"
+
+[[step]]
+label = "the maker wakes snarks"
+wait_until = { kind = "expr", expr = "(u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])) >= 3" }
+timeout = 900
+
+[[step]]
+label = "a snark runs to the player and bites"
+wait_until = { kind = "expr", expr = "i16(LOGIC_PLAYER_HEALTH) < 100" }
+timeout = 3000
+
+[[step]]
+checkpoint = "bitten"
+golden = false
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])) >= 3"

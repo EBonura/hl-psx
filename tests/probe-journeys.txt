@@ -6,3 +6,5 @@ unstick-vent.toml
 maker-ammo357-c2a1.toml
 maker-ammo357-c2a1a.toml
 maker-babycrab-c4a2b.toml
+maker-snark-c2a5f.toml
+maker-snark-c3a1.toml
