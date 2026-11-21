@@ -283,6 +283,8 @@ fn base_clip_count(ty: u8) -> usize {
         // The nihilanth's attack2, recharge, float_open and attack1_open.
         17 => 9,
         25 => 7,
+        // The tentacle's pit, transitions, idles, strikes and taps (game/src/tentacle.rs).
+        50 => 19,
         56 => 1,
         _ => 5,
     }

@@ -48,6 +48,8 @@ pub mod player_rules;
 pub mod proj_logic;
 #[path = "../../../game/src/senses.rs"]
 pub mod senses;
+#[path = "../../../game/src/tentacle.rs"]
+pub mod tentacle;
 #[path = "../../../game/src/throwable.rs"]
 pub mod throwable;
 #[path = "../../../game/src/trigger_rules.rs"]

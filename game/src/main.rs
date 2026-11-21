@@ -129,6 +129,7 @@ mod setpiece_logic;
 mod setpiece_sfx;
 mod species;
 mod tank;
+mod tentacle;
 mod throwable;
 mod trigger_rules;
 mod tripmine;
@@ -10120,6 +10121,9 @@ unsafe fn logic_fire_targets(
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < nprops {
+        if PROP_NAME[pi] == target && PROP_KIND[pi] == tentacle::KIND && PROP_ACTIVE[pi] != 0 {
+            species::tentacle_use(pi, use_type, LOGIC_PLAYER_POS);
+        }
         if PROP_NAME[pi] == target && model_def(PROP_KIND[pi]).ai == AI_TURRET {
             let inactive = PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE != 0;
             let enable = match use_type {
@@ -15470,6 +15474,19 @@ fn prop_anim_frame(
         let elapsed = unsafe { SIM_NOW }.wrapping_sub(start) as usize;
         return md.looped_clip_phase(clip, duration, elapsed);
     }
+    if unsafe { PROP_KIND[pi] } == tentacle::KIND && state != PROP_STATE_DEAD {
+        // The tentacle plays its sequences forward or back at its own rate.
+        if let Some((slot, cycle)) = unsafe { species::tentacle_clip(pi) } {
+            if slot < md.clip_count() {
+                forget_clip();
+                if !pose {
+                    return (0, 0, 0);
+                }
+                let ticks = md.clip_hold_ticks(slot).max(1) as usize;
+                return md.one_shot_clip_phase(slot, ticks, cycle * ticks / 4096);
+            }
+        }
+    }
     if unsafe { PROP_KIND[pi] } == 17 && state != PROP_STATE_DEAD && hit_flash == 0 {
         // The nihilanth's schedule picks its own sequences.
         if let Some((slot, ticks, elapsed)) = unsafe { nihilanth::clip(pi) } {
@@ -17950,6 +17967,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
                 scaled
             }
         }
+    } else if PROP_KIND[pi] == tentacle::KIND {
+        // CTentacle::TakeDamage wears it down to 1 and never kills it.
+        PROP_HEALTH[pi] = tentacle::Tentacle::take_damage(PROP_HEALTH[pi], dmg);
+        return;
     } else if PROP_KIND[pi] == 17 {
         PROP_HEALTH[pi] = nihilanth::damage(pi, dmg);
         PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
@@ -18110,6 +18131,22 @@ static mut SOUNDS: senses::Sounds = senses::Sounds::EMPTY;
 unsafe fn make_noise(pos: [i32; 3], volume: u16) {
     (*core::ptr::addr_of_mut!(SOUNDS)).insert(pos, volume, 6);
 }
+
+/// A noise a trigger makes (`CSoundEnt::InsertSound(bits_SOUND_WORLD, ..., 1.0)`).
+#[inline(never)]
+unsafe fn make_world_noise(pos: [i32; 3], volume: u16) {
+    (*core::ptr::addr_of_mut!(SOUNDS)).insert(pos, volume, senses::WORLD_NOISE_TICKS);
+}
+
+/// The nearest carrying noise an ear `sensitivity` times as keen hears.
+#[inline(never)]
+unsafe fn noise_heard_by(ear: [i32; 3], sensitivity: i32) -> Option<[i32; 3]> {
+    (*core::ptr::addr_of!(SOUNDS)).heard_by(ear, sensitivity)
+}
+
+/// The player's own sound slot: his footsteps and his last shot. Only the
+/// tentacle listens to it so far.
+static mut PLAYER_NOISE: senses::PlayerNoise = senses::PlayerNoise::SILENT;
 
 /// Where each hunter last saw its enemy (`m_vecEnemyLKP`) and which enemy
 /// that memory is of. A hunter that loses sight walks to this spot, not to
@@ -20569,6 +20606,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
     TALKING_UNTIL = 0;
     TALKING_VOICE = 0;
     species::reset_leeches();
+    species::reset_tentacles();
     species::reset_gonarch();
     PLAYER_WATER_LEVEL = 0;
     *heal_clock() = scientist_logic::HealClock::EMPTY;
@@ -22679,6 +22717,48 @@ unsafe fn prop_studio_hit_fraction(
     start: [i32; 3],
     end: [i32; 3],
 ) -> Option<i32> {
+    nihilanth::note_shot(pi, start, end);
+    prop_studio_segment(m, pi, start, end, 0)
+}
+
+/// Whether the player's hull at `player_pos` (its centre) touches a posed
+/// hitbox of actor `pi`: his vertical axis against every box grown by his
+/// hull's half width. The box touched is left in `STUDIO_HIT_BOX`.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_studio_touch(m: &Map, pi: usize, player_pos: [i32; 3]) -> Option<u8> {
+    let half = LOGIC_PLAYER_HALF_HEIGHT;
+    let feet = [player_pos[0], player_pos[1] - half, player_pos[2]];
+    let head = [player_pos[0], player_pos[1] + half, player_pos[2]];
+    prop_studio_segment(m, pi, feet, head, 16).map(|_| STUDIO_HIT_BOX)
+}
+
+/// Whether hitbox `hitbox` of the tentacle is its claw (hit group 3), the
+/// part whose touch does the strike's damage.
+#[inline]
+fn tentacle_claw_box(hitbox: u8) -> bool {
+    let mut i = 0;
+    while i < skill_table::HIT_MASKS.len() {
+        let (t, group, mask) = skill_table::HIT_MASKS[i];
+        if t == tentacle::KIND && group == hl_format::hitgroup::TENTACLE_CLAW {
+            return hitbox < 32 && mask >> hitbox & 1 != 0;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Entry fraction of the segment into the nearest posed hitbox of actor
+/// `pi`, every box grown by `grow` world units.
+#[optimize(size)]
+#[inline(never)]
+unsafe fn prop_studio_segment(
+    m: &Map,
+    pi: usize,
+    start: [i32; 3],
+    end: [i32; 3],
+    grow: i32,
+) -> Option<i32> {
     let ty = PROP_KIND[pi] as usize;
     if ty >= N_MODEL_TYPES {
         return None;
@@ -22705,7 +22785,7 @@ unsafe fn prop_studio_hit_fraction(
     let yaw = prop_yaw_value(PROP_YAW[pi]);
     let model_rotation = prop_model_rotation(yaw, prop_authored_tilt(m, pi));
     let scale = model_local_scale(md.local_to_world_q12());
-    nihilanth::note_shot(pi, start, end);
+    let grow = grow * scale;
     let model_start = inverse_rotate_scaled(start, PROP_POS[pi], &model_rotation, scale);
     let model_end = inverse_rotate_scaled(end, PROP_POS[pi], &model_rotation, scale);
     let mut best = None;
@@ -22715,14 +22795,14 @@ unsafe fn prop_studio_hit_fraction(
         let local_start = inverse_bone_point(model_start, bone);
         let local_end = inverse_bone_point(model_end, bone);
         let mins = [
-            hitbox.bbmin.x as i32,
-            hitbox.bbmin.y as i32,
-            hitbox.bbmin.z as i32,
+            hitbox.bbmin.x as i32 - grow,
+            hitbox.bbmin.y as i32 - grow,
+            hitbox.bbmin.z as i32 - grow,
         ];
         let maxs = [
-            hitbox.bbmax.x as i32,
-            hitbox.bbmax.y as i32,
-            hitbox.bbmax.z as i32,
+            hitbox.bbmax.x as i32 + grow,
+            hitbox.bbmax.y as i32 + grow,
+            hitbox.bbmax.z as i32 + grow,
         ];
         if let Some(frac) = hitbox_logic::ray_aabb_fraction_q12(local_start, local_end, mins, maxs)
         {
@@ -23084,13 +23164,12 @@ unsafe fn fire_weapon(
 ) -> bool {
     // The shot is heard: loud guns carry further (`m_iWeaponVolume`). The
     // weapon is the table row `d` points at.
-    make_noise(
-        eye,
-        senses::weapon_volume(
-            (d as *const WeaponDef as usize - WEAPON_DEFS.as_ptr() as usize)
-                / core::mem::size_of::<WeaponDef>(),
-        ),
+    let volume = senses::weapon_volume(
+        (d as *const WeaponDef as usize - WEAPON_DEFS.as_ptr() as usize)
+            / core::mem::size_of::<WeaponDef>(),
     );
+    make_noise(eye, volume);
+    (*core::ptr::addr_of_mut!(PLAYER_NOISE)).fired(volume);
     // Random screen-space aim jitter of magnitude +-mag px. `inacc` grows with
     // player speed / being airborne (HL cone-of-fire); the shotgun adds its own
     // scatter so the pellet pattern isn't a fixed rosette.
@@ -38388,6 +38467,11 @@ fn play(
                 );
                 PLAYER_APPROACH_SPEED = speed.max(PLAYER_LAST_SPEED);
                 PLAYER_LAST_SPEED = speed;
+                (*core::ptr::addr_of_mut!(PLAYER_NOISE)).tick(
+                    speed,
+                    player.on_ground,
+                    jump_was_held,
+                );
                 damage_player_fan_contacts(&m, nents, &mut health, &mut armor);
                 logic_touch_triggers(
                     &m,

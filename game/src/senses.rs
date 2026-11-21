@@ -189,6 +189,7 @@ const TURN_Q12: [u16; 60] = {
     t[20] = 17; // turrets: the gun swings 30 degrees a second
     t[21] = 17;
     t[22] = 17;
+    t[50] = 20; // tentacle: 18
     t
 };
 
@@ -269,14 +270,21 @@ impl Sounds {
 
     /// The nearest noise whose reach covers `ear`, if any (`Listen`: heard
     /// when the distance is within the loudness).
-    #[optimize(size)]
+    #[inline]
     pub fn heard(&self, ear: [i32; 3]) -> Option<[i32; 3]> {
+        self.heard_by(ear, 1)
+    }
+
+    /// `heard` for an ear `sensitivity` times as keen (`HearingSensitivity`):
+    /// a noise carries its loudness times the sensitivity.
+    #[optimize(size)]
+    pub fn heard_by(&self, ear: [i32; 3], sensitivity: i32) -> Option<[i32; 3]> {
         let mut best: Option<([i32; 3], i32)> = None;
         for i in 0..SLOTS {
             if self.ttl[i] == 0 {
                 continue;
             }
-            let r = self.vol[i] as i32;
+            let r = self.vol[i] as i32 * sensitivity;
             let d = [
                 self.pos[i][0] - ear[0],
                 self.pos[i][1] - ear[1],
@@ -291,6 +299,66 @@ impl Sounds {
             }
         }
         best.map(|b| b.0)
+    }
+}
+
+/// Ticks a noise a trigger inserts with `CSoundEnt::InsertSound(..., 1.0)` lasts.
+pub const WORLD_NOISE_TICKS: u8 = 20;
+
+/// The player's own sound slot (`CBasePlayer::UpdatePlayerSound`): how loud
+/// his movement and his last shot are, heard from where he stands. Volumes
+/// are kept doubled so the retail decay of 250 a second is exact at 20 Hz
+/// (12.5 a tick).
+pub struct PlayerNoise {
+    vol2: u16,
+    weapon2: u16,
+}
+
+/// 250 units a second over 20 ticks, doubled.
+const NOISE_DECAY2: u16 = 25;
+
+impl PlayerNoise {
+    pub const SILENT: PlayerNoise = PlayerNoise {
+        vol2: 0,
+        weapon2: 0,
+    };
+
+    /// A shot of `volume` (`m_iWeaponVolume`).
+    pub fn fired(&mut self, volume: u16) {
+        self.weapon2 = volume.saturating_mul(2);
+    }
+
+    /// One tick: the body makes its speed on the ground (at most 512, plus
+    /// 100 while jump is held); the louder of body and gun is the target, a
+    /// louder target is taken at once and a quieter one is decayed toward.
+    /// The retail decay drops straight to silence once it passes below the
+    /// target, and so does this.
+    #[optimize(size)]
+    pub fn tick(&mut self, speed_per_tick: i32, on_ground: bool, jump_held: bool) {
+        let mut body = if on_ground {
+            (speed_per_tick * 20).clamp(0, 512)
+        } else {
+            0
+        };
+        if jump_held {
+            body += 100;
+        }
+        let body2 = (body * 2) as u16;
+        let target2 = self.weapon2.max(body2);
+        self.weapon2 = self.weapon2.saturating_sub(NOISE_DECAY2);
+        if target2 > self.vol2 {
+            self.vol2 = target2;
+        } else if self.vol2 > target2 {
+            self.vol2 -= NOISE_DECAY2.min(self.vol2);
+            if self.vol2 < target2 {
+                self.vol2 = 0;
+            }
+        }
+    }
+
+    /// The loudness now, in units of reach.
+    pub fn volume(&self) -> u16 {
+        self.vol2 / 2
     }
 }
 
@@ -380,6 +448,38 @@ mod tests {
         // the quietest (index 0, at x = 0) is the one that went
         assert!(s.heard([0, 0, 0]) == Some([-100, 0, 0]) || s.heard([0, 0, 0]).is_none());
         assert!(s.heard([5000, 0, 0]).is_some());
+    }
+
+    #[test]
+    fn a_keen_ear_hears_twice_as_far() {
+        let mut s = Sounds::EMPTY;
+        s.insert([0, 0, 0], VOL_NORMAL_GUN, 4);
+        assert!(s.heard([1200, 0, 0]).is_none());
+        assert!(s.heard_by([1200, 0, 0], 2).is_some());
+        assert!(s.heard_by([1201, 0, 0], 2).is_none());
+    }
+
+    #[test]
+    fn the_player_is_as_loud_as_he_is_fast_and_his_gun_fades() {
+        let mut n = PlayerNoise::SILENT;
+        n.tick(16, true, false); // 320 u/s on the ground
+        assert_eq!(n.volume(), 320);
+        n.tick(16, false, false); // airborne: the body is silent, decay starts
+        assert_eq!(n.volume(), 307); // 320 less 12.5
+        n.tick(40, true, false); // clamp
+        assert_eq!(n.volume(), 512);
+        let mut g = PlayerNoise::SILENT;
+        g.fired(VOL_NORMAL_GUN);
+        g.tick(0, true, false);
+        assert_eq!(g.volume(), 600);
+        for _ in 0..20 {
+            g.tick(0, true, false);
+        }
+        // one second later the gun has faded by 250
+        assert!((330..=360).contains(&g.volume()));
+        let mut j = PlayerNoise::SILENT;
+        j.tick(0, true, true);
+        assert_eq!(j.volume(), 100);
     }
 
     #[test]

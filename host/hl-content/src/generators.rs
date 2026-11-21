@@ -371,8 +371,9 @@ pub fn studio_events(models: &Path, roster: &Path, output: &Path) -> Result<()> 
 }
 
 /// Hit groups the game applies a damage rule to (`shared/hl-format` hitgroup):
-/// the head, the alien grunt's armour plates and the HECU helmet.
-const HITGROUPS: [i32; 3] = [1, 10, 11];
+/// the head, the tentacle's claw, the alien grunt's armour plates and the HECU
+/// helmet.
+const HITGROUPS: [i32; 4] = [1, 3, 10, 11];
 
 /// The hitboxes of one hit group in a studio model, as a bit per box in
 /// authored order (the alien grunt's plates are scattered, so a run will not

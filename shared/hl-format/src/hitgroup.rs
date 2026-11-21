@@ -15,6 +15,8 @@ pub const HEAD: u8 = 1;
 pub const ARMOR: u8 = 10;
 /// The HECU grunt's helmet.
 pub const HELMET: u8 = 11;
+/// The tentacle's claw: its touch does the strike's damage (`CTentacle::HitTouch`).
+pub const TENTACLE_CLAW: u8 = 3;
 /// What armour and helmets absorb from one bullet.
 pub const ABSORB: u16 = 20;
 
@@ -36,6 +38,9 @@ pub const RULES: &[(u8, u8)] = &[
     (51, HEAD),
     (54, HEAD),
     (55, HEAD),
+    // The tentacle's claw keeps bullets at face value (`scale`) and names the
+    // boxes whose touch strikes.
+    (50, TENTACLE_CLAW),
 ];
 
 /// The damage of a bullet of `dmg` after it strikes `group`, with

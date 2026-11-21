@@ -329,6 +329,7 @@ pub(crate) unsafe fn tick_slave(
 #[inline(always)]
 pub(crate) fn idle_thinks(ty: u8) -> bool {
     ty == 12
+        || ty == tentacle::KIND
         || ty == PROP_TYPE_LEECH
         || ty == PROP_TYPE_BIGMOMMA
         || ty == tripmine::PROP_TYPE_TRIPMINE
@@ -346,6 +347,8 @@ pub(crate) unsafe fn idle_think(
 ) {
     if ty == 12 {
         barnacle::tick(m, pi, player_pos, health);
+    } else if ty == tentacle::KIND {
+        tick_tentacle(m, pi, player_pos, health, armor);
     } else if ty == PROP_TYPE_LEECH {
         tick_leech(m, movers, pi, player_pos, in_player_pvs, health, armor);
     } else if ty == PROP_TYPE_BIGMOMMA {
@@ -356,6 +359,187 @@ pub(crate) unsafe fn idle_think(
 }
 
 pub(crate) const PROP_TYPE_LEECH: u8 = 13;
+
+static mut TENTACLES: [tentacle::Tentacle; tentacle::SLOTS] =
+    [tentacle::Tentacle::EMPTY; tentacle::SLOTS];
+
+/// A new map starts with no tentacle thinking.
+pub(crate) unsafe fn reset_tentacles() {
+    TENTACLES = [tentacle::Tentacle::EMPTY; tentacle::SLOTS];
+}
+
+/// The tentacle state of prop `pi`, taking a free slot (spawned down its pit)
+/// the first time; `None` when all four are in use.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tentacle_slot(pi: usize) -> Option<&'static mut tentacle::Tentacle> {
+    let slots = &mut *core::ptr::addr_of_mut!(TENTACLES);
+    let mut free = tentacle::SLOTS;
+    let mut i = 0usize;
+    while i < tentacle::SLOTS {
+        if slots[i].prop == pi as u8 {
+            return Some(&mut slots[i]);
+        }
+        if slots[i].prop == tentacle::FREE && free == tentacle::SLOTS {
+            free = i;
+        }
+        i += 1;
+    }
+    if free == tentacle::SLOTS {
+        return None;
+    }
+    slots[free] = tentacle::Tentacle::spawn(pi as u8, prop_yaw_value(PROP_YAW[pi]));
+    Some(&mut slots[free])
+}
+
+/// The tentacle's pose for drawing: its clip slot and q12 position in it.
+pub(crate) unsafe fn tentacle_clip(pi: usize) -> Option<(usize, usize)> {
+    let slots = &*core::ptr::addr_of!(TENTACLES);
+    let mut i = 0usize;
+    while i < tentacle::SLOTS {
+        if slots[i].prop == pi as u8 {
+            let (seq, cycle) = slots[i].pose();
+            return Some((seq as usize, cycle as usize));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// A trigger used tentacle `pi` (`CTentacle::CommandUse`): on, it hears a
+/// noise where the activator stands; off, it dies; toggled, it thrashes,
+/// which the cooked roster cannot show, so it holds what it is doing.
+pub(crate) unsafe fn tentacle_use(pi: usize, use_type: u8, activator: [i32; 3]) {
+    if use_type == map::USE_ON {
+        crate::make_world_noise(activator, 1024);
+    } else if use_type == map::USE_OFF {
+        if let Some(t) = tentacle_slot(pi) {
+            t.die();
+        }
+    }
+}
+
+/// The world as the tentacle hears it: the player's own sound, and every
+/// noise still carrying, at twice the usual reach.
+struct TentacleWorld {
+    pi: usize,
+    player: [i32; 3],
+}
+
+impl tentacle::World for TentacleWorld {
+    #[inline(never)]
+    fn rand(&mut self, lo: i32, hi: i32) -> i32 {
+        unsafe { lo + impact_rng().below((hi - lo + 1).max(1) as u32) as i32 }
+    }
+
+    #[inline(never)]
+    fn hear(&mut self, ear: [i32; 3]) -> Option<[i32; 3]> {
+        unsafe {
+            let reach = crate::PLAYER_NOISE.volume() as i32 * tentacle::HEARING;
+            let d = [
+                self.player[0] - ear[0],
+                self.player[1] - ear[1],
+                self.player[2] - ear[2],
+            ];
+            let player_d2 =
+                if reach > 0 && d[0].abs() <= reach && d[1].abs() <= reach && d[2].abs() <= reach {
+                    let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                    (d2 <= reach * reach).then_some(d2)
+                } else {
+                    None
+                };
+            let other = crate::noise_heard_by(ear, tentacle::HEARING);
+            match (player_d2, other) {
+                (Some(pd), Some(o)) if dist2_3(o, ear) < pd => Some(o),
+                (Some(_), _) => Some(self.player),
+                (None, o) => o,
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn yaw_of(&mut self, dx: i32, dz: i32) -> u16 {
+        yaw_from_vec(dx, dz)
+    }
+
+    #[inline(never)]
+    fn ticks(&mut self, seq: u8) -> u16 {
+        unsafe { script_clip_hold_ticks(self.pi, seq, 20) }
+    }
+}
+
+/// monster_tentacle: hear, rise or sink to the noise's level, strike at it.
+/// The claw hurts on contact with the player's hull (`HitTouch`), tested
+/// against the posed studio hitboxes only while he stands inside the
+/// tentacle's reach box.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn tick_tentacle(
+    m: &Map,
+    pi: usize,
+    player_pos: [i32; 3],
+    health: &mut u16,
+    armor: &mut u16,
+) {
+    let Some(t) = tentacle_slot(pi) else {
+        return;
+    };
+    if PROP_SCRIPT_MODE[pi] != 0 {
+        t.scripted();
+        return;
+    }
+    let pos = PROP_POS[pi];
+    let think = (AI_TICK.wrapping_add(pi as u32)) % tentacle::THINK_TICKS == 0;
+    let mut world = TentacleWorld {
+        pi,
+        player: player_pos,
+    };
+    let mut hp = PROP_HEALTH[pi];
+    if t.tick(pos, &mut hp, think, &mut world) {
+        PROP_ACTIVE[pi] = 0;
+        t.prop = tentacle::FREE;
+        return;
+    }
+    PROP_HEALTH[pi] = hp;
+    PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], t.yaw);
+    PROP_STATE[pi] = PROP_STATE_IDLE;
+    #[cfg(feature = "interaction-probe")]
+    if SIM_NOW % 10 == 0 {
+        reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "tentacle",
+            &[
+                pi as i32,
+                t.seq as i32,
+                t.dir as i32,
+                t.cycle as i32,
+                hp as i32,
+                t.yaw as i32,
+                t.killing() as i32,
+            ],
+        );
+    }
+    // SetObjectCollisionBox: 400 either side, 850 up.
+    let d = [
+        player_pos[0] - pos[0],
+        player_pos[1] - pos[1],
+        player_pos[2] - pos[2],
+    ];
+    if *health == 0 || t.dying || d[0].abs() > 400 || d[2].abs() > 400 || d[1] < -64 || d[1] > 850 {
+        return;
+    }
+    if let Some(hitbox) = crate::prop_studio_touch(m, pi, player_pos) {
+        if let Some(dmg) = t.touch(crate::tentacle_claw_box(hitbox)) {
+            #[cfg(feature = "interaction-probe")]
+            reference_trace::probe_vals(
+                SIM_NOW as u32,
+                "tentacle_hit",
+                &[pi as i32, hitbox as i32, dmg as i32, t.seq as i32],
+            );
+            damage_target(PROP_TARGET_PLAYER, dmg, pos, health, armor);
+        }
+    }
+}
 
 static mut LEECHES: [leech::Swim; leech::SLOTS] = [leech::Swim::EMPTY; leech::SLOTS];
 
