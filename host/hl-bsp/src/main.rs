@@ -5608,9 +5608,32 @@ fn mdl_mean_rgb332(mdl: &[u8]) -> Option<u8> {
     if n == 0 {
         return None;
     }
-    let (r, g, b) = (sum[0] / n, sum[1] / n, sum[2] / n);
-    // 0xFF is the "no colour" marker, so a white average steps down one.
-    Some((((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6)).min(0xFE) as u8)
+    Some(rgb332_nearest_shard([sum[0] / n, sum[1] / n, sum[2] / n]))
+}
+
+/// Shard colour channel as the game draws it: the RGB332 level widened to 8 bits,
+/// then lifted a third because the rect is not lit (game/src/main.rs, shard draw).
+fn shard_channel(level: u64, max: u64) -> u64 {
+    (level * 255 / max * 4 / 3).min(255)
+}
+
+/// The RGB332 byte whose drawn shard colour is nearest the model's mean colour
+/// lifted the same third. Truncating each channel instead turned wood's brown
+/// (95, 76, 38) into olive (r and g both level 2). 0xFF is the "no colour" marker,
+/// so it is never chosen.
+fn rgb332_nearest_shard(mean: [u64; 3]) -> u8 {
+    let nearest = |c: u64, max: u64| {
+        let want = (c * 4 / 3).min(255);
+        (0..=max)
+            .min_by_key(|&l| shard_channel(l, max).abs_diff(want))
+            .unwrap_or(0)
+    };
+    let (r, g, b) = (
+        nearest(mean[0], 7),
+        nearest(mean[1], 7),
+        nearest(mean[2], 3),
+    );
+    ((r << 5) | (g << 2) | b).min(0xFE) as u8
 }
 
 /// RGB332 shard colour of a func_breakable / func_pushable, from its `gibmodel`
@@ -23906,6 +23929,27 @@ mod tests {
         // 200 -> 6 (110b), 100 -> 3 (011b), 0 -> 0
         assert_eq!(mdl_mean_rgb332(&mdl), Some((6 << 5) | (3 << 2)));
         assert_eq!(mdl_mean_rgb332(b"nope"), None);
+    }
+
+    #[test]
+    fn gib_colour_is_the_nearest_drawn_shade_not_a_truncation() {
+        // retail woodgibs.mdl mean texel: brown, red above green once drawn
+        let wood = rgb332_nearest_shard([95, 76, 38]);
+        assert_eq!(wood, (3 << 5) | (2 << 2));
+        let drawn = |b: u8| {
+            (
+                shard_channel(u64::from(b >> 5), 7),
+                shard_channel(u64::from((b >> 2) & 7), 7),
+            )
+        };
+        let (r, g) = drawn(wood);
+        assert!(r > g, "wood shards drawn ({r}, {g}, ..) are not brown");
+        // white draws white and stays off the no-colour marker
+        let white = rgb332_nearest_shard([255, 255, 255]);
+        assert_ne!(white, 0xFF);
+        assert_eq!(drawn(white), (255, 255));
+        assert_eq!(shard_channel(u64::from(white & 3), 3), 255);
+        assert_eq!(rgb332_nearest_shard([0, 0, 0]), 0);
     }
 
     #[test]
