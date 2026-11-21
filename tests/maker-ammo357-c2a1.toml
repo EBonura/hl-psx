@@ -9,11 +9,8 @@ max_ticks = 6000
 [[step]]
 label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad"
 press = ["l1", "right", "r3", "select"]
-hold = 180
-
-[[step]]
-label = "wait for the world"
-wait_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 7788 }
+sync = "poll"
+hold_until = { kind = "ram", sym = "WORLD_ARENA", offset = 4, size = 4, op = "eq", value = 7788 }
 timeout = 3000
 
 [[step]]
@@ -38,7 +35,8 @@ timeout = 900
 
 [[step]]
 label = "give the spawn a moment to show"
-wait = 60
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "ge", value = 220 }
+timeout = 3000
 
 [[step]]
 checkpoint = "spawned"
