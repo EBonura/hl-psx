@@ -12,7 +12,12 @@
 /// shrink among the maps with a small tail: 20,000 B (c1a2 saved 20,552 B when
 /// the PVS rows became delta chains). Lowering it further needs those rooms to
 /// shrink again; `cargo hl-build audit` still proves the weapon cache fits.
-pub const INSTALLED_MAP_WORDS_FLOOR: usize = 172_280;
+/// 2026-11-22: 256 words lower for the SDK move's chunk session. Measured on
+/// c2a4e, c2a5f and c4a1b (every monster and maker spot, 8 yaws): the actor
+/// stream took the shared packet arena in every frame (tails of 2,282 to 5,025
+/// words never beat its remainder), no actor triangle dropped, and the weapon
+/// cache keeps 24,884 B at c2a4e (hl-fix review/actor-peak/REPORT.md).
+pub const INSTALLED_MAP_WORDS_FLOOR: usize = 172_024;
 
 pub const fn map_staging_words(max_room_bytes: usize) -> usize {
     let cooked_words = max_room_bytes.div_ceil(4);
@@ -60,7 +65,7 @@ mod tests {
     #[test]
     fn staging_keeps_installed_capacity_and_grows_for_larger_rooms() {
         assert_eq!(map_staging_words(659_072), INSTALLED_MAP_WORDS_FLOOR);
-        assert_eq!(map_staging_words(689_120), INSTALLED_MAP_WORDS_FLOOR);
+        assert_eq!(map_staging_words(688_096), INSTALLED_MAP_WORDS_FLOOR);
         assert_eq!(map_staging_words(800_001), 200_001);
     }
 }
