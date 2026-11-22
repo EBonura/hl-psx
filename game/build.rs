@@ -794,9 +794,10 @@ fn scan_room_budget(
         round_up(max_face_groups + 32, 32),
         round_up(max_leaves + 64, 256),
         // Every entity-backed table is build-time sized from this value and
-        // rooms are immutable at runtime. Keep two spare records for cooker
-        // drift; a recook automatically grows the generated cap.
-        round_up(max_ents + 2, 2),
+        // rooms are immutable at runtime; a recook reruns this script and
+        // grows the cap, so no spare records for cooker drift (they cost
+        // about 92 B each across the per-entity tables).
+        round_up(max_ents, 2),
         round_up(max_texs + 8, 16),
     )
 }
@@ -1830,7 +1831,9 @@ fn main() {
         scan_room_budget(repo_root);
     let (pvs_faces, pvs_groups) = scan_pvs_capacity(repo_root);
     let max_flyers = scan_flyers(repo_root);
-    let max_pvs_faces = round_up(pvs_faces + 64, 32);
+    // Exact bound (the visible-face walk also stops at the cap); the old +64
+    // drift guard cost 4 B a face in the live PVS links alone.
+    let max_pvs_faces = round_up(pvs_faces, 32);
     let max_pvs_groups = round_up(pvs_groups + 32, 32);
     let ModelBudget {
         model_words,
