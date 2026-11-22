@@ -372,7 +372,7 @@ pub(crate) unsafe fn reset_tentacles() {
 /// the first time; `None` when all four are in use.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn tentacle_slot(pi: usize) -> Option<&'static mut tentacle::Tentacle> {
+unsafe fn tentacle_slot(m: &Map, pi: usize) -> Option<&'static mut tentacle::Tentacle> {
     let slots = &mut *core::ptr::addr_of_mut!(TENTACLES);
     let mut free = tentacle::SLOTS;
     let mut i = 0usize;
@@ -388,7 +388,9 @@ unsafe fn tentacle_slot(pi: usize) -> Option<&'static mut tentacle::Tentacle> {
     if free == tentacle::SLOTS {
         return None;
     }
-    slots[free] = tentacle::Tentacle::spawn(pi as u8, prop_yaw_value(PROP_YAW[pi]));
+    // The cooker keeps the tentacle's sweep limit in its carry word.
+    slots[free] =
+        tentacle::Tentacle::spawn(pi as u8, prop_yaw_value(PROP_YAW[pi]), m.prop_carry_id(pi));
     Some(&mut slots[free])
 }
 
@@ -409,10 +411,10 @@ pub(crate) unsafe fn tentacle_clip(pi: usize) -> Option<(usize, usize)> {
 /// A trigger used tentacle `pi` (`CTentacle::CommandUse`): on, it hears a
 /// noise where the activator stands; off, it dies; toggled, it thrashes at the
 /// engine.
-pub(crate) unsafe fn tentacle_use(pi: usize, use_type: u8, activator: [i32; 3]) {
+pub(crate) unsafe fn tentacle_use(m: &Map, pi: usize, use_type: u8, activator: [i32; 3]) {
     if use_type == map::USE_ON {
         crate::make_world_noise(activator, 1024);
-    } else if let Some(t) = tentacle_slot(pi) {
+    } else if let Some(t) = tentacle_slot(m, pi) {
         if use_type == map::USE_OFF {
             t.die();
         } else if use_type == map::USE_TOGGLE {
@@ -492,7 +494,7 @@ unsafe fn tick_tentacle(
     health: &mut u16,
     armor: &mut u16,
 ) {
-    let Some(t) = tentacle_slot(pi) else {
+    let Some(t) = tentacle_slot(m, pi) else {
         return;
     };
     if PROP_SCRIPT_MODE[pi] != 0 {

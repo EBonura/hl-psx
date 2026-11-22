@@ -10122,7 +10122,7 @@ unsafe fn logic_fire_targets(
     let mut pi = 0usize;
     while pi < nprops {
         if PROP_NAME[pi] == target && PROP_KIND[pi] == tentacle::KIND && PROP_ACTIVE[pi] != 0 {
-            species::tentacle_use(pi, use_type, LOGIC_PLAYER_POS);
+            species::tentacle_use(m, pi, use_type, LOGIC_PLAYER_POS);
         }
         if PROP_NAME[pi] == target && model_def(PROP_KIND[pi]).ai == AI_TURRET {
             let inactive = PROP_DORMANT[pi] & PROP_RUNTIME_TURRET_INACTIVE != 0;

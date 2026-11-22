@@ -5190,6 +5190,19 @@ fn weapon_pickup_prop_kind(classname: &str) -> Option<u16> {
     })
 }
 
+const TENTACLE_TYPE: u16 = 50;
+
+/// CTentacle's `sweeparc` keyvalue: the whole arc it may turn through, so it
+/// turns at most half of it either side of its spawn heading (130 degrees, 65
+/// either side, when absent; 360 leaves it unlimited). Cooked as that half in
+/// 12-bit heading units, 0..=2048, the value `tentacle::Tentacle` keeps.
+fn tentacle_max_yaw(block: &str) -> u16 {
+    let arc = ent_value(block, "sweeparc")
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .unwrap_or(130.0);
+    (arc.clamp(0.0, 360.0) * 4096.0 / 720.0) as u16
+}
+
 #[inline]
 fn prop_type_crosses_transition(ty: u16) -> bool {
     let base = ty & 0x0fff;
@@ -11727,7 +11740,7 @@ fn collect_props_trimmed(
             // GoldSrc blocks Use while that owner's can is still waiting.
             "env_beverage" => 75u16 | 0x4000,
             "item_longjump" => 49u16,
-            "monster_tentacle" => 50u16,
+            "monster_tentacle" => TENTACLE_TYPE,
             "monster_human_assassin" => 51u16,
             "monster_tripmine" => 57u16,
             "monster_snark" => 58u16,
@@ -11947,6 +11960,10 @@ fn collect_props_trimmed(
                     .and_then(|v| v.parse::<u16>().ok())
                     .unwrap_or(0)
                     .min(6)
+        } else if model_type == TENTACLE_TYPE {
+            // The tentacle never crosses a transition, so its carry word holds
+            // its sweep limit instead.
+            tentacle_max_yaw(block)
         } else if prop_type_crosses_transition(ty) {
             entity_carry_id(block)
         } else {
@@ -22133,9 +22150,31 @@ mod tests {
         assert_eq!(props[1].5, 0, "death loot is map-local");
         assert_eq!(props[2].5, actor_carry_id("apache1", true));
         assert_eq!(props[2].5 & CARRY_GLOBAL_BIT, CARRY_GLOBAL_BIT);
-        assert_eq!(props[3].5, 0, "tentacle lacks ACROSS_TRANSITION");
+        assert_eq!(
+            props[3].5,
+            tentacle_max_yaw(""),
+            "tentacle lacks ACROSS_TRANSITION: the word holds its sweep"
+        );
         assert_eq!(props[4].5, 0, "authored corpses are map-local");
         assert_eq!(props[5].5, 0, "items use their own player inventory path");
+    }
+
+    #[test]
+    fn tentacle_sweeparc_is_cooked_as_half_the_arc_in_its_carry_word() {
+        let ents = br#"
+        { "classname" "monster_tentacle" "angle" "90" }
+        { "classname" "monster_tentacle" "sweeparc" "360" }
+        { "classname" "monster_tentacle" "sweeparc" "130" }
+        { "classname" "monster_tentacle" "sweeparc" "50" }
+        { "classname" "monster_tentacle" "sweeparc" "720" }
+        "#;
+        let mut names = Vec::new();
+        let props = collect_props(ents, &[], &[], &[], 1.0, &mut names, &mut Vec::new());
+        let carry: Vec<u16> = props.iter().map(|p| p.5).collect();
+        // deg(65), unlimited, deg(65), deg(25), unlimited (in 4096ths of a turn)
+        assert_eq!(carry, [739, 2048, 739, 284, 2048]);
+        assert!(props.iter().all(|p| p.0 == TENTACLE_TYPE));
+        assert!(!prop_type_crosses_transition(TENTACLE_TYPE));
     }
 
     #[test]
