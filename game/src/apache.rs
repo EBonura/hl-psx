@@ -579,6 +579,7 @@ unsafe fn fire_gun(m: &Map, movers: &[phys::Mover], a: &mut Apache) -> bool {
     {
         PENDING_PLAYER_DAMAGE =
             PENDING_PLAYER_DAMAGE.saturating_add(skill_damage(21).unwrap_or(8) as u16);
+        hev::pend(hev::Kind::Bullet);
         note_damage_direction(from);
     }
     push_tracer(from, end);

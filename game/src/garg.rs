@@ -133,8 +133,9 @@ unsafe fn player_frac(from: [i32; 3], to: [i32; 3], pad: i32) -> Option<i32> {
 
 #[inline(never)]
 #[optimize(size)]
-unsafe fn hurt_player(dmg: u16, from: [i32; 3]) {
+unsafe fn hurt_player(dmg: u16, from: [i32; 3], kind: hev::Kind) {
     PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg);
+    hev::pend(kind);
     note_damage_direction(from);
 }
 
@@ -309,7 +310,7 @@ unsafe fn swipe(pi: usize, target: u8, f: [i32; 3]) {
     to[1] -= 27;
     let dmg = skill_value(Sk::GargSlash);
     if player_frac(from, to, 16).is_some() {
-        hurt_player(dmg, pos);
+        hurt_player(dmg, pos, hev::Kind::Slash);
         add_view_punch(-341, -341); // punchangle (-30, -30, 30)
         setpiece_sfx::play(SP::GARG_SLASH, pos);
     } else if target != PROP_TARGET_PLAYER {
@@ -439,7 +440,7 @@ unsafe fn flame_task(m: &Map, movers: &[phys::Mover], pi: usize, aim: [i32; 3], 
         if LOGIC_PLAYER_HEALTH > 0 && phys::trace_line(m, movers, src, spot).is_none() {
             if let Some(tenths) = sl::flame_damage_tenths(fire, isqrt_i32(dist2_3(src, spot))) {
                 let total = g.burn_tenths as i32 + tenths;
-                hurt_player((total / 10) as u16, start);
+                hurt_player((total / 10) as u16, start, hev::Kind::Generic);
                 g.burn_tenths = (total % 10) as u8;
             }
         }
@@ -464,7 +465,7 @@ pub(crate) unsafe fn tick_world() {
             g.stomp_pos[2] >> 4,
         ];
         if player_frac(from, along(from, g.stomp_dir, g.stomp.sweep_q4() >> 4), 16).is_some() {
-            hurt_player(skill_value(Sk::GargStomp), from);
+            hurt_player(skill_value(Sk::GargStomp), from, hev::Kind::Sonic);
         }
         let (moved, done) = g.stomp.think(g.stomp_first);
         g.stomp_first = false;

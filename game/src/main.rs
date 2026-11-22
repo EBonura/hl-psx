@@ -24335,6 +24335,9 @@ unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
     {
         let dmg = logic_state::radius_damage_at_distance(damage, radius, isqrt_i32(pd2));
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(dmg as u16);
+        if DMG_ACID {
+            hev::pend(hev::Kind::Acid);
+        }
         note_damage_direction(pos);
         // TakeDamage: velocity += away * min(5 x damage, 1000) u/s, away being
         // from the blast (10 units lower) through the player's centre.
@@ -24400,6 +24403,7 @@ unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8) {
             scaled /= 2;
         }
         PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(scaled as u16);
+        hev::pend(hev::Kind::Sonic);
         note_damage_direction(src);
     }
     let nprops = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
@@ -24712,6 +24716,7 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
                 if best == usize::MAX - 1 {
                     PENDING_PLAYER_DAMAGE =
                         PENDING_PLAYER_DAMAGE.saturating_add(skill_hit(Sk::SnarkBite) as u16);
+                    hev::pend(hev::Kind::Slash);
                     note_damage_direction(p.pos);
                 } else {
                     damage_prop(best, skill_hit(Sk::SnarkBite), true);
@@ -25198,6 +25203,11 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             } else if player_hit {
                 PENDING_PLAYER_DAMAGE =
                     PENDING_PLAYER_DAMAGE.saturating_add(PROJECTILES[i].damage as u16);
+                // CHornet::DieTouch is DMG_BULLET; the bullsquid's spit and
+                // the controller's balls report nothing by kind.
+                if matches!(kind, PROJ_HORNET | PROJ_HORNET_FAST) {
+                    hev::pend(hev::Kind::Bullet);
+                }
                 note_damage_direction(hit_pos);
             }
             if matches!(kind, PROJ_HORNET | PROJ_HORNET_FAST) && !from_enemy {
@@ -38997,6 +39007,7 @@ fn play(
                 tick_projectiles(&m, movers);
                 tick_env_sparks(&m, nlogic, sim_frame_no as u16);
                 tick_beams(&m, nlogic, nents, movers);
+                hev::take_pending();
                 if PENDING_PLAYER_DAMAGE > 0 {
                     let d = PENDING_PLAYER_DAMAGE;
                     PENDING_PLAYER_DAMAGE = 0;
@@ -39032,6 +39043,8 @@ fn play(
                 apache::tick(&m, movers);
                 nihilanth::tick(&m, movers);
                 mortar::tick(&m, sim_frame_no as u16);
+                // The last actor's kind must not name the next unrelated hit.
+                hev::set_kind(hev::Kind::Generic);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
                     &mut health,

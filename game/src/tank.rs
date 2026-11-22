@@ -303,6 +303,9 @@ unsafe fn fire(m: &Map, movers: &[phys::Mover], t: &Tank, count: i32, player: bo
             );
         } else if ray_hits_player(m, movers, barrel, end) {
             PENDING_PLAYER_DAMAGE = PENDING_PLAYER_DAMAGE.saturating_add(round_damage(t) as u16);
+            if class == map::TANK_CLASS_GUN {
+                hev::pend(hev::Kind::Bullet);
+            }
             note_damage_direction(barrel);
         }
     }

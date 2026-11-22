@@ -246,6 +246,21 @@ pub unsafe fn take_kind() -> Kind {
     kind
 }
 
+/// What the damage gathered for the player since it was last applied was
+/// (the last source wins): hits that are summed and applied once a frame,
+/// rather than at once, name their kind here.
+static mut PENDING_KIND: Kind = Kind::Generic;
+
+pub unsafe fn pend(kind: Kind) {
+    PENDING_KIND = kind;
+}
+
+/// The summed damage is about to be applied: its kind becomes the next hit's.
+pub unsafe fn take_pending() {
+    NEXT_KIND = PENDING_KIND;
+    PENDING_KIND = Kind::Generic;
+}
+
 /// What a `trigger_hurt` record deals (see `hl_format::hev::hurt_kind_bits`).
 pub fn hurt_kind(flags: u8) -> Kind {
     if flags & 1 != 0 {
@@ -268,8 +283,9 @@ pub const fn actor_kind(ty: u8) -> Kind {
         // headcrab, zombie, bullsquid bite, leech, ichthyosaur, Gonarch
         2 | 5 | 7 | 13 | 18 | 19 => Kind::Slash,
         6 => Kind::Sonic,
-        // grunts, Barney, the sentries, turrets and the Apache fire bullets
-        1 | 8 | 10 | 20 | 21 | 22 | 23 => Kind::Bullet,
+        // grunts, Barney, the alien grunt's hornets, the sentries, turrets,
+        // the Apache and the assassin's pistol are bullets
+        1 | 8 | 10 | 20 | 21 | 22 | 23 | 51 => Kind::Bullet,
         _ => Kind::Generic,
     }
 }
@@ -568,6 +584,23 @@ mod tests {
             }
         }
         assert_eq!(order, vec![2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn summed_damage_carries_the_kind_of_its_source_once() {
+        unsafe {
+            // An actor's kind left over from the actor loop does not name
+            // the summed hit; the summed hit's own source does.
+            set_kind(Kind::Bullet);
+            pend(Kind::Sonic);
+            take_pending();
+            assert_eq!(take_kind(), Kind::Sonic);
+            assert_eq!(take_kind(), Kind::Generic);
+            // A frame with no named source applies its sum as generic.
+            set_kind(Kind::Slash);
+            take_pending();
+            assert_eq!(take_kind(), Kind::Generic);
+        }
     }
 
     #[test]
