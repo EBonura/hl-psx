@@ -292,6 +292,7 @@ const fn next_node(from: u8, to: u8) -> u8 {
 
 /// The sequence to play next on the way to `goal`, and its direction
 /// (`FindTransition` over tentacle2's graph).
+#[optimize(size)]
 pub fn find_transition(seq: u8, dir: i8, goal: u8) -> (u8, i8) {
     let (entry, exit) = ends(seq);
     let at = if dir > 0 { exit } else { entry };
@@ -466,6 +467,7 @@ impl Tentacle {
     /// and the body turns; every [`THINK_TICKS`] it listens and, when a
     /// sequence has ended, picks the next. Returns true when its death has
     /// played out and the prop should go.
+    #[optimize(size)]
     pub fn tick<W: World>(
         &mut self,
         origin: [i32; 3],
@@ -620,6 +622,7 @@ impl Tentacle {
 
     /// Start the next sequence on the way to the goal, at the authored speed
     /// give or take a fifth.
+    #[optimize(size)]
     fn next<W: World>(&mut self, w: &mut W) {
         let (seq, dir) = find_transition(self.seq, self.dir, self.goal);
         self.seq = seq;

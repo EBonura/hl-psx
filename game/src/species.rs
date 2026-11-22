@@ -461,6 +461,7 @@ impl tentacle::World for TentacleWorld {
     /// for the silo, pl_dirt1 for dirt: the map's bank carries only its own),
     /// the taps at 0.4 volume; the song is te_sing1. All ATTN_NORM.
     #[inline(never)]
+    #[optimize(size)]
     fn sound(&mut self, what: u8, height: i32) {
         unsafe {
             let mut pos = PROP_POS[self.pi];
