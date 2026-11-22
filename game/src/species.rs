@@ -747,27 +747,34 @@ unsafe fn tick_leech(
     }
 }
 
-/// The shooting species: each with its own cadence, the rest on the generic shooter.
+/// Every melee and ranged monster's think, chosen by its archetype
+/// (`ModelDef::arch`). The schedule engine replaces these routines one
+/// archetype at a time; a type with no archetype stands idle.
 #[inline(never)]
-pub(crate) unsafe fn tick_ranged(
+pub(crate) unsafe fn tick_monster(
     m: &Map,
     movers: &[phys::Mover],
     sight: &[phys::Mover],
     pi: usize,
     ty: u8,
     player_pos: [i32; 3],
+    in_pvs: bool,
     health: &mut u16,
     armor: &mut u16,
     nprops: usize,
 ) {
-    match ty {
-        6 => tick_hound(m, movers, sight, pi, player_pos, health, armor, nprops),
-        7 => tick_squid(m, movers, sight, pi, player_pos, health, armor, nprops),
-        8 => tick_grunt(m, movers, sight, pi, player_pos, health, armor, nprops),
-        9 => tick_slave(m, movers, sight, pi, player_pos, health, armor, nprops),
-        _ => tick_shooter(
+    match model_def(ty).archetype() {
+        ARCH_BITER => tick_headcrab(m, movers, sight, pi, player_pos, health, armor, nprops),
+        ARCH_ZOMBIE => tick_zombie(m, movers, sight, pi, player_pos, health, armor, nprops),
+        ARCH_HOUND => tick_hound(m, movers, sight, pi, player_pos, health, armor, nprops),
+        ARCH_SQUID => tick_squid(m, movers, sight, pi, player_pos, health, armor, nprops),
+        ARCH_GRUNT => tick_grunt(m, movers, sight, pi, player_pos, health, armor, nprops),
+        ARCH_SLAVE => tick_slave(m, movers, sight, pi, player_pos, health, armor, nprops),
+        ARCH_SHOOTER => tick_shooter(
             m, movers, sight, pi, player_pos, health, armor, nprops, true,
         ),
+        ARCH_GARG => crate::garg::tick(m, movers, sight, pi, player_pos, nprops),
+        _ => idle_think(m, movers, pi, ty, player_pos, in_pvs, health, armor),
     }
 }
 
@@ -1059,27 +1066,6 @@ unsafe fn tick_hound(
         } else {
             PROP_AI_TIMER[pi] = 0;
         }
-    }
-}
-
-/// Melee species: the zombie has its own bout; everything else keeps the
-/// shared lunge-and-bite.
-#[inline(never)]
-pub(crate) unsafe fn tick_melee(
-    m: &Map,
-    movers: &[phys::Mover],
-    sight: &[phys::Mover],
-    pi: usize,
-    ty: u8,
-    player_pos: [i32; 3],
-    health: &mut u16,
-    armor: &mut u16,
-    nprops: usize,
-) {
-    if ty == 5 || ty == 55 {
-        tick_zombie(m, movers, sight, pi, player_pos, health, armor, nprops);
-    } else {
-        tick_headcrab(m, movers, sight, pi, player_pos, health, armor, nprops);
     }
 }
 

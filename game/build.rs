@@ -811,16 +811,18 @@ fn scan_room_budget(
 /// total, which they can never reach: a room's biggest row lists a third of its
 /// faces at most. A merge lists at most the faces of its two largest rows, so
 /// the bound is that sum capped at the room's total.
-/// Prop type of the flying controller, the only monster that keeps flight state
-/// (`PROP_TYPE_CONTROLLER` in main.rs, asserted equal there).
+/// Prop type of the flying controller (`PROP_TYPE_CONTROLLER` in main.rs,
+/// asserted equal there); the ichthyosaur swims with the same flight state
+/// (`MOVE_SWIM` in combat_defs.rs).
 const FLYER_PROP_TYPE: u16 = 11;
+const SWIMMER_PROP_TYPE: u16 = 19;
 const FALLBACK_MAX_FLYERS: usize = 24;
 /// Rows the flight pool keeps beyond the most flyers any one room places: actors
 /// carried over a changelevel join the destination room's own. A pool that is
 /// still too small only costs the extra controllers their velocity smoothing.
 const FLYER_POOL_SPARE: usize = 8;
 
-/// The most flying controllers one cooked room places, over every room, plus the
+/// The most flying controllers and ichthyosaurs one cooked room places, over every room, plus the
 /// spare rows. `PropPool` sizes the flight state from it (see prop_pool.rs).
 fn scan_flyers(repo_root: &std::path::Path) -> usize {
     let rooms = repo_root.join("data/rooms");
@@ -852,7 +854,12 @@ fn scan_flyers(repo_root: &std::path::Path) -> usize {
             counts as usize
         };
         let flyers = (0..n_props)
-            .filter(|i| rd_u16(&data, prop_off + 4 + i * 24).map(|t| t & 0x0FFF) == Some(FLYER_PROP_TYPE))
+            .filter(|i| {
+                matches!(
+                    rd_u16(&data, prop_off + 4 + i * 24).map(|t| t & 0x0FFF),
+                    Some(FLYER_PROP_TYPE | SWIMMER_PROP_TYPE)
+                )
+            })
             .count();
         most = most.max(flyers);
     }

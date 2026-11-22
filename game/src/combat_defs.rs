@@ -137,7 +137,47 @@ pub struct ModelDef {
     pub atk_range: u16,   // attack engage distance (world units)
     pub atk_damage: u8,   // HP per hit
     pub atk_cooldown: u8, // ticks between attacks (20 Hz)
+    /// Behaviour archetype (`ARCH_*`, bits 0-5) and how it moves (`MOVE_*`,
+    /// bits 6-7): the one table the monster dispatch and the movers read, so
+    /// a type no row names stands idle rather than borrowing a species' code.
+    /// It sits in the struct's padding (16 bytes either way).
+    pub arch: u8,
 }
+const _: () = assert!(core::mem::size_of::<ModelDef>() == 16);
+
+impl ModelDef {
+    pub const fn arch(self, arch: u8) -> Self {
+        Self { arch, ..self }
+    }
+    pub const fn archetype(self) -> u8 {
+        self.arch & ARCH_MASK
+    }
+    pub const fn mobility(self) -> u8 {
+        self.arch & MOVE_MASK
+    }
+}
+
+// Behaviour archetypes: which think a monster runs. The future schedule
+// engine replaces these one by one; until then each names one routine.
+pub const ARCH_MASK: u8 = 0x3f;
+/// No think of its own: stands (idle_think).
+pub const ARCH_NONE: u8 = 0;
+/// Close in and bite or swipe once in reach; headcrabs leap (tick_headcrab).
+pub const ARCH_BITER: u8 = 1;
+pub const ARCH_ZOMBIE: u8 = 2;
+pub const ARCH_HOUND: u8 = 3;
+pub const ARCH_SQUID: u8 = 4;
+pub const ARCH_GRUNT: u8 = 5;
+pub const ARCH_SLAVE: u8 = 6;
+/// Keep range and fire (tick_shooter): alien grunt, controller, assassin.
+pub const ARCH_SHOOTER: u8 = 7;
+pub const ARCH_GARG: u8 = 8;
+// How it moves (CFlyingMonster flies and swims with one mover).
+pub const MOVE_MASK: u8 = 0xc0;
+pub const MOVE_WALK: u8 = 0;
+pub const MOVE_FLY: u8 = 0x40;
+/// Flies, but only through water (FL_SWIM).
+pub const MOVE_SWIM: u8 = 0x80;
 pub const fn mdef(health: u8, target_h: i32, radius: i32, ai: u8) -> ModelDef {
     ModelDef {
         health,
@@ -148,6 +188,7 @@ pub const fn mdef(health: u8, target_h: i32, radius: i32, ai: u8) -> ModelDef {
         atk_range: 0,
         atk_damage: 0,
         atk_cooldown: 0,
+        arch: ARCH_NONE,
     }
 }
 pub const fn mdef_atk(
@@ -169,6 +210,7 @@ pub const fn mdef_atk(
         atk_range,
         atk_damage,
         atk_cooldown,
+        arch: ARCH_NONE,
     }
 }
 // Combat params (speed/range/damage/cooldown) for AI_RANGED + AI_TURRET come from
@@ -176,7 +218,7 @@ pub const fn mdef_atk(
 pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(SCIENTIST_HEALTH, 40, SCIENTIST_RENDER_RADIUS, AI_FLEE), // 0 scientist
     mdef(BARNEY_HEALTH, 40, BARNEY_RENDER_RADIUS, AI_ALLY),       // 1 barney
-    mdef(HEADCRAB_HEALTH, 12, HEADCRAB_RENDER_RADIUS, AI_MELEE),  // 2 headcrab
+    mdef(HEADCRAB_HEALTH, 12, HEADCRAB_RENDER_RADIUS, AI_MELEE).arch(ARCH_BITER),  // 2 headcrab
     mdef(0, 16, 70, AI_ITEM),                                     // 3 item_suit
     mdef(0, 16, ITEM_RENDER_RADIUS, AI_ITEM),                     // 4 item_battery
     // zombie.mdl walk: 194.3717 units over 59 frame intervals at 22 fps =
@@ -184,22 +226,22 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     // integer 20 Hz mover rounds that to 4 units/tick, not the old 2: the old
     // value left c1a1's monstermaker zombie in Gordon's path instead of
     // reaching the scripted Barney fight.
-    mdef_atk(50, 40, 94, AI_MELEE, 4, 0, 0, 0), // 5 zombie (slow shambler)
-    mdef_atk(20, 20, 70, AI_RANGED, 7, 300, 15, 45), // 6 houndeye (skitter in, sonic blast)
-    mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55), // 7 bullsquid (acid spit at range)
-    mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8), // 8 hgrunt (mp5 bursts)
-    mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24), // 9 alien_slave (zap)
-    mdef_atk(60, 48, 100, AI_RANGED, 16, 1024, 8, 4), // 10 alien_grunt (hornet volleys inside 1024 units)
-    mdef_atk(60, 40, 100, AI_RANGED, 16, 2048, 3, 14), // 11 alien_controller (energy balls out to 2048)
+    mdef_atk(50, 40, 94, AI_MELEE, 4, 0, 0, 0).arch(ARCH_ZOMBIE), // 5 zombie (slow shambler)
+    mdef_atk(20, 20, 70, AI_RANGED, 7, 300, 15, 45).arch(ARCH_HOUND), // 6 houndeye (skitter in, sonic blast)
+    mdef_atk(40, 32, 91, AI_RANGED, 6, 600, 15, 55).arch(ARCH_SQUID), // 7 bullsquid (acid spit at range)
+    mdef_atk(50, 40, 90, AI_RANGED, 16, 1000, 5, 8).arch(ARCH_GRUNT), // 8 hgrunt (mp5 bursts)
+    mdef_atk(30, 40, 90, AI_RANGED, 15, 800, 10, 24).arch(ARCH_SLAVE), // 9 alien_slave (zap)
+    mdef_atk(60, 48, 100, AI_RANGED, 16, 1024, 8, 4).arch(ARCH_SHOOTER), // 10 alien_grunt (hornet volleys inside 1024 units)
+    mdef_atk(60, 40, 100, AI_RANGED, 16, 2048, 3, 14).arch(ARCH_SHOOTER | MOVE_FLY), // 11 alien_controller (energy balls out to 2048)
     mdef(25, -16, 170, AI_IDLE),                       // 12 barnacle (retail spawns it with 25; hangs below its origin)
     mdef(16, 8, 40, AI_IDLE),                          // 13 leech (swimmer; species::tick_leech)
     mdef(1, 4, 30, AI_IDLE),                           // 14 cockroach (passive; any hit kills it)
     mdef(100, 48, 90, AI_IDLE),                        // 15 gman (passive)
     // CGargantua: the melee roster wakes it; garg::tick runs its schedules.
-    mdef_atk(200, 90, 360, AI_MELEE, 10, 0, 0, 0), // 16 gargantua
+    mdef_atk(200, 90, 360, AI_MELEE, 10, 0, 0, 0).arch(ARCH_GARG), // 16 gargantua
     mdef(200, 90, 1748, AI_IDLE),                  // 17 nihilanth (boss: render only)
     mdef(150, 70, 200, AI_IDLE),                   // 18 bigmomma (boss: render only)
-    mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0),   // 19 ichthyosaur
+    mdef_atk(40, 20, 223, AI_MELEE, 6, 0, 0, 0).arch(ARCH_BITER | MOVE_SWIM), // 19 ichthyosaur
     // Turrets: TURRET_RANGE 1200 and one bullet per 0.1 s think (a cooldown of 2
     // ticks); the gun swings and aims in tick_shooter (turret_aim.rs).
     mdef_atk(40, 40, 80, AI_TURRET, 0, 1200, 7, 2), // 20 sentry
@@ -233,7 +275,7 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     mdef(0, 12, ITEM_RENDER_RADIUS, AI_ITEM),       // 48 item_healthkit
     mdef(0, 12, 38, AI_ITEM),                       // 49 item_longjump
     mdef(75, 90, 912, AI_IDLE), // 50 tentacle (Blast Pit; killtargeted by the rocket)
-    mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10), // 51 human assassin (silenced 9mm)
+    mdef_atk(30, 40, 90, AI_RANGED, 16, 900, 6, 10).arch(ARCH_SHOOTER), // 51 human assassin (silenced 9mm)
     // Script-only monster_generic. Health must stay nonzero so its exact
     // targetname can be possessed by c0a0d's goingdown sequence.
     mdef(8, 48, 1242, AI_IDLE), // 52 construction loader (rampwalk translates ~1,241 units)
@@ -241,14 +283,14 @@ pub const MODEL_DEFS: [ModelDef; N_MODEL_TYPES] = [
     // Standing scientist behavior with sitidle/sitstand added in a dedicated
     // stream. Keeping those long poses out of type 0 preserves c4a3's peak RAM.
     mdef(SCIENTIST_HEALTH, 40, SCIENTIST_RENDER_RADIUS, AI_FLEE), // 54 scripted sitter
-    mdef_atk(50, 40, 94, AI_MELEE, 4, 0, 0, 0),                   // 55 c1a1b vent-script zombies
+    mdef_atk(50, 40, 94, AI_MELEE, 4, 0, 0, 0).arch(ARCH_ZOMBIE), // 55 c1a1b vent-script zombies
     mdef(8, 40, 96, AI_IDLE),                                     // 56 Hazard Course Holo
     // Types 57-74 place models the campaign authors but that had no cooked
     // stream at all until the shared map/model arena freed the budget.
     // Health/radius follow the SDK spawns; the scenery props are idle puppets.
     mdef(1, 8, 40, AI_IDLE), // 57 tripmine (laser mine: render only)
-    mdef_atk(2, 8, 40, AI_MELEE, 8, 0, 0, 0), // 58 snark (fast skittering biter)
-    mdef_atk(10, 12, 40, AI_MELEE, 6, 0, 0, 0), // 59 baby headcrab (Gonarch's brood)
+    mdef_atk(2, 8, 40, AI_MELEE, 8, 0, 0, 0).arch(ARCH_BITER), // 58 snark (fast skittering biter)
+    mdef_atk(10, 12, 40, AI_MELEE, 6, 0, 0, 0).arch(ARCH_BITER), // 59 baby headcrab (Gonarch's brood)
     mdef(8, 8, 40, AI_IDLE), // 60 rat (scenery critter)
     mdef(255, 200, 800, AI_IDLE), // 61 osprey (flyer: render only)
     mdef(8, 8, 40, AI_IDLE), // 62 gib legbone

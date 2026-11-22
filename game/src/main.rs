@@ -1152,6 +1152,12 @@ fn model_def(ty: u8) -> ModelDef {
     MODEL_DEFS[(ty as usize).min(N_MODEL_TYPES - 1)]
 }
 
+/// A flyer or swimmer: moves in three axes with the flight mover, no floor.
+#[inline(never)]
+fn prop_free_mover(ty: u8) -> bool {
+    model_def(ty).mobility() != MOVE_WALK
+}
+
 /// Legacy fallback for an old or missing model stream with no cooked studio
 /// boxes. New actor chunks use their source MDL hitboxes below.
 #[inline]
@@ -10520,7 +10526,7 @@ unsafe fn script_human_chord_clear(
     start: [i32; 3],
     goal: [i32; 3],
 ) -> bool {
-    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+    if prop_free_mover(PROP_KIND[pi]) {
         return phys::controller_world_line_clear(m, start, goal)
             && phys::actor_line_clear_movers(
                 m,
@@ -12205,7 +12211,7 @@ unsafe fn maker_make(
         );
     }
     if matches!(model_def(kind).ai, AI_MELEE | AI_RANGED | AI_ALLY | AI_FLEE)
-        && kind != PROP_TYPE_CONTROLLER
+        && !prop_free_mover(kind)
         && rec.origin[1] > PROP_POS[pi][1] + 18
     {
         let at = [PROP_POS[pi][0], rec.origin[1], PROP_POS[pi][2]];
@@ -16647,7 +16653,7 @@ unsafe fn prop_try_step(
             }
             let np = match prop_floor_y(m, pi, cand) {
                 Some(y)
-                    if ty == PROP_TYPE_CONTROLLER
+                    if prop_free_mover(ty)
                         || ground_logic::actor_floor_step_reachable(pos[1], y)
                         || prop_ramp_step(m, pi, pos, cand, y) =>
                 {
@@ -16666,7 +16672,7 @@ unsafe fn prop_try_step(
                     i += 1;
                     continue;
                 }
-                None if ty == PROP_TYPE_CONTROLLER => cand,
+                None if prop_free_mover(ty) => cand,
                 // Scripted actors are allowed to retain their current height
                 // across authored brush floors. Some set-piece walkways have
                 // no world floor below them and their supporting submodel can
@@ -16729,11 +16735,11 @@ fn nav_land_node(m: &Map, i: usize) -> bool {
 
 #[inline]
 unsafe fn nav_actor_node(m: &Map, pi: usize, i: usize) -> bool {
-    air_navigation::accepts(m.nav_node_type(i), PROP_KIND[pi] == PROP_TYPE_CONTROLLER)
+    air_navigation::accepts(m.nav_node_type(i), prop_free_mover(PROP_KIND[pi]))
 }
 #[inline]
 unsafe fn nav_actor_distance(pi: usize, a: [i32; 3], b: [i32; 3]) -> i32 {
-    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+    if prop_free_mover(PROP_KIND[pi]) {
         air_navigation::distance2(a, b)
     } else {
         dist2_xz(a, b)
@@ -16741,7 +16747,7 @@ unsafe fn nav_actor_distance(pi: usize, a: [i32; 3], b: [i32; 3]) -> i32 {
 }
 #[inline]
 unsafe fn nav_actor_vertical(pi: usize, a: [i32; 3], b: [i32; 3]) -> bool {
-    PROP_KIND[pi] == PROP_TYPE_CONTROLLER || (a[1] - b[1]).abs() <= NAV_VERTICAL_MAX
+    prop_free_mover(PROP_KIND[pi]) || (a[1] - b[1]).abs() <= NAV_VERTICAL_MAX
 }
 
 #[optimize(size)]
@@ -16765,7 +16771,7 @@ unsafe fn nav_nearest(
             let peek = [
                 node.pos[0],
                 node.pos[1]
-                    + if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+                    + if prop_free_mover(PROP_KIND[pi]) {
                         0
                     } else {
                         8
@@ -16798,7 +16804,7 @@ unsafe fn nav_nearest_reachable(
     max_d2: i32,
 ) -> u8 {
     let n = nav_node_count(m);
-    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+    if prop_free_mover(PROP_KIND[pi]) {
         let mut best = NAV_NODE_NONE;
         let mut distance = max_d2;
         for i in 0..n {
@@ -17203,18 +17209,21 @@ unsafe fn prop_controller_move_towards(
         .copied()
         .unwrap_or(air_navigation::Flight::EMPTY);
     let candidate = flight.candidate(pos, target, speed);
-    let from = prop_target(PROP_TYPE_CONTROLLER, pos);
-    let to = prop_target(PROP_TYPE_CONTROLLER, candidate);
+    let kind = PROP_KIND[pi];
+    let from = prop_target(kind, pos);
+    let to = prop_target(kind, candidate);
     // World hull2 is source-sized; moving brushes keep the existing bounded
     // expanded-hull gate. Exact moving-brush hull2 remains a parity gap.
     if !phys::controller_world_line_clear(m, pos, candidate)
         || !phys::actor_line_clear_movers(m, movers, from, to)
         || in_monsterclip(to, 0)
+        // A swimmer keeps its body under water.
+        || model_def(kind).mobility() == MOVE_SWIM && !water_touch(m, m.n_ents, to)
     {
         (*core::ptr::addr_of_mut!(PROP_FLIGHT)).release(pi);
         return false;
     }
-    let (mins, maxs) = actor_collision_bounds(PROP_TYPE_CONTROLLER, candidate);
+    let (mins, maxs) = actor_collision_bounds(kind, candidate);
     if PROP_SCRIPT_MODE[pi] == 0
         && PROP_AI_TARGET[pi] == PROP_TARGET_PLAYER
         && ground_logic::actor_candidate_overlaps_player(mins, maxs, LOGIC_PLAYER_POS, 36)
@@ -17310,7 +17319,7 @@ unsafe fn prop_move_towards_point(
         return false;
     }
     let speed = speed * 2;
-    if PROP_KIND[pi] == PROP_TYPE_CONTROLLER {
+    if prop_free_mover(PROP_KIND[pi]) {
         return prop_controller_move_towards(m, movers, pi, goal, speed);
     }
     let pos = PROP_POS[pi];
@@ -19710,10 +19719,6 @@ unsafe fn tick_headcrab(
     armor: &mut u16,
     nprops: usize,
 ) {
-    if PROP_KIND[pi] == PROP_TYPE_GARG {
-        garg::tick(m, movers, sight_movers, pi, player_pos, nprops);
-        return;
-    }
     // Only headcrabs LEAP; big melee aliens (zombie/bullsquid/ichthyosaur) shamble
     // in and swipe in place -- leaping made them look like giant headcrabs.
     let leaper = PROP_KIND[pi] == PROP_TYPE_HEADCRAB || PROP_KIND[pi] == 59;
@@ -21230,12 +21235,18 @@ unsafe fn tick_props(
             // scan is paid only by staggered sensory checks and has its own
             // cheap segment-vs-sphere broadphase, so it does not restore the
             // old O(props x movers x step probes) frame killer.
-            AI_MELEE => {
-                species::tick_melee(m, pm, movers, pi, ty, player_pos, health, armor, nprops)
-            }
-            AI_RANGED => {
-                species::tick_ranged(m, pm, movers, pi, ty, player_pos, health, armor, nprops)
-            }
+            AI_MELEE | AI_RANGED => species::tick_monster(
+                m,
+                pm,
+                movers,
+                pi,
+                ty,
+                player_pos,
+                in_player_pvs,
+                health,
+                armor,
+                nprops,
+            ),
             AI_TURRET => tick_shooter(m, pm, movers, pi, player_pos, health, armor, nprops, false),
             AI_ALLY => tick_barney(m, pm, movers, pi, player_pos, health, armor, nprops),
             AI_FLEE => tick_scientist(
