@@ -283,8 +283,9 @@ fn base_clip_count(ty: u8) -> usize {
         // The nihilanth's attack2, recharge, float_open and attack1_open.
         17 => 9,
         25 => 7,
-        // The tentacle's pit, transitions, idles, strikes and taps (game/src/tentacle.rs).
-        50 => 19,
+        // The tentacle's pit, transitions, idles, strikes and taps (game/src/tentacle.rs),
+        // then on c1a4i its engine thrash (`special_fields`); elsewhere the roster's 19.
+        50 => 24,
         56 => 1,
         _ => 5,
     }
@@ -319,6 +320,17 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
             &["2:1", "5:1", "7:1", "12:1", "14:1", "attack:1", "stomp:1"],
         ),
         ("c4a3", 19) => ("--mdl7", &["0:1", "1:1", "8:1", "5:1", "3:1"]),
+        // The Blast Pit toggles its tentacles when the engine fires: they climb to
+        // Lev3_to_Engine and thrash (Engine_Idle, Sway, Swat, Bob) until they die.
+        // Only this map toggles a tentacle, so only it carries the five clips.
+        ("c1a4i", 50) => (
+            "--mdl7",
+            &[
+                "0:1", "1:16", "2:12", "3:8", "48:8", "7:8", "8:8", "12:8", "13:8", "17:8", "18:8",
+                "22:8", "23:8", "27:8", "28:8", "32:8", "33:8", "37:8", "38:8", "43:8", "44:4",
+                "45:6", "46:6", "47:4",
+            ],
+        ),
         ("c1a2b", 5) => (
             "--mdl7",
             &["0:4", "10:4", "8:5", "3:2", "17:3", "eatbody:2"],
@@ -857,6 +869,26 @@ mod tests {
             .fields
             .iter()
             .any(|f| f.starts_with("dead_sitting")));
+    }
+
+    #[test]
+    fn the_blast_pit_tentacle_adds_its_thrash_after_the_shared_clips() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../hl-content/model-roster.txt");
+        let roster = load_roster(&path).unwrap();
+        let shared = &roster[&50];
+        let (_, c1a4i) = special_fields("c1a4i", 50).unwrap();
+        assert_eq!(c1a4i.len(), base_clip_count(50));
+        assert_eq!(&c1a4i[..shared.fields.len()], &shared.fields[..]);
+        let elsewhere = build_variant(
+            "c4a1b",
+            50,
+            &BTreeSet::new(),
+            false,
+            false,
+            shared,
+            &HashMap::new(),
+        );
+        assert_eq!(elsewhere.geometry.fields, shared.fields);
     }
 
     #[test]

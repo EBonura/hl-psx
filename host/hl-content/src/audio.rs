@@ -1816,6 +1816,15 @@ fn setpiece_candidates(map: &Path) -> Result<Vec<(usize, MapAudioKey)>> {
                 classes.insert(kind.to_ascii_lowercase());
             }
         }
+        // A tentacle's taps are the sample its `sound` keyvalue names (CTentacle:
+        // 0 or absent the silo, 1 dirt, 2 water, -1 none). No retail map uses water.
+        if entity.get("classname").map(String::as_str) == Some("monster_tentacle") {
+            match entity.get("sound").map(|v| v.trim()).unwrap_or("0") {
+                "0" => classes.insert("@tentacle_silo".to_string()),
+                "1" => classes.insert("@tentacle_dirt".to_string()),
+                _ => false,
+            };
+        }
         // SF_BUTTON_SPARK_IF_OFF: a resting button or valve sparks.
         if matches!(
             entity.get("classname").map(String::as_str),

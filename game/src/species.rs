@@ -407,14 +407,16 @@ pub(crate) unsafe fn tentacle_clip(pi: usize) -> Option<(usize, usize)> {
 }
 
 /// A trigger used tentacle `pi` (`CTentacle::CommandUse`): on, it hears a
-/// noise where the activator stands; off, it dies; toggled, it thrashes,
-/// which the cooked roster cannot show, so it holds what it is doing.
+/// noise where the activator stands; off, it dies; toggled, it thrashes at the
+/// engine.
 pub(crate) unsafe fn tentacle_use(pi: usize, use_type: u8, activator: [i32; 3]) {
     if use_type == map::USE_ON {
         crate::make_world_noise(activator, 1024);
-    } else if use_type == map::USE_OFF {
-        if let Some(t) = tentacle_slot(pi) {
+    } else if let Some(t) = tentacle_slot(pi) {
+        if use_type == map::USE_OFF {
             t.die();
+        } else if use_type == map::USE_TOGGLE {
+            t.thrash();
         }
     }
 }
@@ -453,6 +455,26 @@ impl tentacle::World for TentacleWorld {
     #[inline(never)]
     fn ticks(&mut self, seq: u8) -> u16 {
         unsafe { script_clip_hold_ticks(self.pi, seq, 20) }
+    }
+
+    /// Its taps and bangs are the sample its `sound` keyvalue names (te_strike2
+    /// for the silo, pl_dirt1 for dirt: the map's bank carries only its own),
+    /// the taps at 0.4 volume; the song is te_sing1. All ATTN_NORM.
+    #[inline(never)]
+    fn sound(&mut self, what: u8, height: i32) {
+        unsafe {
+            let mut pos = PROP_POS[self.pi];
+            pos[1] += height;
+            let slot = if what == tentacle::SOUND_SING {
+                SP::TE_SING
+            } else if setpiece_sfx::has(SP::TE_STRIKE) {
+                SP::TE_STRIKE
+            } else {
+                SP::TE_DIRT
+            };
+            let volume = if what == tentacle::SOUND_TAP { 40 } else { 100 };
+            crate::sfx::play_map_authored(setpiece_sfx::id(slot), pos, volume, 2);
+        }
     }
 }
 

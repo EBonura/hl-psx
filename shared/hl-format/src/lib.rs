@@ -769,20 +769,27 @@ pub mod setpiece_audio {
     pub const TU_FIRE: u8 = 58;
     pub const SCI_PAIN: u8 = 59;
     pub const GARG_SLASH: u8 = 60;
-    pub const HC_IDLE: u8 = 61;
-    pub const HC_ALERT: u8 = 62;
-    pub const ZO_ALERT: u8 = 63;
-    pub const ZO_IDLE: u8 = 64;
-    pub const HE_IDLE: u8 = 65;
-    pub const BC_IDLE: u8 = 66;
-    pub const AG_IDLE: u8 = 67;
-    pub const CON_IDLE: u8 = 68;
-    pub const ICHY_IDLE: u8 = 69;
-    pub const LEECH_ALERT: u8 = 70;
-    pub const TU_ALERT: u8 = 71;
-    pub const NPC_STEP1: u8 = 72;
-    pub const NPC_STEP3: u8 = 73;
-    pub const COUNT: usize = 74;
+    // The tentacle (CTentacle): its claw's bang and taps by its `sound` keyvalue
+    // (0, the default, the silo's te_strike; 1 dirt's pl_dirt; the cooker reads the
+    // keyvalue into the pseudo-classes).
+    pub const TE_STRIKE: u8 = 61;
+    pub const TE_DIRT: u8 = 62;
+    pub const HC_IDLE: u8 = 63;
+    pub const HC_ALERT: u8 = 64;
+    pub const ZO_ALERT: u8 = 65;
+    pub const ZO_IDLE: u8 = 66;
+    pub const HE_IDLE: u8 = 67;
+    pub const BC_IDLE: u8 = 68;
+    pub const AG_IDLE: u8 = 69;
+    pub const CON_IDLE: u8 = 70;
+    pub const ICHY_IDLE: u8 = 71;
+    pub const LEECH_ALERT: u8 = 72;
+    pub const TU_ALERT: u8 = 73;
+    pub const NPC_STEP1: u8 = 74;
+    pub const NPC_STEP3: u8 = 75;
+    // The tentacle's song (spare SPU RAM only).
+    pub const TE_SING: u8 = 76;
+    pub const COUNT: usize = 77;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -875,6 +882,8 @@ pub mod setpiece_audio {
         sc("monster_turret", "turret/tu_fire1.wav", 3),
         sc("monster_scientist", "scientist/sci_pain1.wav", 3),
         sc("monster_gargantua", "zombie/claw_strike1.wav", 3),
+        sc("@tentacle_silo", "tentacle/te_strike2.wav", 3),
+        sc("@tentacle_dirt", "player/pl_dirt1.wav", 3),
         sc(
             "monster_headcrab,monster_babycrab",
             "headcrab/hc_idle1.wav",
@@ -908,6 +917,7 @@ pub mod setpiece_audio {
             "common/npc_step3.wav",
             4,
         ),
+        sc("monster_tentacle", "tentacle/te_sing1.wav", 4),
     ];
 }
 
