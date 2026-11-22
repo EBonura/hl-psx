@@ -2427,7 +2427,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
     // per (source, ladder): one sound can be a loop in one map and a shot in
     // another.
     let mut kept_cache: HashMap<String, Vec<(u32, f64)>> = HashMap::new();
-    for &(map_index, map_name) in run {
+    'maps: for &(map_index, map_name) in run {
         let bsp = valve.join("maps").join(format!("{map_name}.bsp"));
         if !bsp.exists() {
             continue;
@@ -2435,10 +2435,14 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         let keys = map_audio_keys(valve, &bsp, map_index as u16, &sentences)?;
         let reference = voice_reference(map_name);
         // The suit's own sentences, from what this map can make it say.
-        let hev_chosen = hev_words.fit(
-            &crate::hev::wanted(map_name, &bsp_entities(&bsp)?, &map_classes(&bsp)?),
-            crate::hev::BLOCK_CAP,
-        );
+        let hev_wanted = crate::hev::wanted(map_name, &bsp_entities(&bsp)?, &map_classes(&bsp)?);
+        // The map's own audio comes first: when it cannot keep the base
+        // disc's rates beside the suit block, the block gives up its last
+        // sentence and the map is planned again.
+        let mut hev_keep = usize::MAX;
+        'hev: loop {
+        let mut hev_chosen = hev_words.fit(&hev_wanted, crate::hev::BLOCK_CAP);
+        hev_chosen.truncate(hev_keep);
         let (hev_block, hev_spu) = if hev_chosen.is_empty() {
             (Vec::new(), 0)
         } else {
@@ -2454,12 +2458,13 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 bytes.extend_from_slice(&at.to_le_bytes());
                 fs::write(output.join(format!("chunk_{chunk}.psxa")), &bytes)?;
                 println!(
-                    "  {map_name} (idx {map_index}, chunk {chunk}): suit voice only, {} sentences, {} SPU bytes",
+                    "  {map_name} (idx {map_index}, chunk {chunk}): suit voice only, {} sentences, {} SPU bytes, {}",
                     hev_chosen.len(),
-                    hev_spu
+                    hev_spu,
+                    crate::hev::describe(&hev_wanted, &hev_chosen)
                 );
             }
-            continue;
+            continue 'maps;
         }
         if keys.len() > RUNTIME_MAX_MAP_AUDIO {
             return Err(format!(
@@ -2900,6 +2905,14 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             );
         }
         let Some(steps) = steps else {
+            if let Some(&last) = hev_chosen.last() {
+                hev_keep = hev_chosen.len() - 1;
+                println!(
+                    "  {map_name}: suit sentence {} dropped, the map's own audio needs its SPU",
+                    crate::hev::sentence_name(last)
+                );
+                continue 'hev;
+            }
             let class_bytes = |class| {
                 planned
                     .iter()
@@ -3011,6 +3024,14 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             (rate < base).then(|| format!("{} {base} -> {rate} Hz", p.entry.key))
         }));
         if !lost.is_empty() {
+            if let Some(&last) = hev_chosen.last() {
+                hev_keep = hev_chosen.len() - 1;
+                println!(
+                    "  {map_name}: suit sentence {} dropped, the map's own audio needs its SPU",
+                    crate::hev::sentence_name(last)
+                );
+                continue 'hev;
+            }
             lost.sort();
             return Err(format!(
                 "{map_name}: {} sample(s) of the base disc lost or slower: {}",
@@ -3131,10 +3152,13 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
         );
         if hev_spu > 0 {
             println!(
-                "    suit voice: {} sentences, {} SPU bytes",
+                "    suit voice: {} sentences, {} SPU bytes, {}",
                 hev_chosen.len(),
-                hev_spu
+                hev_spu,
+                crate::hev::describe(&hev_wanted, &hev_chosen)
             );
+        }
+        break 'hev;
         }
     }
                     Ok((manifest, rates_report))

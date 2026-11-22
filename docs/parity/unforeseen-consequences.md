@@ -115,7 +115,7 @@ Fixed: B11 (6e9e343); S22 (6e9e343); B11 (6e9e343).
 | Z09 Opens doors in its path | See F25 | limit-recorded |
 | B8 Shots can miss (2 degree cone), hit locations | Port Barney never misses a visible target and ignores the target's hit boxes. | limit-recorded |
 | C11 | Retail picks among pl_pain2/4/5/6/7 and plays bone-crunch/fall variants. PS1 LIMIT, UNRECORDED (core bank size). | limit-unrecorded |
-| F3 | Retail suit talks after every non-trivial hit and hazard. Port is silent except F5. Atmosphere loss, no gameplay loss. PS1 LIMIT, UNRECORDED. | limit-unrecorded |
+| F3 | The suit reports hits and hazards by TakeDamage's rules (`game/src/hev.rs`), but each map carries only the 6 or 7 sentences its 44 KB suit block holds, so some reports are missing per map. PS1 LIMIT recorded in LIMITS.md F3 and in each map's `suit voice` cook log line. | limit-recorded |
 | Glass/wood/metal-specific bullet decals (`DamageDecal`), scorch decals | Explosions leave no scorch mark on walls. PS1 LIMIT (resident decal tex) but UNRECORDED. | limit-unrecorded |
 | Per-material bullet impact sounds (concrete, metal, dirt, vent, grate, | Every bullet wall hit plays the same ricochet. PS1 LIMIT (core SPU budget, `hl-content/audio.rs:430-441`), per-sound variety UNRECORDED. | limit-unrecorded |
 | Hit sounds: flesh `cbar_hitbod1-3` for non-machine, world `cbar_hit1/2 | Volumes close; glass/computer 1/3 vs 0.2 and concrete 0.5 vs 0.6. One sample each instead of 2-3 variants (PS1 LIMIT, `audio.rs:441-460`; variants UNRECORDED). | limit-unrecorded |

@@ -154,39 +154,68 @@ impl Cooked {
     }
 }
 
+// What the game reports by kind (game/src/hev.rs `actor_kind` and the
+// `pend` sites), so a map carries only what it can be told.
 const BULLET: &[&str] = &[
     "monster_human_grunt",
     "monster_human_assassin",
+    "monster_alien_grunt",
     "monster_turret",
     "monster_miniturret",
     "monster_sentry",
     "monster_apache",
-    "monster_osprey",
     "func_tank",
-    "monster_hornet",
 ];
 const SLASH: &[&str] = &[
     "monster_headcrab",
     "monster_babycrab",
     "monster_zombie",
     "monster_bullchicken",
-    "monster_alien_slave",
-    "monster_alien_grunt",
     "monster_snark",
     "monster_leech",
     "monster_ichthyosaur",
     "monster_bigmomma",
     "monster_gargantua",
-    "monster_rat",
 ];
-const ACID: &[&str] = &["monster_bullchicken"];
-const SONIC: &[&str] = &["monster_houndeye"];
+// The Gonarch's mortar (CBMortar is DMG_ACID; the bullsquid's spit is not).
+const ACID: &[&str] = &["monster_bigmomma"];
+// The houndeye's wave and the gargantua's stomp.
+const SONIC: &[&str] = &["monster_houndeye", "monster_gargantua"];
 
 const DMG_PARALYZE: u32 = 1 << 15;
 const DMG_NERVEGAS: u32 = 1 << 16;
 const DMG_POISON: u32 = 1 << 17;
 const DMG_RADIATION: u32 = 1 << 18;
 const DMG_ACID: u32 = 1 << 20;
+
+/// The retail sentence name (`HEV_<name>` in sentences.txt) of a table id,
+/// for the cook log.
+pub fn sentence_name(id: u8) -> String {
+    const NAMES: [&str; hev::S_POWER as usize] = [
+        "DMG4", "DMG5", "HLTH3", "HLTH2", "MED1", "HEAL7", "DMG6", "DMG0", "DMG1", "AMO0", "DMG7",
+        "HLTH1", "DET1", "DMG3", "DET0", "DET2", "DMG2",
+    ];
+    match id {
+        hev::S_A1 => "A1".into(),
+        _ if id < hev::S_POWER => NAMES[id as usize].into(),
+        _ => format!("{}P", id - hev::S_POWER),
+    }
+}
+
+/// The cook log's account of a map's suit block: what it carries and what
+/// did not fit the cap.
+pub fn describe(wanted: &[u8], chosen: &[u8]) -> String {
+    let names = |list: Vec<u8>| -> String {
+        let names: Vec<String> = list.into_iter().map(sentence_name).collect();
+        names.join(" ")
+    };
+    let dropped = wanted.iter().copied().filter(|s| !chosen.contains(s));
+    format!(
+        "kept [{}] dropped [{}]",
+        names(chosen.to_vec()),
+        names(dropped.collect())
+    )
+}
 
 /// Maps before the suit exists: the tram ride and the first Black Mesa map.
 pub fn map_has_suit_voice(map_name: &str) -> bool {
@@ -299,6 +328,22 @@ mod tests {
         assert!(!w.contains(&hev::S_DMG6) && !w.contains(&hev::S_DET1));
         assert!(w.contains(&(hev::S_POWER + 19)));
         assert!(!w.contains(&hev::S_A1));
+    }
+
+    #[test]
+    fn a_map_carries_the_reports_its_monsters_can_cause() {
+        // The Gonarch's mortar is acid; the bullsquid's spit is not.
+        let w = wanted("c4a1", &[], &classes(&["monster_bigmomma"]));
+        assert!(w.contains(&hev::S_DET1) && w.contains(&hev::S_DMG0));
+        let w = wanted("c1a3", &[], &classes(&["monster_bullchicken"]));
+        assert!(!w.contains(&hev::S_DET1) && w.contains(&hev::S_DMG0));
+        // The gargantua claws and stomps; alien grunts fire hornets.
+        let w = wanted("c3a1", &[], &classes(&["monster_gargantua"]));
+        assert!(w.contains(&hev::S_DMG0) && w.contains(&hev::S_DMG2));
+        let w = wanted("c3a1", &[], &classes(&["monster_alien_grunt"]));
+        assert!(w.contains(&hev::S_DMG6) && !w.contains(&hev::S_DMG0));
+        assert_eq!(sentence_name(hev::S_POWER + 3), "3P");
+        assert_eq!(sentence_name(hev::S_DMG4), "DMG4");
     }
 }
 
