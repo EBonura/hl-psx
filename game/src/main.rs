@@ -16587,11 +16587,16 @@ unsafe fn prop_try_step(
                 i += 1;
                 continue;
             }
-            // The gargantua's 64-unit box against its (knee-high) clips.
+            // The gargantua's 64-unit box against its (knee-high) clips. Any
+            // walker refuses a step from outside a brush entity's hull to
+            // inside it: the line test lets a step that starts inside one
+            // through (so an overlap can be left), so an actor that stopped on
+            // a thin wall's expanded plane (c2a5f's flesh wall, 4 units) would
+            // cross it on its next step.
             if in_monsterclip(to_flat, 0)
-                || (ty == PROP_TYPE_GARG
-                    && (in_monsterclip([cand[0], cand[1] + 16, cand[2]], 32)
-                        || phys::point_in_movers(m, movers, to_flat)))
+                || (phys::point_in_movers(m, movers, to_flat)
+                    && !phys::point_in_movers(m, movers, from))
+                || (ty == PROP_TYPE_GARG && in_monsterclip([cand[0], cand[1] + 16, cand[2]], 32))
             {
                 #[cfg(feature = "reference-trace")]
                 {
