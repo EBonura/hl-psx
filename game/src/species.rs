@@ -112,6 +112,8 @@ pub(crate) unsafe fn tick_grunt(
             // frontkick has one HGRUNT_AE_KICK event, frame 14 at 35 fps: the 8th
             // tick of the sequence, one hit of sk_hgrunt_kick.
             if left == 13 {
+                // DMG_CLUB: the suit names only a major club hit, which a kick never is.
+                hev::set_kind(hev::Kind::Generic);
                 damage_target(target, skill_hit(Sk::HgruntKick), pos, health, armor);
             }
         } else if mode == 1 {
@@ -307,6 +309,8 @@ pub(crate) unsafe fn tick_slave(
             cooldown
         };
         if matches!(30 - left, 9 | 13 | 21) {
+            // CISlave's claws are DMG_SLASH; its zap (DMG_SHOCK) names nothing.
+            hev::set_kind(hev::Kind::Slash);
             damage_target(target, claw, pos, health, armor);
             cue(SP::SLV_CLAW, pos);
         }
@@ -549,6 +553,8 @@ unsafe fn tick_tentacle(
                 "tentacle_hit",
                 &[pi as i32, hitbox as i32, dmg as i32, t.seq as i32],
             );
+            // CTentacle::HitTouch is DMG_CRUSH.
+            hev::set_kind(hev::Kind::Crush);
             damage_target(PROP_TARGET_PLAYER, dmg, pos, health, armor);
         }
     }

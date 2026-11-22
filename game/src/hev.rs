@@ -284,7 +284,8 @@ pub const fn actor_kind(ty: u8) -> Kind {
         2 | 5 | 7 | 13 | 18 | 19 => Kind::Slash,
         6 => Kind::Sonic,
         // grunts, Barney, the alien grunt's hornets, the sentries, turrets,
-        // the Apache and the assassin's pistol are bullets
+        // the Apache and the assassin's pistol are bullets (the grunt's kick
+        // and the alien grunt's punch name their own kind)
         1 | 8 | 10 | 20 | 21 | 22 | 23 | 51 => Kind::Bullet,
         _ => Kind::Generic,
     }

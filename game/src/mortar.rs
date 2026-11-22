@@ -96,6 +96,9 @@ pub(crate) unsafe fn field_use(m: &Map, nlogic: usize, rec: map::LogicEnt, now: 
 #[inline(never)]
 #[optimize(size)]
 pub(crate) unsafe fn tick(m: &Map, now: u16) {
+    // The first call after the actor loop every frame: the last actor's kind
+    // must not name the next unrelated hit (`hev::set_kind`).
+    hev::set_kind(hev::Kind::Generic);
     for s in 0..MAX_SHELLS {
         if SHELL_AT[s] != 0 && time_reached(now, SHELL_AT[s]) {
             SHELL_AT[s] = 0;

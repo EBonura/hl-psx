@@ -19258,6 +19258,8 @@ unsafe fn tick_alien_attack(
         let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
         let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
         if d2 <= 100 * 100 && senses::within_cone(2458, fx, fz, dx, dz) {
+            // The punch is DMG_CLUB, not the hornets' bullets.
+            hev::set_kind(hev::Kind::Generic);
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
             setpiece_sfx::play(hl_format::setpiece_audio::AG_PUNCH, pos);
             prop_attack_cooldown_set(pi, 24);
@@ -25985,6 +25987,9 @@ unsafe fn tick_env_sparks(m: &Map, nlogic: usize, now: u16) {
 /// freshly traced endpoint around their origin every period while toggled on.
 #[inline(never)]
 unsafe fn tick_beams(m: &Map, nlogic: usize, nents: usize, movers: &[phys::Mover]) {
+    // The last pass before the frame's summed player damage is applied (kept
+    // out of `play`, whose size swings with any change to its body).
+    hev::take_pending();
     let indexed = LOGIC_BEAM_COUNT != LOGIC_HOT_FALLBACK;
     let scan_count = if indexed {
         LOGIC_BEAM_COUNT as usize
@@ -39007,7 +39012,6 @@ fn play(
                 tick_projectiles(&m, movers);
                 tick_env_sparks(&m, nlogic, sim_frame_no as u16);
                 tick_beams(&m, nlogic, nents, movers);
-                hev::take_pending();
                 if PENDING_PLAYER_DAMAGE > 0 {
                     let d = PENDING_PLAYER_DAMAGE;
                     PENDING_PLAYER_DAMAGE = 0;
@@ -39043,8 +39047,6 @@ fn play(
                 apache::tick(&m, movers);
                 nihilanth::tick(&m, movers);
                 mortar::tick(&m, sim_frame_no as u16);
-                // The last actor's kind must not name the next unrelated hit.
-                hev::set_kind(hev::Kind::Generic);
                 telemetry::stage_end(telemetry::stage::UPDATE_ACTOR);
                 apply_debug_toggles(
                     &mut health,
