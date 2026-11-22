@@ -37,8 +37,8 @@ C-F13, C-F14, C-F15, C-F21, C-F22, C-F23, C-HE08, C-BS06, C-HG11, C-AG05,
 C-VO07, C-CO05. The original runs every monster through a shared state word, a
 condition bit set, about ninety tasks and some forty-five schedules. The port
 has one hand-written state machine per species (`species.rs`, `main.rs`), which
-is why the pieces that need the engine are absent: damage conditions that choose
-between flinch and cover, squad recruitment and engage slots, cover and flank
+is why the pieces that need the engine are absent: the choice between flinch and
+cover, squad recruitment and engage slots, cover and flank
 search, call for help, houndeye attack slots, the bullsquid swerve and the
 alien grunt hornet slots. A generic engine in place of the state machines does
 not fit in the memory left after the senses (see the budget above). The
@@ -46,6 +46,22 @@ pieces that are rules on one species are implemented as rules: the houndeye
 pack bonus (C-HE04), the marine and alien relationships (C-F10), view cones
 (C-F04), hearing (C-F07), the last known position (C-F12) and the yaw speeds
 (C-F30).
+
+Groundwork for the engine is in place. Each monster type's row in `MODEL_DEFS`
+names its archetype and how it moves, and one dispatch (`species::tick_monster`)
+runs every melee and ranged type from it; a type with no archetype stands idle
+instead of borrowing the headcrab's or the generic shooter's think. A hit
+computes CBaseMonster's damage conditions and hit group (`monster_damage.rs`:
+light for any damage, heavy from 20, the group of the bullet's hitbox); a heavy
+hit starts the small flinch (the cooked pain clip at its authored length) on the
+types whose pain clip is ACT_SMALL_FLINCH and holds their think until it has
+run. The original flinches differently: every default schedule is interrupted
+by light or heavy damage, a monster in combat plays its small flinch on the
+first light hit of its life only (bits_MEMORY_FLINCHED is never forgotten) and
+an alert one flinches unless it faces the attacker, when it takes cover. That
+choice is the engine's. Big flinches and the per-limb flinch activities are
+not cooked (model RAM), and the hit group is known only for heads, the HECU
+helmet and the alien grunt's plates (the cooked hit-group rules).
 
 ## Navigation
 
@@ -64,6 +80,29 @@ C-HC03. A headcrab leaps by throwing itself along a ballistic arc. The port
 glides it to the target over the eight ticks of the leap animation: an actor has
 no velocity or gravity state, and adding one for the leap costs a field in every
 prop.
+
+Flyers and swimmers move as CFlyingMonster does, with
+one mover: the controller's three-axis flight state, node choice and floor
+exemption. The ichthyosaur swims to its prey's depth and refuses a step that
+would take its body out of the water; it no longer walks the pool floor. It
+does not use water nodes (the cook keeps land and air nodes only), so a pool it
+cannot cross in a straight line holds it back.
+
+## Animation events
+
+The models' studio events are cooked (`hl-content anim-events`, the think that
+plays each event: the first 0.1 s monster think at or after frame / fps) and the
+game keeps the clips `hl_format::anim_event::RULES` names in one table that
+`anim_event` reads for every species. The zombie's two claws, the vortigaunt's
+three claws and the alien grunt's five hornets land on their events; a host test
+checks the cooked ticks against the ticks the reference runtime measured for
+them. Other timings stay measured constants because their events do not land on
+the measured tick with that rule: the houndeye's blast (event at 48, measured
++45), the Gargantua's stomp (28 against 27; its swipe agrees), the zombie's
+lone heavy swing and the controller's head ball (attack2 and shoot are not
+cooked) and the shared bite of headcrabs, babies, snarks and the ichthyosaur.
+Converting them needs a journey per species. Footsteps still play at fixed
+intervals (see Steps above).
 
 ## Turrets
 

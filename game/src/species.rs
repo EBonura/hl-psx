@@ -307,7 +307,8 @@ pub(crate) unsafe fn tick_slave(
         } else {
             cooldown
         };
-        if matches!(30 - left, 9 | 13 | 21) {
+        // ISLAVE_AE_CLAW, three times in attack1 (`29 - left` ticks into it).
+        if anim_event(9, hl_format::anim_event::SLAVE_CLAW, 29u8.wrapping_sub(left)) != 0 {
             // CISlave's claws are DMG_SLASH; its zap (DMG_SHOCK) names nothing.
             hev::set_kind(hev::Kind::Slash);
             damage_target(target, claw, pos, health, armor);
@@ -819,11 +820,15 @@ unsafe fn tick_zombie(
         PROP_STATE[pi] = PROP_STATE_ATTACK;
         PROP_AI_TIMER[pi] = t - 1;
         let done = if t & 64 != 0 { 40 - left } else { 52 - left };
-        let hit = if t & 64 != 0 {
-            done == 10
+        // The claws land on attack1's events (1 right, 2 left) `done` ticks
+        // into it; the lone heavy swing (ZOMBIE_AE_BOTH_ATTACK, 3) plays
+        // attack2, which is not cooked, and keeps its measured +11.
+        let ev = if t & 64 != 0 {
+            (done == 10) as u8 * 3
         } else {
-            done == 14 || done == 26
+            anim_event(PROP_KIND[pi], hl_format::anim_event::ZOMBIE_ATTACK, done)
         };
+        let hit = ev != 0;
         // CheckTraceHullAttack(70): a 32-wide hull swept 70 units straight ahead; the target's
         // centre is reached within 70 + 16 in front and 16 + 16 to the side.
         let yaw = prop_yaw_value(PROP_YAW[pi]);
@@ -841,12 +846,10 @@ unsafe fn tick_zombie(
                 // Each claw throws the player 5 units per tick away from the zombie; the
                 // first claw also to the zombie's left, the second to its right.
                 let (dx, dz) = (aim[0] - pos[0], aim[2] - pos[2]);
-                let side = if t & 64 != 0 {
-                    0
-                } else if done == 14 {
-                    -5
-                } else {
-                    5
+                let side = match ev {
+                    1 => -5,
+                    2 => 5,
+                    _ => 0,
                 };
                 let len = isqrt_i32(dx * dx + dz * dz).max(1);
                 KNOCK = [(dx * 5 + dz * side) / len, 0, (dz * 5 - dx * side) / len];
@@ -855,7 +858,7 @@ unsafe fn tick_zombie(
             // the lone heavy one) adds the zombie's roar.
             if setpiece_sfx::has(SP::ZO_CLAW) {
                 cue(SP::ZO_CLAW, pos);
-                if t & 64 != 0 || done == 26 {
+                if ev >= 2 {
                     sfx::play_world(sfx::ZO_ATTACK, pos);
                 }
             } else {

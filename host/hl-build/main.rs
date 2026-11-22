@@ -1818,6 +1818,16 @@ fn cook_models(repository: &Path, valve: &Path, bins: &HostBins) -> Result<()> {
         ],
         "generate head hitbox table",
     )?;
+    run_content(
+        &bins.content,
+        &[
+            OsStr::new("anim-events"),
+            models_dir.as_os_str(),
+            roster.as_os_str(),
+            model_pack.join("anim_events.txt").as_os_str(),
+        ],
+        "generate animation event table",
+    )?;
     fs::remove_file(roster)?;
     Ok(())
 }

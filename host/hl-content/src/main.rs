@@ -73,6 +73,11 @@ fn main() -> Result<()> {
             Path::new(arg(&args, 3)),
             Path::new(arg(&args, 4)),
         ),
+        "anim-events" => generators::anim_events(
+            Path::new(arg(&args, 2)),
+            Path::new(arg(&args, 3)),
+            Path::new(arg(&args, 4)),
+        ),
         "transition-props" => generators::transition_props(
             Path::new(arg(&args, 2)),
             Path::new(arg(&args, 3)),

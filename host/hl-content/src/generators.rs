@@ -401,6 +401,73 @@ fn hitgroup_mask(data: &[u8], group: i32) -> Result<u64> {
 
 /// Write `type|group|mask` (mask in hex, one bit per hitbox) for every roster
 /// model's hit groups.
+/// The studio events of one sequence as `(tick, event)`: the 20 Hz tick from
+/// the sequence's start of the monster think that handles each event. A
+/// monster thinks every 0.1 s, so an event at frame f of a sequence at fps
+/// plays on the first think at or after f / fps, two ticks per think.
+pub(crate) fn event_ticks(data: &[u8], sequence: usize) -> Result<Vec<(u8, u16)>> {
+    let (_, count, table) = sequences(data)?;
+    if sequence >= count {
+        return Ok(Vec::new());
+    }
+    let desc = table + sequence * SEQDESC_BYTES;
+    let fps = f32le(data, desc + 32)? as f64;
+    let event_count = i32le(data, desc + 48)?;
+    let event_offset = i32le(data, desc + 52)?;
+    if !fps.is_finite() || fps <= 0.0 || event_count <= 0 {
+        return Ok(Vec::new());
+    }
+    if event_offset < 0 || event_offset as usize + event_count as usize * EVENT_BYTES > data.len() {
+        return Err("studio event table exceeds MDL".into());
+    }
+    let mut out = Vec::new();
+    for index in 0..event_count as usize {
+        let at = event_offset as usize + index * EVENT_BYTES;
+        let frame = i32le(data, at)?.max(0) as f64;
+        let event = i32le(data, at + 4)?;
+        let think = (frame * 10.0 / fps - 1e-6).ceil().max(0.0) as i64;
+        out.push(((think * 2).clamp(0, 255) as u8, event.clamp(0, u16::MAX as i32) as u16));
+    }
+    Ok(out)
+}
+
+/// `anim-events`: every studio event of every cooked clip, one
+/// `type|slot|tick|event` row each (the slot is the roster clip index, the
+/// tick from [`event_ticks`]). The game build keeps the rows
+/// `hl_format::anim_event::RULES` names.
+pub fn anim_events(models: &Path, roster: &Path, output: &Path) -> Result<()> {
+    let mut records = Vec::new();
+    for raw in fs::read_to_string(roster)?.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.splitn(3, '|');
+        let actor_type: u8 = fields.next().ok_or("roster type missing")?.parse()?;
+        let model = fields.next().ok_or("roster model missing")?;
+        let specs = fields.next().ok_or("roster specs missing")?;
+        let data = fs::read(models.join(format!("{model}.mdl")))?;
+        let (labels, _, _) = sequences(&data)?;
+        let clips = specs.split(',').map(str::trim).filter(|t| !t.is_empty() && !t.contains('='));
+        for (slot, token) in clips.enumerate() {
+            let label = token.split_once(':').map_or(token, |v| v.0).trim();
+            let sequence = match label.parse::<usize>() {
+                Ok(index) => index,
+                Err(_) => match labels.get(&label.to_ascii_lowercase()) {
+                    Some(&index) => index,
+                    None => continue,
+                },
+            };
+            for (tick, event) in event_ticks(&data, sequence)? {
+                records.push(format!("{actor_type}|{slot}|{tick}|{event}"));
+            }
+        }
+    }
+    fs::write(output, records.join("\n") + "\n")?;
+    println!("anim events: {} -> {}", records.len(), output.display());
+    Ok(())
+}
+
 pub fn hitgroups(models: &Path, roster: &Path, output: &Path) -> Result<()> {
     let mut records = Vec::new();
     for raw in fs::read_to_string(roster)?.lines() {
@@ -1022,5 +1089,34 @@ mod tests {
         assert_eq!(hitgroup_mask(&data, 10).unwrap(), 0b1010);
         assert_eq!(hitgroup_mask(&data, 1).unwrap(), 0b0100);
         assert_eq!(hitgroup_mask(&data, 7).unwrap(), 0);
+    }
+}
+
+#[cfg(test)]
+mod anim_event_tests {
+    use super::*;
+
+    /// The retail models' events, think-quantized, land on the ticks the
+    /// reference runtime measured for these attacks (run with HL_DIR set to
+    /// a Half-Life `valve` directory; skipped without it).
+    #[test]
+    fn cooked_attack_events_match_the_measured_ticks() {
+        let Ok(valve) = std::env::var("HL_DIR") else { return };
+        let models = Path::new(&valve).join("models");
+        let ticks = |model: &str, sequence: usize| -> Vec<u8> {
+            let data = fs::read(models.join(model)).expect("model");
+            event_ticks(&data, sequence).unwrap().into_iter().map(|e| e.0).collect()
+        };
+        // zombie attack1 (sequence 8): claws +15 and +27 after the bout shows.
+        assert_eq!(ticks("zombie.mdl", 8), [14, 26]);
+        // vortigaunt attack1: claws at +9, +13 and +21 of the 30-tick loop.
+        let data = fs::read(models.join("islave.mdl")).unwrap();
+        let (labels, _, _) = sequences(&data).unwrap();
+        assert_eq!(ticks("islave.mdl", labels["attack1"]), [8, 12, 20]);
+        // alien grunt hornetattack: hornets 18, 14, 10, 8 and 2 ticks before
+        // the end of its 24-tick volley.
+        let data = fs::read(models.join("agrunt.mdl")).unwrap();
+        let (labels, _, _) = sequences(&data).unwrap();
+        assert_eq!(ticks("agrunt.mdl", labels["hornetattack"]), [6, 10, 14, 16, 22]);
     }
 }

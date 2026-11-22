@@ -8,6 +8,8 @@ use std::{collections::HashSet, env, fs, path::PathBuf};
 // parity test; this script includes them by path (it cannot depend on the
 // `no_std` crate for the host).
 #[allow(dead_code)]
+#[path = "../shared/hl-format/src/anim_event.rs"]
+mod anim_event;
 #[path = "../shared/hl-format/src/hitgroup.rs"]
 mod hitgroup;
 #[path = "../shared/hl-format/src/room_budget.rs"]
@@ -1386,15 +1388,48 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
             .unwrap_or_else(|_| panic!("actor type {ty} group {group} reaches past hitbox 31"));
         masks.push((ty, group, mask));
     }
+    // Animation events (the cooker's `anim_events.txt`) of the clips
+    // `anim_event::RULES` names: (actor type, clip slot, tick, event).
+    let events_path = repo_root.join("data/modelpack/anim_events.txt");
+    println!("cargo:rerun-if-changed={}", events_path.display());
+    let events_text = fs::read_to_string(&events_path).unwrap_or_else(|_| {
+        panic!(
+            "{} is missing; run `cargo hl-build models`",
+            events_path.display()
+        )
+    });
+    let mut events: Vec<(u8, u8, u8, u8)> = Vec::new();
+    for line in events_text.lines() {
+        let f: Vec<&str> = line.split('|').collect();
+        let [t, slot, tick, event] = f[..] else { continue };
+        let (t, slot, tick, event): (u8, u8, u8, u16) = (
+            t.parse().expect("anim event type"),
+            slot.parse().expect("anim event slot"),
+            tick.parse().expect("anim event tick"),
+            event.parse().expect("anim event id"),
+        );
+        if anim_event::RULES.contains(&(t, slot)) {
+            events.push((t, slot, tick, u8::try_from(event).expect("anim event id past 255")));
+        }
+    }
+    for &(t, slot) in anim_event::RULES {
+        assert!(
+            events.iter().any(|e| e.0 == t && e.1 == slot),
+            "anim_events.txt has no event for actor type {t} clip {slot}"
+        );
+    }
     let generated = format!(
         "/// Spawn health per model type and difficulty; 0 keeps the model default.\n\
          pub const SKILL_HEALTH: [[u8; {MODEL_TYPES}]; 3] = {health:?};\n\
          /// Every other tunable, indexed by `hl_format::skill::Sk`.\n\
          pub const SKILL_VALUE: [[u16; {}]; 3] = {value:?};\n\
          /// (actor type, hit group, hitbox mask) for each `hitgroup::RULES` pair.\n\
-         pub const HIT_MASKS: [(u8, u8, u32); {}] = {masks:?};\n",
+         pub const HIT_MASKS: [(u8, u8, u32); {}] = {masks:?};\n\
+         /// (actor type, clip slot, tick, event) for each `anim_event::RULES` clip.\n\
+         pub const ANIM_EVENTS: [(u8, u8, u8, u8); {}] = {events:?};\n",
         skill::SK_RUNTIME,
-        masks.len()
+        masks.len(),
+        events.len()
     );
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
 }

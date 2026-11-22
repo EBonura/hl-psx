@@ -1152,6 +1152,23 @@ fn model_def(ty: u8) -> ModelDef {
     MODEL_DEFS[(ty as usize).min(N_MODEL_TYPES - 1)]
 }
 
+/// The studio event (`skill_table::ANIM_EVENTS`, cooked from the model) that
+/// clip `slot` of actor type `ty` plays `tick` ticks from its start, or 0.
+/// Every species' attack timing reads its events here.
+#[inline(never)]
+#[optimize(size)]
+fn anim_event(ty: u8, slot: u8, tick: u8) -> u8 {
+    let mut i = 0;
+    while i < skill_table::ANIM_EVENTS.len() {
+        let (t, s, k, event) = skill_table::ANIM_EVENTS[i];
+        if t == ty && s == slot && k == tick {
+            return event;
+        }
+        i += 1;
+    }
+    0
+}
+
 /// A flyer or swimmer: moves in three axes with the flight mover, no floor.
 #[inline(never)]
 fn prop_free_mover(ty: u8) -> bool {
@@ -19319,7 +19336,8 @@ unsafe fn tick_alien_attack(
     if ty == 10 {
         if left > 0 {
             PROP_AI_TIMER[pi] = left - 1;
-            if matches!(left, 18 | 14 | 10 | 8 | 2) {
+            // AGRUNT_AE_HORNET1..5 of hornetattack, `24 - left` ticks into it.
+            if anim_event(10, hl_format::anim_event::AGRUNT_HORNETS, 24 - left) != 0 {
                 let arm = [
                     from[0] + ((dir[0] * 32) >> 12),
                     from[1] + ((dir[1] * 32) >> 12),
