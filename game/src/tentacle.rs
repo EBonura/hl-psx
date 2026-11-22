@@ -65,7 +65,10 @@ const fn deg(d: i32) -> i32 {
     d * 4096 / 360
 }
 
-/// The default sweep: 65 degrees either side of the spawn heading.
+/// The default sweep: 65 degrees either side of the spawn heading. The
+/// cooker writes each tentacle's own limit (half its `sweeparc`, 0..=2048,
+/// 2048 for no limit) into its prop's carry word, which never carries a
+/// tentacle across a transition; this is that default.
 pub const MAX_YAW: i16 = deg(65) as i16;
 
 // Cooked clip slots, in the order of tentacle2's row in
@@ -401,10 +404,12 @@ impl Tentacle {
         next_song: 0,
     };
 
-    /// CTentacle::Spawn: down its pit, facing its authored heading.
-    pub fn spawn(prop: u8, yaw: u16) -> Self {
+    /// CTentacle::Spawn: down its pit, facing its authored heading, turning
+    /// at most `max_yaw` either side of it (2048 turns it anywhere).
+    pub fn spawn(prop: u8, yaw: u16, max_yaw: u16) -> Self {
         let mut t = Self::EMPTY;
         t.prop = prop;
+        t.max_yaw = max_yaw as i16;
         t.yaw = yaw;
         t.home = yaw;
         t.ideal = yaw;
@@ -737,7 +742,7 @@ mod tests {
     #[test]
     fn it_stays_in_the_pit_until_it_hears() {
         let mut w = ears(None);
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         assert_eq!(run(&mut t, &mut w, 400, &mut hp), vec![PIT]);
     }
@@ -745,7 +750,7 @@ mod tests {
     #[test]
     fn a_noise_up_high_raises_it_to_strike_there() {
         let mut w = ears(Some([0, 700, 300]));
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         let seen = run(&mut t, &mut w, 300, &mut hp);
         assert_eq!(&seen[..5], &[PIT, RISE, L1_TO_L2, L2_TO_L3, STRIKE[3]]);
@@ -755,7 +760,7 @@ mod tests {
     #[test]
     fn the_strike_kills_only_in_its_swing() {
         let mut w = ears(Some([0, 0, 300]));
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         let mut killing = false;
         for k in 0..400 {
@@ -773,7 +778,7 @@ mod tests {
     #[test]
     fn worn_down_it_sinks_and_heals_in_the_pit() {
         let mut w = ears(Some([0, 300, 300]));
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         run(&mut t, &mut w, 200, &mut hp);
         assert!(level_of(t.seq) >= 0);
@@ -788,7 +793,7 @@ mod tests {
     #[test]
     fn a_noise_behind_is_not_struck_at() {
         let mut w = ears(Some([0, 0, -300]));
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         let seen = run(&mut t, &mut w, 400, &mut hp);
         assert!(!seen.iter().any(|s| STRIKE.contains(s) || TAP.contains(s)));
@@ -811,7 +816,7 @@ mod tests {
     #[test]
     fn a_strike_bangs_and_the_rise_taps() {
         let mut w = ears(Some([0, 0, 300]));
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         run(&mut t, &mut w, 400, &mut hp);
         // two light taps on the way out of the pit (MyLevel 0 while rising)
@@ -823,7 +828,7 @@ mod tests {
     #[test]
     fn down_its_pit_it_is_silent() {
         let mut w = ears(None);
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         run(&mut t, &mut w, 400, &mut hp);
         assert!(w.sounds.is_empty());
@@ -832,7 +837,7 @@ mod tests {
     #[test]
     fn settled_with_nothing_heard_it_sings_now_and_then() {
         let mut w = ears(Some([0, 300, 300]));
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         run(&mut t, &mut w, 100, &mut hp);
         w.noise = None;
@@ -853,7 +858,7 @@ mod tests {
     #[test]
     fn toggled_it_thrashes_at_the_engine_and_stops_listening() {
         let mut w = ears(Some([0, 300, 300]));
-        let mut t = Tentacle::spawn(0, 0);
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
         let mut hp = HEALTH;
         run(&mut t, &mut w, 100, &mut hp);
         assert_eq!(level_of(t.seq), 1);
@@ -867,5 +872,37 @@ mod tests {
         // turned half round to the engine
         assert_eq!(t.yaw, 2048);
         assert!(t.seq >= ENGINE_SWAY);
+    }
+    #[test]
+    fn a_full_sweep_strikes_behind_it() {
+        // sweeparc 360 (c2a5x): no limit, so a noise behind is struck at and
+        // the body swings round to it.
+        let mut w = ears(Some([0, 0, -300]));
+        let mut t = Tentacle::spawn(0, 0, deg(180) as u16);
+        let mut hp = HEALTH;
+        let seen = run(&mut t, &mut w, 400, &mut hp);
+        assert!(seen.contains(&STRIKE[0]));
+        assert_eq!(t.yaw, 2048);
+    }
+
+    #[test]
+    fn a_narrow_sweep_holds_it_to_its_arc() {
+        // sweeparc 50 (one of c4a1b's): a noise 90 degrees off is beyond
+        // 25 + 30 and twice 25 degrees, so it would rear (it idles), turned
+        // no further than 25.
+        let max = deg(25) as u16;
+        let mut w = ears(Some([300, 0, 0]));
+        let mut t = Tentacle::spawn(0, 0, max);
+        let mut hp = HEALTH;
+        let seen = run(&mut t, &mut w, 400, &mut hp);
+        assert!(!seen.iter().any(|s| STRIKE.contains(s) || TAP.contains(s)));
+        assert!(seen.contains(&IDLE[0]));
+        assert_eq!(t.yaw, max);
+        // the default arc strikes the same noise: 90 is within 65 + 30
+        let mut w = ears(Some([300, 0, 0]));
+        let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);
+        let seen = run(&mut t, &mut w, 400, &mut hp);
+        assert!(seen.contains(&STRIKE[0]));
+        assert_eq!(t.yaw, MAX_YAW as u16);
     }
 }
