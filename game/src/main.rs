@@ -12083,9 +12083,12 @@ unsafe fn maker_make(
             return;
         }
     }
-    // The copy parked at this maker first; a copy stocked under the same
-    // name elsewhere (several makers sharing a targetname) after that.
+    // The copy parked at this maker first (the nearest within 64 units, so
+    // makers a few units apart, c2a5f's vent wall, each take their own); a
+    // copy stocked under the same name elsewhere (several makers sharing a
+    // targetname) after that.
     let mut found = usize::MAX;
+    let mut nearest = 64 * 64;
     let mut pass = 0;
     while pass < 2 && found == usize::MAX {
         let mut pi = 0usize;
@@ -12096,12 +12099,13 @@ unsafe fn maker_make(
                     PROP_POS[pi][1] - rec.origin[1],
                     PROP_POS[pi][2] - rec.origin[2],
                 ];
-                let hit = if pass == 0 {
-                    d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64 * 64
-                } else {
-                    rec.targetname != 0 && PROP_NAME[pi] == rec.targetname
-                };
-                if hit {
+                if pass == 0 {
+                    let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                    if d2 < nearest {
+                        nearest = d2;
+                        found = pi;
+                    }
+                } else if rec.targetname != 0 && PROP_NAME[pi] == rec.targetname {
                     found = pi;
                     break;
                 }
@@ -12188,7 +12192,15 @@ unsafe fn maker_make(
         PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
         prop_set_pos_exact(m, pi, at);
     } else {
-        prop_set_pos(m, &[], pi, PROP_POS[pi]);
+        // SF_MONSTER_FALL_TO_GROUND. The floor probe looks 24 units up for
+        // headroom; a maker under a low ceiling (c2a5f's snark pocket, 18
+        // units) fails that, so probe again from 16 units lower.
+        let p = PROP_POS[pi];
+        let y = match prop_floor_y(m, pi, p) {
+            Some(y) => y,
+            None => prop_floor_y(m, pi, [p[0], p[1] - 16, p[2]]).unwrap_or(p[1]),
+        };
+        prop_set_pos_exact(m, pi, [p[0], y, p[2]]);
     }
     let left = LOGIC_COUNTER[li];
     if left > 0 {
