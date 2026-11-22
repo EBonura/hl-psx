@@ -3982,20 +3982,20 @@ static mut NEXT_HIT_GROUP: u8 = 0;
 /// Actor types whose cooked pain clip is their small flinch (ACT_SMALL_FLINCH):
 /// scientists, Barney, headcrabs, zombies, houndeye, bullsquid, HECU,
 /// vortigaunt, alien grunt, controller, ichthyosaur.
-const FLINCH_TYPES: u64 = 1 << 0
-    | 1 << 1
-    | 1 << 2
-    | 1 << 5
-    | 1 << 6
-    | 1 << 7
-    | 1 << 8
-    | 1 << 9
-    | 1 << 10
-    | 1 << 11
-    | 1 << 19
-    | 1 << 54
-    | 1 << 55
-    | 1 << 59;
+const FLINCH_TYPES: Mask64 = Mask64::bit(0)
+    .or(Mask64::bit(1))
+    .or(Mask64::bit(2))
+    .or(Mask64::bit(5))
+    .or(Mask64::bit(6))
+    .or(Mask64::bit(7))
+    .or(Mask64::bit(8))
+    .or(Mask64::bit(9))
+    .or(Mask64::bit(10))
+    .or(Mask64::bit(11))
+    .or(Mask64::bit(19))
+    .or(Mask64::bit(54))
+    .or(Mask64::bit(55))
+    .or(Mask64::bit(59));
 // Sim tick each prop died on -> the death clip plays forward from there, then
 // holds. Authored corpses are seeded far in the past so they spawn on the final
 // death frame instead of re-playing the fall.
@@ -18019,7 +18019,7 @@ unsafe fn prop_flinch_ticks(pi: usize) -> u8 {
     let ty = PROP_KIND[pi];
     let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
     if ty < 64
-        && FLINCH_TYPES >> ty & 1 != 0
+        && FLINCH_TYPES.test(ty as usize)
         && slot != MODEL_SLOT_NONE
         && PROP_SCRIPT_MODE[pi] == 0
         && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE == 0
