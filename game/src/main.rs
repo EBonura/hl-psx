@@ -16182,7 +16182,14 @@ unsafe fn prop_set_pos_exact(m: &Map, pi: usize, pos: [i32; 3]) {
         prop_touch_triggers(m, pi);
     }
     PROP_OCC_VIS[pi] |= PROP_OCC_DIRTY;
-    let leaf = camera_leaf(m, pos);
+    let mut leaf = camera_leaf(m, pos);
+    // An origin snapped onto a sloped floor can land a unit or two inside it
+    // (c2a5f's snark duct), in the solid leaf: GoldSrc files the monster by
+    // its bounding box, which stands in the open leaf above. Look a few units
+    // up before giving up, or the PVS test hides a live actor.
+    if leaf == 0 {
+        leaf = camera_leaf(m, [pos[0], pos[1] + 8, pos[2]]);
+    }
     PROP_LEAF[pi] = if leaf > 0 && leaf <= i16::MAX as i32 {
         leaf as i16
     } else {
