@@ -85,17 +85,21 @@ const FLOOR_TO_L1: u8 = 7;
 /// Lev1_to_Lev2 and Lev2_to_Lev3, both reversible.
 const L1_TO_L2: u8 = 11;
 const L2_TO_L3: u8 = 15;
+/// Per level (floor, 1, 2, 3) its turn to the rear (`*_Rotate`), `*_Rear` and
+/// `*_Rear_Idle`: three slots a level from here, for a noise behind it.
+const ROTATE0: u8 = 19;
 /// Lev3_to_Engine and the engine thrash loop (Engine_Idle, Engine_Sway,
 /// Engine_Swat, Engine_Bob), cooked after the shared slots on c1a4i only.
-const TO_ENGINE: u8 = 19;
-const ENGINE_IDLE: u8 = 20;
-const ENGINE_SWAY: u8 = 21;
-const ENGINE_SWAT: u8 = 22;
+const TO_ENGINE: u8 = 31;
+const ENGINE_IDLE: u8 = 32;
+const ENGINE_SWAY: u8 = 33;
+const ENGINE_SWAT: u8 = 34;
 /// Clip slots the tables below describe.
-const CLIPS: usize = 24;
+const CLIPS: usize = 36;
 const IDLE: [u8; 4] = [3, 8, 12, 16];
 const STRIKE: [u8; 4] = [5, 9, 13, 17];
 const TAP: [u8; 4] = [6, 10, 14, 18];
+const REAR_IDLE: [u8; 4] = [21, 24, 27, 30];
 /// Each strike's killing swing in q12 of its cycle: the source frames of its
 /// start and end events (3 and 4) over the sequence's frame intervals
 /// (Floor_Strike 6..12 of 15, Lev1 9..20 of 30, Lev2 13..20 of 25, Lev3 6..12
@@ -176,8 +180,27 @@ const N_L3: u8 = 3;
 const N_FLOOR: u8 = 4;
 /// Above level 3, swung over to the engine.
 const N_ENGINE: u8 = 5;
+/// Per level, turned to the rear (`*_Rotate`'s end) and settled there
+/// (`*_Rear`'s end), in level order: floor, 1, 2, 3.
+const N_ROT: u8 = 6;
+const N_REAR: u8 = 10;
 const LEVEL_NODE: [u8; 4] = [N_FLOOR, N_L1, N_L2, N_L3];
-const TRANSITIONS: [u8; 6] = [RISE, TO_FLOOR, FLOOR_TO_L1, L1_TO_L2, L2_TO_L3, TO_ENGINE];
+const TRANSITIONS: [u8; 14] = [
+    RISE,
+    TO_FLOOR,
+    FLOOR_TO_L1,
+    L1_TO_L2,
+    L2_TO_L3,
+    TO_ENGINE,
+    ROTATE0,
+    ROTATE0 + 1,
+    ROTATE0 + 3,
+    ROTATE0 + 4,
+    ROTATE0 + 6,
+    ROTATE0 + 7,
+    ROTATE0 + 9,
+    ROTATE0 + 10,
+];
 
 /// The level a noise `dz` units above the base calls for (`Level`).
 pub const fn level_for(dz: i32) -> u8 {
@@ -219,6 +242,7 @@ const fn seq_level(seq: u8) -> i8 {
         L1_TO_L2 | 8 | 9 | 10 => 1,
         L2_TO_L3 | 12 | 13 | 14 => 2,
         16 | 17 | 18 => 3,
+        ROTATE0..TO_ENGINE => ((seq - ROTATE0) / 3) as i8,
         _ => -1,
     }
 }
@@ -251,7 +275,17 @@ const fn seq_ends(seq: u8) -> (u8, u8) {
         L1_TO_L2 => (N_L1, N_L2),
         L2_TO_L3 => (N_L2, N_L3),
         TO_ENGINE => (N_L3, N_ENGINE),
-        ENGINE_IDLE..=23 => (N_ENGINE, N_ENGINE),
+        ENGINE_IDLE..=35 => (N_ENGINE, N_ENGINE),
+        ROTATE0..TO_ENGINE => {
+            let level = (seq - ROTATE0) / 3;
+            let rot = N_ROT + level;
+            let rear = N_REAR + level;
+            match (seq - ROTATE0) % 3 {
+                0 => (LEVEL_NODE[level as usize], rot),
+                1 => (rot, rear),
+                _ => (rear, rear),
+            }
+        }
         _ => {
             let level = level_of(seq);
             let node = if level < 0 {
@@ -265,11 +299,43 @@ const fn seq_ends(seq: u8) -> (u8, u8) {
 }
 
 const fn reversible(seq: u8) -> bool {
-    matches!(seq, RISE | L1_TO_L2 | L2_TO_L3)
+    matches!(seq, RISE | L1_TO_L2 | L2_TO_L3) || is_turn(seq)
+}
+
+/// A `*_Rotate` or `*_Rear` (both reversible); not the rear idle.
+const fn is_turn(seq: u8) -> bool {
+    seq >= ROTATE0 && seq < TO_ENGINE && (seq - ROTATE0) % 3 != 2
+}
+
+/// A `*_Rear` or `*_Rear_Idle`, where CTentacle keeps its heading outside
+/// the sweep arc.
+const fn is_rear(seq: u8) -> bool {
+    seq >= ROTATE0 && seq < TO_ENGINE && (seq - ROTATE0) % 3 != 0
 }
 
 /// The next node on the way from `from` to `to`.
 const fn next_node(from: u8, to: u8) -> u8 {
+    // The rear branch of a level: front, turned (Rotate), rear (Rear). Out of
+    // it is back the way it came; into it is from that level's front.
+    if from >= N_ROT {
+        if from < N_REAR && to == from + 4 {
+            return to;
+        }
+        return if from >= N_REAR {
+            from - 4
+        } else {
+            LEVEL_NODE[(from - N_ROT) as usize]
+        };
+    }
+    let to = if to >= N_ROT {
+        let level = (to - N_ROT) & 3;
+        if from == LEVEL_NODE[level as usize] {
+            return N_ROT + level;
+        }
+        LEVEL_NODE[level as usize]
+    } else {
+        to
+    };
     if from == N_FLOOR {
         return N_L1;
     }
@@ -568,7 +634,20 @@ impl Tentacle {
             self.sound_left = (w.rand(100, 200)) as u16;
         }
         let max = self.max_yaw as i32;
-        let dy = (self.sound_yaw as i32).clamp(-max, max);
+        let sy = self.sound_yaw as i32;
+        // Facing front it turns no further than its sweep arc; turned to the
+        // rear it keeps at least the arc's width off its spawn heading.
+        let dy = if is_rear(self.seq) {
+            if sy < 0 {
+                sy.min(-max)
+            } else if sy > 0 {
+                sy.max(max)
+            } else {
+                0
+            }
+        } else {
+            sy.clamp(-max, max)
+        };
         self.ideal = ((self.home as i32 + dy) & 0xFFF) as u16;
 
         if self.finished {
@@ -581,14 +660,14 @@ impl Tentacle {
                 }
             } else if self.sound_left > 0 {
                 let lv = self.sound_level as usize;
-                // Ahead strikes, to the side taps; behind it would rear,
-                // a sequence not cooked: it idles at that level.
+                // Ahead strikes, to the side taps, behind it turns and
+                // idles to the rear at that level.
                 self.goal = if sy <= max + deg(30) {
                     STRIKE[lv]
                 } else if sy <= max * 2 {
                     TAP[lv]
                 } else {
-                    IDLE[lv]
+                    REAR_IDLE[lv]
                 };
             } else if self.seq == PIT {
                 self.goal = PIT;
@@ -710,6 +789,53 @@ mod tests {
     }
 
     #[test]
+    fn a_noise_behind_turns_it_to_the_rear_at_the_noise_level() {
+        // Rotate then Rear from each level's front, Rear_Idle at the end,
+        // and back out the same way, both reversible.
+        assert_eq!(find_transition(IDLE[1], 1, REAR_IDLE[1]), (ROTATE0 + 3, 1));
+        assert_eq!(
+            find_transition(ROTATE0 + 3, 1, REAR_IDLE[1]),
+            (ROTATE0 + 4, 1)
+        );
+        assert_eq!(
+            find_transition(ROTATE0 + 4, 1, REAR_IDLE[1]),
+            (REAR_IDLE[1], 1)
+        );
+        assert_eq!(find_transition(REAR_IDLE[1], 1, IDLE[1]), (ROTATE0 + 4, -1));
+        assert_eq!(find_transition(ROTATE0 + 4, -1, IDLE[1]), (ROTATE0 + 3, -1));
+        assert_eq!(find_transition(ROTATE0 + 3, -1, IDLE[1]), (IDLE[1], 1));
+        // The floor's rear hangs off the floor, not level 1.
+        assert_eq!(find_transition(IDLE[0], 1, REAR_IDLE[0]), (ROTATE0, 1));
+        // From the pit it climbs first.
+        assert_eq!(find_transition(PIT, 1, REAR_IDLE[2]), (RISE, 1));
+        // Rear on one level to the rear of another: out, across, in.
+        assert_eq!(
+            find_transition(REAR_IDLE[1], 1, REAR_IDLE[2]),
+            (ROTATE0 + 4, -1)
+        );
+        for level in 0..4u8 {
+            assert_eq!(level_of(REAR_IDLE[level as usize]), level as i8);
+            assert!(is_rear(REAR_IDLE[level as usize]) && !is_turn(REAR_IDLE[level as usize]));
+            assert!(is_turn(ROTATE0 + 3 * level) && !is_rear(ROTATE0 + 3 * level));
+        }
+
+        // Behind it (spawned facing -Z, the noise at +Z, 300 up): it rises,
+        // turns and idles to the rear on level 1; ahead it strikes.
+        let mut t = Tentacle::spawn(0, 2048, MAX_YAW as u16);
+        let mut w = ears(Some([0, 300, 400]));
+        let mut h = HEALTH;
+        let seen = run(&mut t, &mut w, 600, &mut h);
+        assert!(
+            seen.ends_with(&[ROTATE0 + 3, ROTATE0 + 4, REAR_IDLE[1]]),
+            "{seen:?}"
+        );
+        let mut t = Tentacle::spawn(0, 2048, MAX_YAW as u16);
+        let mut w = ears(Some([0, 300, -400]));
+        let seen = run(&mut t, &mut w, 600, &mut h);
+        assert_eq!(seen.last(), Some(&STRIKE[1]));
+    }
+
+    #[test]
     fn levels_follow_the_height_of_the_noise() {
         assert_eq!(level_for(0), 0);
         assert_eq!(level_for(215), 0);
@@ -797,7 +923,7 @@ mod tests {
         let mut hp = HEALTH;
         let seen = run(&mut t, &mut w, 400, &mut hp);
         assert!(!seen.iter().any(|s| STRIKE.contains(s) || TAP.contains(s)));
-        assert!(seen.contains(&IDLE[0]));
+        assert!(seen.contains(&REAR_IDLE[0]));
     }
 
     #[test]
@@ -888,16 +1014,16 @@ mod tests {
     #[test]
     fn a_narrow_sweep_holds_it_to_its_arc() {
         // sweeparc 50 (one of c4a1b's): a noise 90 degrees off is beyond
-        // 25 + 30 and twice 25 degrees, so it would rear (it idles), turned
-        // no further than 25.
+        // 25 + 30 and twice 25 degrees, so it turns to the rear, where its
+        // heading follows the noise (at least 25 off, no upper bound).
         let max = deg(25) as u16;
         let mut w = ears(Some([300, 0, 0]));
         let mut t = Tentacle::spawn(0, 0, max);
         let mut hp = HEALTH;
         let seen = run(&mut t, &mut w, 400, &mut hp);
         assert!(!seen.iter().any(|s| STRIKE.contains(s) || TAP.contains(s)));
-        assert!(seen.contains(&IDLE[0]));
-        assert_eq!(t.yaw, max);
+        assert!(seen.contains(&REAR_IDLE[0]));
+        assert_eq!(t.yaw, deg(90) as u16);
         // the default arc strikes the same noise: 90 is within 65 + 30
         let mut w = ears(Some([300, 0, 0]));
         let mut t = Tentacle::spawn(0, 0, MAX_YAW as u16);

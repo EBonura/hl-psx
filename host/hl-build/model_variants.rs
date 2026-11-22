@@ -284,8 +284,8 @@ fn base_clip_count(ty: u8) -> usize {
         17 => 9,
         25 => 7,
         // The tentacle's pit, transitions, idles, strikes and taps (game/src/tentacle.rs),
-        // then on c1a4i its engine thrash (`special_fields`); elsewhere the roster's 19.
-        50 => 24,
+        // its rear turns, then on c1a4i its engine thrash (`special_fields`); elsewhere the roster's 31.
+        50 => 36,
         56 => 1,
         _ => 5,
     }
@@ -327,8 +327,9 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
             "--mdl7",
             &[
                 "0:1", "1:16", "2:12", "3:8", "48:8", "7:8", "8:8", "12:8", "13:8", "17:8", "18:8",
-                "22:8", "23:8", "27:8", "28:8", "32:8", "33:8", "37:8", "38:8", "43:8", "44:4",
-                "45:6", "46:6", "47:4",
+                "22:8", "23:8", "27:8", "28:8", "32:8", "33:8", "37:8", "38:8", "9:4", "10:6",
+                "11:4", "19:4", "20:6", "21:4", "29:4", "30:6", "31:4", "39:4", "40:4", "41:4",
+                "43:8", "44:4", "45:6", "46:6", "47:4",
             ],
         ),
         ("c1a2b", 5) => (
