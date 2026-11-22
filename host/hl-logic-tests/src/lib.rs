@@ -123,3 +123,6 @@ pub mod hev;
 /// Each rewritten 64-bit site against the former wide form, verbatim.
 #[cfg(test)]
 mod sweep_oracles;
+
+#[path = "../../../game/src/monster_damage.rs"]
+pub mod monster_damage;

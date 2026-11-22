@@ -178,9 +178,8 @@ pub(crate) unsafe fn tick_grunt(
             let mut hits = 0u8;
             let mut n = skill_value(Sk::HgruntPellets);
             while n > 0 {
-                if monster_shot_lands(m, from, aim, target, player_pos, nprops, 535).is_some() {
-                    hits += 1;
-                }
+                // A pellet on the head counts three (sk_player_head).
+                hits += monster_shot_lands(m, from, aim, target, player_pos, nprops, 535).unwrap_or(0);
                 n -= 1;
             }
             if hits > 0 {
@@ -211,8 +210,8 @@ pub(crate) unsafe fn tick_grunt(
             while b < bullets {
                 // FireBullets with VECTOR_CONE_10DEGREES: the bullet either
                 // crosses the target's body or goes wide of it.
-                if monster_shot_lands(m, from, aim, target, player_pos, nprops, 711).is_some() {
-                    damage_target(target, dmg, pos, health, armor);
+                if let Some(worth) = monster_shot_lands(m, from, aim, target, player_pos, nprops, 711) {
+                    damage_target(target, dmg * worth, pos, health, armor);
                     push_tracer(from, aim);
                 } else {
                     let off = [

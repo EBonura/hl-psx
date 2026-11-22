@@ -114,6 +114,7 @@ mod leech;
 #[cfg_attr(feature = "semantic-input", allow(dead_code))]
 mod mapsnap;
 mod monster_voice;
+mod monster_damage;
 mod monsterjump;
 mod prop_pool;
 mod mortar;
@@ -3952,6 +3953,26 @@ unsafe fn ai_reacquire(pi: usize) -> bool {
 }
 static mut PROP_HEALTH: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 static mut PROP_HIT_FLASH: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
+/// The hit group of the bullet about to land (`hit_group_damage`), taken by
+/// `damage_prop`.
+static mut NEXT_HIT_GROUP: u8 = 0;
+/// Actor types whose cooked pain clip is their small flinch (ACT_SMALL_FLINCH):
+/// scientists, Barney, headcrabs, zombies, houndeye, bullsquid, HECU,
+/// vortigaunt, alien grunt, controller, ichthyosaur.
+const FLINCH_TYPES: u64 = 1 << 0
+    | 1 << 1
+    | 1 << 2
+    | 1 << 5
+    | 1 << 6
+    | 1 << 7
+    | 1 << 8
+    | 1 << 9
+    | 1 << 10
+    | 1 << 11
+    | 1 << 19
+    | 1 << 54
+    | 1 << 55
+    | 1 << 59;
 // Sim tick each prop died on -> the death clip plays forward from there, then
 // holds. Authored corpses are seeded far in the past so they spawn on the final
 // death frame instead of re-playing the fall.
@@ -15450,12 +15471,14 @@ fn prop_anim_frame(
         // tail made those RAM bytes useless while still producing a snap.
         // Damage is visible immediately at elapsed=0; hit_flash=1 reaches the
         // final pose before ordinary state playback resumes on the next tick.
-        let elapsed = PROP_HIT_FLASH_TICKS.saturating_sub(hit_flash) as usize;
-        return md.one_shot_clip_phase(
-            clip,
-            PROP_HIT_FLASH_TICKS.saturating_sub(1) as usize,
-            elapsed,
-        );
+        // A flinch plays the pain clip at its authored length.
+        let total = if hit_flash & monster_damage::FLINCH != 0 {
+            pain_clip_ticks(md)
+        } else {
+            PROP_HIT_FLASH_TICKS
+        };
+        let elapsed = total.saturating_sub(hit_flash & !monster_damage::FLINCH) as usize;
+        return md.one_shot_clip_phase(clip, total.saturating_sub(1) as usize, elapsed);
     }
     if scripted_play {
         forget_clip();
@@ -17955,6 +17978,33 @@ unsafe fn alert_friends(m: &Map, movers: &[phys::Mover], nprops: usize, vi: usiz
     }
 }
 
+/// The authored length of a model's pain clip, capped to what a flinch holds.
+#[inline(never)]
+#[optimize(size)]
+fn pain_clip_ticks(md: &Model) -> u8 {
+    md.clip_hold_ticks(PROP_CLIP_PAIN).min(127) as u8
+}
+
+/// How long actor `pi` would flinch now (its pain clip), or 0 when its type
+/// has no flinch, a script holds it or it is in the air.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_flinch_ticks(pi: usize) -> u8 {
+    let ty = PROP_KIND[pi];
+    let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
+    if ty < 64
+        && FLINCH_TYPES >> ty & 1 != 0
+        && slot != MODEL_SLOT_NONE
+        && PROP_SCRIPT_MODE[pi] == 0
+        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE == 0
+        && !PROP_JUMP[pi].active
+    {
+        pain_clip_ticks(loaded_model(slot as usize))
+    } else {
+        0
+    }
+}
+
 #[optimize(size)]
 unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     if pi >= LIVE_PROPS || PROP_ACTIVE[pi] == 0 || PROP_HEALTH[pi] == 0 {
@@ -18046,7 +18096,13 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     let health_before = PROP_HEALTH[pi];
     PROP_HEALTH[pi] = PROP_HEALTH[pi].saturating_sub(dmg);
-    PROP_HIT_FLASH[pi] = PROP_HIT_FLASH_TICKS;
+    PROP_HIT_FLASH[pi] = monster_damage::flash_after_hit(
+        PROP_HIT_FLASH[pi],
+        monster_damage::conditions(dmg, NEXT_HIT_GROUP),
+        prop_flinch_ticks(pi),
+        PROP_HIT_FLASH_TICKS,
+    );
+    NEXT_HIT_GROUP = 0;
     if MONSTER_TRIGGER_END != 0 {
         monster_damage_ai_triggers(pi);
     }
@@ -18205,9 +18261,9 @@ unsafe fn pursue_point(pi: usize, true_aim: [i32; 3], visible: bool) -> Option<[
 }
 
 /// Where a monster's bullet goes: aimed at `aim` with the retail cone (two
-/// uniform draws per axis, so centre-weighted), 1024 units long. Returns the
-/// studio box it entered on the target (`u8::MAX` when the target has none) or
-/// `None` when the bullet misses.
+/// uniform draws per axis, so centre-weighted), 1024 units long. Returns what
+/// the hit is worth in bullets (`PLAYER_HEAD_MULT` on the player's head, else
+/// 1) or `None` when the bullet misses.
 #[optimize(size)]
 #[inline(never)]
 unsafe fn monster_shot_lands(
@@ -18230,9 +18286,16 @@ unsafe fn monster_shot_lands(
                 - half
         }
     };
+    // CBasePlayer::BodyTarget: the centre plus 0.5 to 1.1 of the view
+    // offset, so from 14 below the eyes to 2 above (the aim is the eyes).
+    let low = if target == PROP_TARGET_PLAYER {
+        impact_rng().below(17) as i32 - 2
+    } else {
+        0
+    };
     let end = [
         aim[0] + tri(spread),
-        aim[1] + tri(spread),
+        aim[1] + tri(spread) - low,
         aim[2] + tri(spread),
     ];
     // carry the bullet 25 percent past the target so a graze on the far side counts
@@ -18243,7 +18306,10 @@ unsafe fn monster_shot_lands(
     ];
     if target == PROP_TARGET_PLAYER {
         let body = [player_pos[0], player_pos[1] + 18, player_pos[2]];
-        return proj_logic::segment_hits_cylinder(from, far, body, 16, 36, 0).map(|_| u8::MAX);
+        let t = proj_logic::segment_hits_cylinder(from, far, body, 16, 36, 0)?;
+        // player.mdl's head box runs from the eyes to 10 above them.
+        let y = from[1] + ((far[1] - from[1]) * t >> 12) - player_pos[1] - LOGIC_PLAYER_VIEW_HEIGHT;
+        return Some(if (0..=10).contains(&y) { PLAYER_HEAD_MULT } else { 1 });
     }
     let ti = target as usize;
     if ti >= nprops {
@@ -18252,12 +18318,16 @@ unsafe fn monster_shot_lands(
     let ty = PROP_KIND[ti];
     let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
     if slot != MODEL_SLOT_NONE && loaded_model(slot as usize).hitbox_count() != 0 {
-        return prop_studio_hit_fraction(m, ti, from, far).map(|_| STUDIO_HIT_BOX);
+        return prop_studio_hit_fraction(m, ti, from, far).map(|_| 1);
     }
     let (r, hh) = prop_hit_extent(ty);
     proj_logic::segment_hits_cylinder(from, far, prop_target(ty, PROP_POS[ti]), r, hh, 0)
-        .map(|_| u8::MAX)
+        .map(|_| 1)
 }
+
+/// sk_player_head (3 at every skill): what a bullet on the player's head is
+/// worth; chest, stomach, arms and legs are 1 (CBasePlayer::TraceAttack).
+const PLAYER_HEAD_MULT: u8 = 3;
 
 const SQUAD_ALERT_RADIUS2: i32 = 400 * 400;
 const SFX_NONE: u8 = 0xFF;
@@ -20960,9 +21030,7 @@ unsafe fn tick_props(
             pi += 1;
             continue;
         }
-        if PROP_HIT_FLASH[pi] > 0 {
-            PROP_HIT_FLASH[pi] -= 1;
-        }
+        PROP_HIT_FLASH[pi] = monster_damage::flash_tick(PROP_HIT_FLASH[pi]);
         let ty = PROP_KIND[pi];
         if ty == PROP_TYPE_SODACAN {
             tick_soda_can(m, movers, pi);
@@ -21142,6 +21210,11 @@ unsafe fn tick_props(
             // The nearby-brush shortlist may become stale while a door or lift
             // moves during dormancy. Force an immediate rebuild on wake.
             PROP_NEAR_COUNT[pi] = 0xFF;
+            pi += 1;
+            continue;
+        }
+        // A heavy hit's flinch holds the species' think until it has run.
+        if PROP_HIT_FLASH[pi] & monster_damage::FLINCH != 0 {
             pi += 1;
             continue;
         }
@@ -22856,9 +22929,14 @@ static mut STUDIO_HIT_BOX: u8 = 0;
 #[optimize(size)]
 fn hit_group_damage(ty: u8, hitbox: u8, dmg: u8) -> u8 {
     let mut i = 0;
+    unsafe { NEXT_HIT_GROUP = 0 };
     while i < skill_table::HIT_MASKS.len() {
         let (t, group, mask) = skill_table::HIT_MASKS[i];
         if t == ty && hitbox < 32 && mask >> hitbox & 1 != 0 {
+            // m_LastHitGroup: the HL groups 0-7; helmet and plates read as generic.
+            if group <= monster_damage::GROUP {
+                unsafe { NEXT_HIT_GROUP = group };
+            }
             if ty == PROP_TYPE_BIGMOMMA {
                 return dmg; // her sack takes a bullet whole
             }
