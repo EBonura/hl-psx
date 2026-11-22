@@ -790,15 +790,18 @@ fn scan_room_budget(
         // the largest is 15 KB against its 43 KB.
         round_up(max_verts, 32),
         round_up(max_face_records + 32, 256),
-        // PVS_GROUP_VIS stores one bit per group, so keep this divisible by 32.
-        round_up(max_face_groups + 32, 32),
+        // PVS_GROUP_VIS stores one bit per group, so keep this divisible by 32
+        // (no drift guard: this script reruns on every room change).
+        round_up(max_face_groups, 32),
         round_up(max_leaves + 64, 256),
         // Every entity-backed table is build-time sized from this value and
         // rooms are immutable at runtime; a recook reruns this script and
         // grows the cap, so no spare records for cooker drift (they cost
         // about 92 B each across the per-entity tables).
         round_up(max_ents, 2),
-        round_up(max_texs + 8, 16),
+        // Exact: the HLTX upload stops at the cap and the skybox faces are
+        // counted in the room's textures (32 B a slot).
+        max_texs,
     )
 }
 
@@ -1834,7 +1837,7 @@ fn main() {
     // Exact bound (the visible-face walk also stops at the cap); the old +64
     // drift guard cost 4 B a face in the live PVS links alone.
     let max_pvs_faces = round_up(pvs_faces, 32);
-    let max_pvs_groups = round_up(pvs_groups + 32, 32);
+    let max_pvs_groups = round_up(pvs_groups, 32);
     let ModelBudget {
         model_words,
         model_verts: max_model_verts,

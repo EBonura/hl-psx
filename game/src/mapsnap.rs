@@ -64,16 +64,19 @@ static mut PROPS_AT: u16 = 0;
 static mut DIMS: (u16, u16, u16) = (0, 0, 0);
 
 #[inline(always)]
+#[optimize(size)]
 pub unsafe fn note_dims(nlogic: usize, nents: usize, tick: u16) {
     DIMS = (nlogic as u16, nents as u16, tick);
 }
 
 #[inline(always)]
+#[optimize(size)]
 unsafe fn slot(i: usize) -> &'static mut Slot {
     &mut (*core::ptr::addr_of_mut!(SLOTS))[i & 1]
 }
 
 #[inline(always)]
+#[optimize(size)]
 unsafe fn here() -> &'static mut Slot {
     slot(HERE)
 }
@@ -102,15 +105,18 @@ static mut ENTRY: Entry = Entry {
 };
 
 #[inline(always)]
+#[optimize(size)]
 unsafe fn dead_ids() -> &'static mut [u16; DEAD_CAP] {
     &mut *core::ptr::addr_of_mut!(DEAD)
 }
 
+#[optimize(size)]
 pub unsafe fn is_dead(id: u16) -> bool {
     let n = (DEAD_N as usize).min(DEAD_CAP);
     dead_ids()[..n].contains(&id)
 }
 
+#[optimize(size)]
 pub unsafe fn mark_dead(id: u16) {
     if !is_dead(id) {
         dead_ids()[DEAD_N as usize % DEAD_CAP] = id;
@@ -122,11 +128,13 @@ pub unsafe fn mark_dead(id: u16) {
 }
 
 /// A fresh game forgets every broken global.
+#[optimize(size)]
 pub unsafe fn reset_dead() {
     DEAD_N = 0;
 }
 
 /// A broken breakable (`brush`): mark its global id dead if it has one.
+#[optimize(size)]
 pub unsafe fn on_break(m: &Map, nlogic: usize, brush: u16) {
     let mut li = 0;
     while li < nlogic {
@@ -143,6 +151,7 @@ pub unsafe fn on_break(m: &Map, nlogic: usize, brush: u16) {
 }
 
 /// Map start: the breakables whose global id is already dead are gone.
+#[optimize(size)]
 pub unsafe fn remove_dead(m: &Map, nlogic: usize, nents: usize) {
     let mut li = 0;
     while li < nlogic {
@@ -170,6 +179,7 @@ pub unsafe fn remove_dead(m: &Map, nlogic: usize, nents: usize) {
 }
 
 /// A map starts: remember the globals it started with.
+#[optimize(size)]
 pub unsafe fn note_entry() {
     ENTRY.dead = *dead_ids();
     ENTRY.dead_n = DEAD_N;
@@ -179,6 +189,7 @@ pub unsafe fn note_entry() {
 }
 
 /// Restarting a map from its entry: its globals come back too.
+#[optimize(size)]
 pub unsafe fn rollback_to_entry() {
     *dead_ids() = ENTRY.dead;
     DEAD_N = ENTRY.dead_n;
@@ -199,6 +210,7 @@ struct Port {
 
 impl Port {
     #[inline(never)]
+    #[optimize(size)]
     unsafe fn b(&mut self, v: *mut u8) {
         if self.at >= self.cap {
             self.over = true;
@@ -213,6 +225,7 @@ impl Port {
         self.at += 1;
     }
     #[inline(never)]
+    #[optimize(size)]
     unsafe fn w(&mut self, v: *mut u16) {
         let mut lo = *v as u8;
         let mut hi = (*v >> 8) as u8;
@@ -232,6 +245,7 @@ const HP: u8 = 4;
 /// and music and the machinery that restarts with the level (SKIP); a counter
 /// too for what is left to make or give and for a breakable's health.
 #[inline(always)]
+#[optimize(size)]
 fn class(kind: u8) -> u8 {
     match kind {
         map::LOGIC_MAP_FLAGS
@@ -263,6 +277,7 @@ fn class(kind: u8) -> u8 {
 
 /// Whether a brush's phase is a plain 0..4096 slide the capture can hold.
 #[inline(always)]
+#[optimize(size)]
 unsafe fn phase_kept(ei: usize) -> bool {
     if ENT_CACHE[ei].kind == ENT_KIND_PUSHABLE {
         return false;
@@ -546,6 +561,7 @@ unsafe fn walk_props(p: &mut Port, m: Option<&Map>, tick: u16) {
 
 /// Capture the running map into the `HERE` slot. False when it does not fit.
 #[inline(never)]
+#[optimize(size)]
 unsafe fn capture_here(room: u16, save: bool) -> bool {
     let (nlogic, nents, tick) = DIMS;
     let s = here();
@@ -572,6 +588,7 @@ unsafe fn capture_here(room: u16, save: bool) -> bool {
 
 /// Capture the map as it stands and keep it, with the player's checkpoint, as
 /// the map's latest save point (a manual save or a trigger_autosave).
+#[optimize(size)]
 pub unsafe fn keep_now(cp: &save::Checkpoint) -> bool {
     let ok = capture_here(cp.room_id, true);
     if ok {
@@ -583,6 +600,7 @@ pub unsafe fn keep_now(cp: &save::Checkpoint) -> bool {
 /// Leaving `room` by changelevel: keep the map as it stands for a return, and
 /// make the slot of the map last left (or of this one's earlier save point)
 /// the current one.
+#[optimize(size)]
 pub unsafe fn depart(room: u16) {
     capture_here(room, false);
     HERE ^= 1;
@@ -590,6 +608,7 @@ pub unsafe fn depart(room: u16) {
 
 /// A new map starts. Whatever `HERE` held for another map is gone; one held
 /// for this map is its departure capture, and restores the world on entry.
+#[optimize(size)]
 pub unsafe fn arrive(room: u16) {
     let s = here();
     if s.room != room {
@@ -602,11 +621,13 @@ pub unsafe fn arrive(room: u16) {
 }
 
 /// The map has started with the capture laid over it.
+#[optimize(size)]
 pub unsafe fn consume() {
     ARMED = false;
 }
 
 /// A fresh game or chapter jump: no capture of an earlier session applies.
+#[optimize(size)]
 pub unsafe fn invalidate() {
     slot(0).room = NO_ROOM;
     slot(1).room = NO_ROOM;
@@ -615,6 +636,7 @@ pub unsafe fn invalidate() {
 
 /// The player is dead: if this map has a capture, restore it on the next
 /// start instead of the level entry. True when armed.
+#[optimize(size)]
 pub unsafe fn arm_for_death(room: u16) -> bool {
     let s = here();
     if s.room != room || s.len == 0 {
@@ -625,6 +647,7 @@ pub unsafe fn arm_for_death(room: u16) -> bool {
 }
 
 /// A save was read from the card: hold its payload for the map start.
+#[optimize(size)]
 pub unsafe fn arm_from_card(room: u16, cp: save::Checkpoint, payload: &[u8], tick: u16) {
     ARMED = false;
     let s = here();
@@ -643,6 +666,7 @@ pub unsafe fn arm_from_card(room: u16, cp: save::Checkpoint, payload: &[u8], tic
 
 /// What a pending restore replays for `room`: the start tick, and the
 /// player's checkpoint when it is a save point.
+#[optimize(size)]
 pub unsafe fn pending(room: u16) -> Option<(Option<save::Checkpoint>, u16)> {
     let s = here();
     if ARMED && s.room == room && s.len != 0 {
@@ -653,6 +677,7 @@ pub unsafe fn pending(room: u16) -> Option<(Option<save::Checkpoint>, u16)> {
 }
 
 /// The captured bytes of the save point just kept, for the card.
+#[optimize(size)]
 pub unsafe fn bytes() -> &'static [u8] {
     let s = here();
     if s.room == NO_ROOM || !s.save {
@@ -661,6 +686,7 @@ pub unsafe fn bytes() -> &'static [u8] {
     &s.buf[..s.len as usize]
 }
 
+#[optimize(size)]
 pub unsafe fn tick() -> u16 {
     here().tick
 }
@@ -668,6 +694,7 @@ pub unsafe fn tick() -> u16 {
 /// Lay the world of the pending capture over a freshly started map. Runs
 /// before the carried doors, trains and pushables are laid over it, so what
 /// crossed the transition wins.
+#[optimize(size)]
 pub unsafe fn apply_world(nlogic: usize, nents: usize) {
     let s = here();
     let mut p = Port {
@@ -684,6 +711,7 @@ pub unsafe fn apply_world(nlogic: usize, nents: usize) {
 }
 
 /// Lay the monsters of the pending capture over the freshly spawned ones.
+#[optimize(size)]
 pub unsafe fn apply_props(m: &Map, nlogic: usize) {
     let _ = nlogic; // only the probe build reads it
     let s = here();
