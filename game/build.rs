@@ -781,10 +781,14 @@ fn scan_room_budget(
         } else {
             room_budget::map_staging_words(max_bytes)
         },
-        // Projection scratch is indexed directly, but has no SIMD/alignment
-        // requirement. Preserve the audited +128-vertex recook guard while
-        // avoiding up to 255 vertices of dead linker allocation.
-        round_up(max_verts + 128, 32),
+        // Projection scratch is indexed by map vertex (below the room header's
+        // count), and this script reruns on every room change, so the image is
+        // always sized for the rooms it ships with. The old +128-vertex recook
+        // guard covered an executable built against an older cook; it cost
+        // 896 B of RAM (7 B a vertex: SCRATCH_XY, SCRATCH_Z, VERT_FRAME). The
+        // weapon sound banks borrow SCRATCH_XY as staging (`load_weapon_bank`):
+        // the largest is 15 KB against its 43 KB.
+        round_up(max_verts, 32),
         round_up(max_face_records + 32, 256),
         // PVS_GROUP_VIS stores one bit per group, so keep this divisible by 32.
         round_up(max_face_groups + 32, 32),
