@@ -19,7 +19,6 @@ dependencies = [
  "hl-format",
  "lz4_flex",
  "psx-asset",
- "psx-cdstream",
  "psx-display",
  "psx-engine",
  "psx-fmv",
@@ -141,6 +140,7 @@ name = "psx-goldsrc"
 version = "0.1.0"
 dependencies = [
  "psx-asset",
+ "psx-cdstream",
  "psx-engine",
  "psx-font",
  "psx-gpu",
