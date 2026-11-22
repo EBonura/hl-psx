@@ -114,7 +114,7 @@ monster_scientist|approximated|compact ally and scripted behavior
 monster_scientist_dead|runtime|static authored corpse
 monster_sentry|approximated|shared turret behavior
 monster_sitting_scientist|approximated|compact seated ally behavior
-monster_tentacle|approximated|hears, rises or sinks to four levels, strikes; no rear turn, fidgets, thrash or sounds
+monster_tentacle|approximated|hears, rises or sinks to four levels, strikes, taps and bangs by its sound keyvalue, sings, thrashes at the engine when toggled (c1a4i); no rear turn, fidgets, flies or squirm loops
 monster_tripmine|missing_gameplay|renders; no laser beam or detonation
 monster_turret|approximated|shared turret behavior
 monster_zombie|approximated|shared melee actor behavior

@@ -222,6 +222,11 @@ monster_ichthyosaur|attack|sp:ICHY_ATTACK|game:"setpiece_audio::ICHY_ATTACK"|
 monster_ichthyosaur|bitesound|sp:ICHY_BITE|game:"setpiece_audio::ICHY_BITE"|
 monster_ichthyosaur|pain|sp:ICHY_PAIN|game:"SP::ICHY_PAIN"|
 monster_ichthyosaur|die|sp:ICHY_DIE|game:"SP::ICHY_DIE"|
+monster_tentacle|cycle|sp:TE_SING|game:"SP::TE_SING"|te_sing1 when it settles at a level with nothing heard, then not for 10 to 20 s (te_sing2 not carried); tier 4, so only where spare SPU holds it: c2a5x; c1a4i (64 B spare) and c4a1b (16 B) cannot, it needs 7,696 B at its lowest rate. te_alert is commented out in the original
+monster_tentacle|ae:TE_SILO|sp:TE_STRIKE|game:"SP::TE_STRIKE"|sound 0 (c1a4i): te_strike2 for the claw's bang (event 1, full volume) and the light taps and scrapes (events 2 and 6, 0.4); c1a4i's bank already holds te_strike2 for an ambient_generic, te_strike1 is not carried
+monster_tentacle|ae:TE_DIRT|sp:TE_DIRT|game:"SP::TE_DIRT"|sound 1 (c2a5x, c4a1b): pl_dirt1 for the same events (pl_dirt2-4 not carried)
+monster_tentacle|ae:TE_WATER|na:no retail map sets sound 2 (water); the roar, search and move cues are events of the fidget sequences, which are not cooked (LIMITS F35), and no sequence carries the search event|-|
+monster_tentacle|start|limit:ambience/flies.wav (first tentacle) and squirm2.wav (second) are 8.8 s and 5.2 s loops: about 12,000 B and 7,100 B at their lowest rate (scaled from te_sing1's 7,696 B) against 64 B (c1a4i) and 16 B (c4a1b) of spare SPU; c2a5x (124,584 B spare) could hold flies, but keeping the loop is code the shipping executable has no RAM for|-|
 monster_tentacle|*|none|-|
 monster_gman|*|none|-|
 monster_human_assassin|*|none|-|
