@@ -525,7 +525,9 @@ map c1a2 next x
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=939 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=967 timeout=40
   @hold f-14 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-222 timeout=44
-  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=934 timeout=40
+  # x 934..939 catches the cabinet corner on the next leg (the wire's headcrab now flinches, which moves
+  # this walk by a few units): start the leg from 940 or more.
+  @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=940 timeout=40
   @hold f-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=962 timeout=40
   @hold f-14 s126 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=-260 timeout=44
   @hold f70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=ge value=930 timeout=40
