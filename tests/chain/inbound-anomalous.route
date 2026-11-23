@@ -2381,6 +2381,10 @@ map c1a1c next c1a1d
   @hold s-30 duck until x<=-796 timeout=40
   10 duck
   # Brush entity 65 is BSP model *86, the vent cover (the cooked entity index is not the model number).
+  # The fights before leave the view pitch anywhere in +-48 and a swing that looks up misses the cover:
+  # tip the view down past it, then come back up in single steps into 34..45 (the cover is hit at 38).
+  @hold l-127 duck until expr="i16(LOGIC_PLAYER_PITCH) <= 20" timeout=60
+  @hold l20 duck until expr="i16(LOGIC_PLAYER_PITCH) >= 34" timeout=60
   @swing ent=65 duck=true timeout=60
   @hold f127 duck until y>=-76 timeout=40
   @checkpoint m-in-vent
@@ -2564,44 +2568,45 @@ map c1a1c next c1a1d
   # The ledge is 68 wide: the crabs of the south platform (monstermaker squid_fodder, which only exist when the run came down the shaft) wake at about
   # 250 units and come along it one behind the other. Walk in 150 unit legs with the crowbar and swing at whatever reaches the player, crouched (a standing swing
   # passes over a headcrab on the floor); the rounds are unrolled so a crab that does not come costs only its polls.
+  # A swing holds up to 120 ticks: a crab that flinched can arrive with the next one and take the first swings.
   @hold f127 until x>=-2000 timeout=100
-  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true meleefor=20 for=9 sleep=2 lat=16
   @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint k-cr1
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
   @hold f127 until x>=-1850 timeout=100
-  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true meleefor=20 for=9 sleep=2 lat=16
   @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint k-cr2
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
   @hold f127 until x>=-1700 timeout=100
-  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true meleefor=20 for=9 sleep=2 lat=16
   @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint k-cr3
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
   @hold f127 until x>=-1550 timeout=100
-  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true meleefor=20 for=9 sleep=2 lat=16
   @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint k-cr4
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
   @hold f127 until x>=-1400 timeout=100
-  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true meleefor=20 for=9 sleep=2 lat=16
   @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint k-cr5
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
   @hold f127 until x>=-1250 timeout=100
-  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true meleefor=20 for=9 sleep=2 lat=16
   @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint k-cr6
   @probe
   @assert expr="i16(LOGIC_PLAYER_HEALTH) >= 20"
   @hold f127 until x>=-1100 timeout=100
-  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true for=9 sleep=2 lat=16
+  @fight near=320 props=26,31,32,33 melee=56 meleeduck=true meleeonly=true meleefor=20 for=9 sleep=2 lat=16
   @aim rel=1000,0,0 lat=30 vlat=60 timeout=60
   @checkpoint k-cr7
   @probe
@@ -2658,8 +2663,15 @@ map c1a1d next c1a1c
   @probe
   @hold f127 until x>=1148 timeout=60
   @face 2048 right
+  # @face leaves the yaw anywhere in 2048..2107, and the strafe onto the ladder band below runs along a
+  # wall: bring it into 2048..2066 in single steps so the walk and the strafe go where they were written.
+  @hold t-20 until sym=LOGIC_PLAYER_YAW size=2 op=le value=2066 timeout=40
+  @hold t20 until sym=LOGIC_PLAYER_YAW size=2 op=ge value=2048 timeout=40
   @hold f127 until y<=-300 timeout=80
   @hold f-60 until y>=-304 timeout=30
+  # Both holds release a sliding player: settle y into -296..-278 on RAM, where the strafe below reaches
+  # the ladder band (at y -320 a wall stops it at x 1184).
+  @align f-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 lo=-296 hi=-278 timeout=100 settle=20
   # the strafe leaves the player sliding ~50 units: settle onto the ladder band x 1146..1160 on RAM, never on a count
   @align s-40 sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 lo=1146 hi=1160 timeout=100 settle=30
   @hold f30 until y<=-312 timeout=20
@@ -2898,8 +2910,10 @@ map c1a1d next c1a1c
   @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1406 timeout=40
   @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=1434 timeout=40
   @hold f-126 s-19 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=852 timeout=45
-  @hold s-70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=ge value=1412 timeout=40
-  @hold s70 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=8 op=le value=1440 timeout=40
+  # The run back can slide on past x 820, the changelevel plane, while y is being trimmed: the load
+  # then stops the polls, so the trims also end there (a poll after the load reads x in c1a1c).
+  @hold s-70 until expr="i32(LOGIC_PLAYER_POS[2]) >= 1412 || i32(LOGIC_PLAYER_POS[0]) <= 820" timeout=250
+  @hold s70 until expr="i32(LOGIC_PLAYER_POS[2]) <= 1440 || i32(LOGIC_PLAYER_POS[0]) <= 820" timeout=250
   @hold f-126 s-19 until sym=LOGIC_PLAYER_POS size=4 signed=true offset=0 op=le value=820 timeout=250
   @checkpoint d-d17
   @probe
