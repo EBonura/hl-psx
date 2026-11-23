@@ -19,9 +19,6 @@ use std::process::Command;
 
 use super::Result;
 
-/// Top of main RAM; the emulator reports stack depths from the entry SP, which
-/// sits a few bytes below it.
-pub const RAM_TOP: u32 = 0x8020_0000;
 /// Safety margin kept over the deepest stack seen, in percent.
 pub const MARGIN_PERCENT: u32 = 25;
 
@@ -45,10 +42,11 @@ pub fn reserve_for(watermark: u32) -> u32 {
 /// frame and the BIOS's hand-off).
 pub const MAIN_ENTRY_OFFSET: u32 = 48;
 
-/// Bytes the stack used from the top of RAM: the frames above `play` plus the
-/// depth below its entry.
-pub fn watermark(entry_sp: u32, depth: u32) -> u32 {
-    RAM_TOP - entry_sp + depth
+/// Bytes the stack used from the top of RAM (`ram_top`, `RAM_BASE + RAM_SIZE` of the link
+/// under test, read from its map: below 0x8020_0000 when the scene core's window sits above
+/// the stack): the frames above `play` plus the depth below its entry.
+pub fn watermark(ram_top: u32, entry_sp: u32, depth: u32) -> u32 {
+    ram_top - entry_sp + depth
 }
 
 /// `(entry_sp, depth_bytes)` of the root call in a `--stack-profile-log` CSV.
@@ -160,6 +158,7 @@ pub fn measure(
     cue: &Path,
     catalog: &Catalog,
     play_pc: u32,
+    ram_top: u32,
     play_order: usize,
     out_dir: &Path,
 ) -> Result<Reading> {
@@ -194,7 +193,7 @@ pub fn measure(
         .ok_or_else(|| format!("play-order {play_order} never entered play()"))?;
     Ok(Reading {
         play_order,
-        watermark: watermark(entry, depth),
+        watermark: watermark(ram_top, entry, depth),
     })
 }
 
@@ -320,7 +319,7 @@ mod tests {
     fn parses_the_profile_row() {
         let text = "call,root_pc,return_pc,entry_sp,min_sp,depth_bytes,observations,completed\n0,0x80011064,0x800107fc,0x801ffe78,0x801fdd60,8480,1,1\n";
         assert_eq!(parse_profile(text), Some((0x801f_fe78, 8480)));
-        assert_eq!(watermark(0x801f_fe78, 8480), 0x20_0000 - 0x1f_fe78 + 8480);
+        assert_eq!(watermark(0x8020_0000, 0x801f_fe78, 8480), 0x20_0000 - 0x1f_fe78 + 8480);
     }
 
     #[test]

@@ -34915,6 +34915,14 @@ mod stackprobe {
     const CANARY: u32 = 0x5AC4_57AC;
     extern "C" {
         static __bss_end: u8;
+        // psoxide.ld's absolute symbols: their addresses are their values. The top is the
+        // link's own, below 0x8020_0000 when the scene core's window sits above the stack.
+        static RAM_BASE: u8;
+        static RAM_SIZE: u8;
+    }
+
+    fn ram_top() -> usize {
+        core::ptr::addr_of!(RAM_BASE) as usize + core::ptr::addr_of!(RAM_SIZE) as usize
     }
 
     fn region() -> (usize, usize) {
@@ -34936,7 +34944,7 @@ mod stackprobe {
     }
 
     /// Guest-debug-log one line: bytes never touched above the statics, and
-    /// the peak stack depth measured from the 0x8020_0000 RAM top.
+    /// the peak stack depth measured from the link's RAM top (`RAM_BASE + RAM_SIZE`).
     pub fn report() {
         let (lo, _) = region();
         let mut p = lo;
@@ -34957,7 +34965,7 @@ mod stackprobe {
         push(b"stackwm free=");
         push(i32_dec(&mut buf, (p - lo) as i32).as_bytes());
         push(b" peak=");
-        push(i32_dec(&mut buf, (0x8020_0000 - p) as i32).as_bytes());
+        push(i32_dec(&mut buf, (ram_top() - p) as i32).as_bytes());
         crate::telemetry::debug_log(core::str::from_utf8(&line[..n]).unwrap_or("stackwm"));
     }
 }

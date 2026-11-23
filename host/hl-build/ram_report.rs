@@ -11,10 +11,68 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-/// Top of main RAM; the linker region ends `STACK_RESERVE` below it.
-pub const RAM_TOP: u32 = 0x8020_0000;
 /// The SDK's own reserve, which a link map that names none is taken to use.
 pub const SDK_STACK_RESERVE: u32 = 0x8000;
+
+/// A number as psoxide.ld writes one: `0x` hex, decimal, or a `K`/`M` suffix.
+fn script_number(text: &str) -> Option<u32> {
+    let text = text.trim();
+    if let Some(hex_digits) = text.strip_prefix("0x") {
+        return u32::from_str_radix(hex_digits, 16).ok();
+    }
+    if let Some(k) = text.strip_suffix('K') {
+        return k.parse::<u32>().ok()?.checked_mul(1024);
+    }
+    if let Some(m) = text.strip_suffix('M') {
+        return m.parse::<u32>().ok()?.checked_mul(1024 * 1024);
+    }
+    text.parse().ok()
+}
+
+/// The value the link gave linker-script symbol `name`, read from the assignments the map
+/// prints: `NAME = <expr>`, where `<expr>` is a number, a sum or difference of numbers and
+/// symbols the map also assigns, or psoxide.ld's `DEFINED(X) ? X : <default>` (X when the map
+/// assigns it, the default otherwise). This is how the RAM top, `STACK_INIT` and the stack
+/// reserve come from the build itself, `RAM_SIZE_OVERRIDE` (the scene core's window) included.
+pub fn symbol_value(map: &str, name: &str) -> Option<u32> {
+    symbol_value_depth(map, name, 0)
+}
+
+fn symbol_value_depth(map: &str, name: &str, depth: u32) -> Option<u32> {
+    if depth > 8 {
+        return None;
+    }
+    let prefix = format!("{name} = ");
+    let expr = map.lines().find_map(|line| {
+        let tail = after_columns(line, 4).trim_start();
+        tail.strip_prefix(prefix.as_str()).map(str::trim)
+    })?;
+    let value = |term: &str| -> Option<u32> {
+        let term = term.trim();
+        script_number(term).or_else(|| symbol_value_depth(map, term, depth + 1))
+    };
+    if let Some(rest) = expr.strip_prefix("DEFINED(") {
+        let (symbol, rest) = rest.split_once(')')?;
+        let fallback = rest.rsplit(':').next()?;
+        return value(symbol).or_else(|| value(fallback));
+    }
+    let mut total: i64 = 0;
+    let mut sign = 1i64;
+    for token in expr.split_inclusive(['+', '-']) {
+        let (term, next) = match token.char_indices().last() {
+            Some((at, op @ ('+' | '-'))) => (&token[..at], Some(op)),
+            _ => (token, None),
+        };
+        total += sign * i64::from(value(term)?);
+        sign = if next == Some('-') { -1 } else { 1 };
+    }
+    u32::try_from(total).ok()
+}
+
+/// Top of main RAM as this link sees it: `RAM_BASE + RAM_SIZE` from the map.
+pub fn ram_top(map: &str) -> Option<u32> {
+    symbol_value(map, "RAM_BASE")?.checked_add(symbol_value(map, "RAM_SIZE")?)
+}
 
 /// How many of the largest symbols each section lists.
 const TOP: usize = 30;
@@ -57,18 +115,20 @@ pub struct Map {
     pub bss_end: Option<u32>,
     /// `STACK_RESERVE` from the link script (the map prints its assignment).
     pub stack_reserve: Option<u32>,
+    /// `STACK_INIT` from the link script, so a link for less than 2 MiB (the scene core's
+    /// window above it) is measured from its own top.
+    pub stack_init: Option<u32>,
 }
 
 impl Map {
-    /// End of the region the image may occupy: below the stack reserve.
-    pub fn ram_end(&self) -> u32 {
-        RAM_TOP - self.stack_reserve.unwrap_or(SDK_STACK_RESERVE)
+    /// Where the stack reserve starts: `STACK_INIT - STACK_RESERVE`, `__heap_end` in psoxide.ld.
+    pub fn ram_end(&self) -> Option<u32> {
+        Some(self.stack_init? - self.stack_reserve.unwrap_or(SDK_STACK_RESERVE))
     }
 
-    /// Bytes between `__bss_end` and the stack reserve. For the SDK's 32 KiB
-    /// reserve this is `psoxide-pgo ram`'s figure.
+    /// Bytes between `__bss_end` and the stack reserve: `psoxide-pgo ram`'s figure.
     pub fn free(&self) -> Option<u32> {
-        self.bss_end.map(|end| self.ram_end().saturating_sub(end))
+        Some(self.ram_end()?.saturating_sub(self.bss_end?))
     }
 }
 
@@ -152,18 +212,7 @@ pub fn parse(map: &str) -> Map {
                 _ => {}
             }
         }
-        if tail.starts_with("STACK_RESERVE = ") {
-            // The map prints the assignment as written: hex for the SDK's
-            // 0x8000, decimal for a committed byte count.
-            parsed.stack_reserve = tail.rsplit("= ").next().and_then(|value| {
-                let value = value.trim();
-                match value.strip_prefix("0x") {
-                    Some(hex_digits) => hex(hex_digits),
-                    None => value.parse().ok(),
-                }
-            });
-            continue;
-        }
+
         if line.contains("__bss_end = .") {
             parsed.bss_end = Some(vma);
             continue;
@@ -199,6 +248,8 @@ pub fn parse(map: &str) -> Map {
             }
         }
     }
+    parsed.stack_reserve = symbol_value(map, "STACK_RESERVE");
+    parsed.stack_init = symbol_value(map, "STACK_INIT");
     parsed
 }
 
@@ -325,7 +376,10 @@ mod tests {
 
     const MAP: &str = "\
      VMA      LMA     Size Align Out     In      Symbol
-       0        0        0     1 STACK_RESERVE = 0x8000
+       0        0        0     1 RAM_BASE = 0x80000000
+       0        0        0     1 RAM_SIZE = DEFINED(RAM_SIZE_OVERRIDE) ? RAM_SIZE_OVERRIDE : 2M
+       0        0        0     1 STACK_INIT = RAM_BASE + RAM_SIZE - 0x100
+       0        0        0     1 STACK_RESERVE = DEFINED(STACK_RESERVE_OVERRIDE) ? STACK_RESERVE_OVERRIDE : 0x8000
 80010000 80010000      100     4 .text
 80010000 80010000       78     4         /r/game/target/deps/hl_psx-1.rcgu.o:(.text._start)
 80010000 80010000       78     1                 _start
@@ -383,17 +437,33 @@ mod tests {
 
     #[test]
     fn free_matches_sdk_check() {
-        // psoxide-pgo ram: 0x801F_8000 - __bss_end for the SDK's 32 KiB reserve.
-        assert_eq!(parse(MAP).free(), Some(0x801F_8000 - 0x8001_0600));
+        // psoxide-pgo ram: STACK_INIT - STACK_RESERVE - __bss_end, 0x801F_7F00 - __bss_end for
+        // the SDK's 32 KiB reserve.
+        assert_eq!(parse(MAP).free(), Some(0x801F_7F00 - 0x8001_0600));
+    }
+
+    /// The overrides a `-T` script puts ahead of psoxide.ld, as the map prints them.
+    fn with_overrides(lines: &str) -> String {
+        MAP.replacen("       0        0        0     1 RAM_BASE", &format!("{lines}       0        0        0     1 RAM_BASE"), 1)
     }
 
     #[test]
     fn free_follows_the_maps_stack_reserve() {
-        let decimal = MAP.replace("STACK_RESERVE = 0x8000", "STACK_RESERVE = 25600");
+        let decimal = with_overrides("       0        0        0     1 STACK_RESERVE_OVERRIDE = 25600\n");
         assert_eq!(parse(&decimal).stack_reserve, Some(25_600));
-        let map = MAP.replace("STACK_RESERVE = 0x8000", "STACK_RESERVE = 0x4000");
+        let map = with_overrides("       0        0        0     1 STACK_RESERVE_OVERRIDE = 0x4000\n");
         assert_eq!(parse(&map).stack_reserve, Some(0x4000));
-        assert_eq!(parse(&map).free(), Some(0x801F_C000 - 0x8001_0600));
+        assert_eq!(parse(&map).free(), Some(0x801F_BF00 - 0x8001_0600));
+    }
+
+    #[test]
+    fn the_ram_top_comes_from_the_link() {
+        assert_eq!(ram_top(MAP), Some(0x8020_0000));
+        // The scene core's window: RAM_SIZE_OVERRIDE moves the top and STACK_INIT with it.
+        let map = with_overrides("       0        0        0     1 RAM_SIZE_OVERRIDE = 0x1fe000\n");
+        assert_eq!(ram_top(&map), Some(0x801F_E000));
+        assert_eq!(parse(&map).stack_init, Some(0x801F_DF00));
+        assert_eq!(parse(&map).free(), Some(0x801F_DF00 - 0x8000 - 0x8001_0600));
     }
 
     #[test]

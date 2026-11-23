@@ -3644,8 +3644,9 @@ fn run_stack_gate(repository: &Path, psoxide: &Path, cue: &Path, maps: Option<&s
     let frontend = regression::frontend(psoxide)?;
     let catalog = stack_gate::Catalog::parse(include_str!("../../game/src/map_catalog.rs"))
         .ok_or("cannot read the map catalog")?;
-    let play_pc = stack_gate::play_pc(&fs::read_to_string(repository.join(LINK_MAP))?)
-        .ok_or("hl_psx::play is not in the link map")?;
+    let map = fs::read_to_string(repository.join(LINK_MAP))?;
+    let play_pc = stack_gate::play_pc(&map).ok_or("hl_psx::play is not in the link map")?;
+    let ram_top = ram_report::ram_top(&map).ok_or("the link map assigns no RAM_BASE/RAM_SIZE")?;
     let wanted: Vec<usize> = match maps {
         None => stack_gate::DEFAULT_MAPS.to_vec(),
         Some("all") => (0..catalog.maps).collect(),
@@ -3660,7 +3661,7 @@ fn run_stack_gate(repository: &Path, psoxide: &Path, cue: &Path, maps: Option<&s
     for play_order in wanted {
         println!("==> stack watermark, play-order {play_order}");
         readings.push(stack_gate::measure(
-            &frontend, cue, &catalog, play_pc, play_order, &out,
+            &frontend, cue, &catalog, play_pc, ram_top, play_order, &out,
         )?);
     }
     let bound = static_stack_bound(repository, psoxide, None)?;
