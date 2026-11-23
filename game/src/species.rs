@@ -97,8 +97,27 @@ pub(crate) unsafe fn tick_grunt(
     // run in until the hulls touch (the retail kick reaches 34) and kick once for `sk_hgrunt_kick`. Timer bit 7 flags these modes, bits 5-6 pick
     // one (0 backing away, 1 charging, 2 kicking) and bits 0-4 count: pairs of ticks while
     // backing away or charging, ticks of the kick bout.
-    let t = PROP_AI_TIMER[pi];
+    let mut t = PROP_AI_TIMER[pi];
     let charger = pi & 1 != 0;
+    // CHGrunt::GetSchedule on light damage: TAKE_COVER_FROM_ENEMY (the 1 in
+    // 10 that flinches instead is prop_flinch_ticks'). A hit flash that has
+    // not run out and is no flinch is a hit that started none. One search
+    // runs per tick, so a burst of hits on a squad spreads over the flash's
+    // ticks; a marine whose search found nothing tries again while it lasts.
+    if t & 0x80 == 0
+        && PROP_HIT_FLASH[pi] != 0
+        && PROP_HIT_FLASH[pi] < PROP_HIT_FLASH_TICKS
+        && COVER_SEARCH_TICK != SIM_NOW
+        && PROP_SCRIPT_MODE[pi] == 0
+        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE == 0
+    {
+        COVER_SEARCH_TICK = SIM_NOW;
+        if let Some(cover) = nav_cover_goal(m, sight, pi, aim) {
+            PROP_SCRIPT_GOAL[pi] = [cover[0] as i16, cover[1] as i16, cover[2] as i16];
+            t = 0x80 | (3 << 5) | 31;
+            PROP_AI_TIMER[pi] = t;
+        }
+    }
     if t & 0x80 != 0 {
         let mode = (t >> 5) & 3;
         let left = t & 31;
@@ -115,6 +134,23 @@ pub(crate) unsafe fn tick_grunt(
                 // DMG_CLUB: the suit names only a major club hit, which a kick never is.
                 hev::set_kind(hev::Kind::Generic);
                 damage_target(target, skill_hit(Sk::HgruntKick), pos, health, armor);
+            }
+        } else if mode == 3 {
+            // TASK_RUN_PATH to the cover, then GRUNT_WAIT_FACE_ENEMY there
+            // until the count runs out.
+            let g = PROP_SCRIPT_GOAL[pi];
+            let goal = [g[0] as i32, g[1] as i32, g[2] as i32];
+            if left > 0 {
+                if MOVE_TICK & 1 == 0 {
+                    PROP_AI_TIMER[pi] = 0x80 | (3 << 5) | (left - 1);
+                }
+                if dist2_xz(pos, goal) > 24 * 24 {
+                    prop_move_towards_point(m, movers, pi, goal, 15);
+                } else {
+                    PROP_STATE[pi] = PROP_STATE_IDLE;
+                }
+            } else {
+                PROP_AI_TIMER[pi] = 0;
             }
         } else if mode == 1 {
             if d2 <= 64 * 64 {

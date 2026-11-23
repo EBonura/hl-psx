@@ -17177,6 +17177,81 @@ unsafe fn nav_waypoint_towards(
     }
 }
 
+/// Where the node search for cover starts (CGraph::m_iLastCoverSearch): the
+/// next monster that looks for cover goes on from where the last one stopped.
+static mut COVER_SEARCH_NEXT: u8 = 0;
+/// The sim tick of the last cover search: one search a tick (species::tick_grunt).
+static mut COVER_SEARCH_TICK: u16 = u16::MAX;
+
+/// CBaseMonster::CoverRadius.
+const COVER_RADIUS: i32 = 784;
+
+/// TASK_FIND_COVER_FROM_ENEMY for actor `pi` against an enemy whose eyes are
+/// at `threat_eye`: CBaseMonster::FindLateralCover, then FindCover. Lateral:
+/// five steps of 48 units to each side of the actor's facing, the first spot
+/// the enemy cannot see that has floor and a clear walk from the actor.
+/// Nodes: the land nodes in turn from where the last search stopped, the
+/// first within 784 units that the enemy cannot see from its eyes at the
+/// node's eye height and that is no farther from the actor than from the
+/// enemy (straight lines; the original compares route lengths). None when
+/// there is no cover.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn nav_cover_goal(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    threat_eye: [i32; 3],
+) -> Option<[i32; 3]> {
+    let pos = PROP_POS[pi];
+    let view = model_def(PROP_KIND[pi]).target_h;
+    // FindLateralCover: COVER_CHECKS 5 a side, COVER_DELTA 48 apart.
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
+    let knee = pos[1] + 18;
+    let mut d = 48;
+    while d <= 5 * 48 {
+        let mut side = 0;
+        while side < 2 {
+            let spot = [pos[0] + ((fz * d) >> 12), pos[1], pos[2] - ((fx * d) >> 12)];
+            if cover_hides(m, threat_eye, spot, view)
+                && actor_line_clear(m, movers, [pos[0], knee, pos[2]], [spot[0], knee, spot[2]])
+                && prop_floor_y(m, pi, spot)
+                    .is_some_and(|y| ground_logic::actor_floor_step_reachable(pos[1], y))
+            {
+                return Some(spot);
+            }
+            d = -d;
+            side += 1;
+        }
+        d += 48;
+    }
+    // FindCover over the node graph.
+    let n = nav_node_count(m);
+    let mut k = 0;
+    while k < n {
+        let i = (COVER_SEARCH_NEXT as usize + k) % n;
+        COVER_SEARCH_NEXT = ((i + 1) % n) as u8;
+        k += 1;
+        let node = m.nav_node(i);
+        let mine = dist2_3(pos, node.pos);
+        if nav_land_node(m, i)
+            && mine < COVER_RADIUS * COVER_RADIUS
+            && mine <= dist2_3(threat_eye, node.pos)
+            && cover_hides(m, threat_eye, node.pos, view)
+        {
+            return Some(node.pos);
+        }
+    }
+    None
+}
+
+/// Whether the enemy's eyes cannot see a point `view` units above `spot`.
+#[inline(never)]
+fn cover_hides(m: &Map, threat_eye: [i32; 3], spot: [i32; 3], view: i32) -> bool {
+    !phys::line_clear_world(m, threat_eye, [spot[0], spot[1] + view, spot[2]])
+}
+
 unsafe fn nav_flee_goal(m: &Map, threat: [i32; 3], pos: [i32; 3]) -> Option<[i32; 3]> {
     let n = nav_node_count(m);
     let current_threat_d2 = dist2_xz(pos, threat);
@@ -18038,7 +18113,13 @@ unsafe fn prop_flinch_ticks(pi: usize, player_inflicted: bool) -> u8 {
     {
         return 0;
     }
-    if PROP_AI_TARGET[pi] != PROP_TARGET_NONE && !prop_is_human(ty) {
+    if PROP_AI_TARGET[pi] != PROP_TARGET_NONE && ty == 8 {
+        // monster_human_grunt (CHGrunt) in combat: nine hits in ten send it to cover (tick_grunt),
+        // the tenth flinches, every time (no memory).
+        if impact_rng().below(10) != 0 {
+            return 0;
+        }
+    } else if PROP_AI_TARGET[pi] != PROP_TARGET_NONE && !prop_is_human(ty) {
         // In combat: the first hit of its life only (bits_MEMORY_FLINCHED).
         if PROP_DEATH_START[pi] != 0 {
             return 0;
