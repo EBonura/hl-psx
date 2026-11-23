@@ -1,29 +1,29 @@
 # Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
 # psoxide-test.toml with a reason, never by hand-editing these numbers).
 schema = 1
-blessed_commit = "8a73d50ea0b3bd23e514e4baa92748fad3990edd"
+blessed_commit = "a207e9be9eec0928d46b7fab58171788bd34e0f6"
 sdk_pin = "6bfe478ff0e0c6e226cdf67b164df311c1658fec"
 
 [size.ship]
-text = 760364
+text = 761180
 data = 57128
 bss = 1184164
-free = 4092
+free = 3276
 
 [speed.c4a3]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [1025, 1026, 1026, 1026, 1026, 1025, 1024, 1022]
-work_per_frame = [1617229, 1615506, 1614249, 1612991, 1612845, 1613161, 1614592, 1616493]
-frame_work_p99 = [2260926, 2260926, 2260926, 2260926, 2260926, 2260926, 2260926, 2260926]
-vblanks = ["2:188,3:731,4:97,5:8", "2:188,3:734,4:95,5:8", "2:188,3:735,4:94,5:8", "2:188,3:735,4:94,5:8", "2:188,3:735,4:94,5:8", "2:186,3:736,4:94,5:8", "2:181,3:740,4:94,5:8", "2:176,3:743,4:94,5:8"]
+flips = [1021, 1022, 1022, 1023, 1023, 1022, 1020, 1019]
+work_per_frame = [1623134, 1620840, 1619576, 1618383, 1617679, 1618559, 1620468, 1621915]
+frame_work_p99 = [2808072, 2808072, 2808072, 2808072, 2808072, 2808072, 2808072, 2808072]
+vblanks = ["2:201,3:695,4:110,5:14", "2:201,3:698,4:108,5:14", "2:203,3:694,4:110,5:14", "2:204,3:696,4:108,5:14", "2:204,3:696,4:108,5:14", "2:201,3:698,4:108,5:14", "2:195,3:702,4:108,5:14", "2:191,3:705,4:108,5:14"]
 
 [[speed.c4a3.layouts]]
 path = "game/pgo/hl-psx.layout"
-sha256 = "5b9c102e84510bc4fdeae87fc75c93b384f6b4b9f91922f7dc2b51da119bc68c"
+sha256 = "b9fad0f42933fa3ac2d454b96e89cdf50d3f67a36f08957dbf099e8a627a8077"
 
 [speed.c4a3.layouts.searched]
-rounds = 600
-seed = 1
+rounds = 1200
+seed = 7
 
 [speed.c4a3.identity]
 tape = "tests/pgo/c4a3.pxtape"
@@ -34,27 +34,27 @@ launch_args = ["--embedded-playtest", "--no-memcard"]
 gate_revision = "97cd078f9d2a33eb6aff274541bccc118f5b12e8"
 
 [journeys.chain-hazard]
-ticks = 7382
+ticks = 7384
 open_loop = 7
 clock_waits = 0
 
 [journeys.chain-hazard-rung]
-ticks = 7461
+ticks = 7498
 open_loop = 7
 clock_waits = 0
 
 [journeys.chain-new-game]
-ticks = 121263
+ticks = 121761
 open_loop = 5
 clock_waits = 0
 
 [journeys.chain-skill-hard]
-ticks = 13046
+ticks = 13051
 open_loop = 6
 clock_waits = 0
 
 [journeys.dev-c1a2a-arrival]
-ticks = 4329
+ticks = 4335
 open_loop = 13
 clock_waits = 0
 
@@ -64,137 +64,137 @@ open_loop = 26
 clock_waits = 0
 
 [journeys.hazard-panels]
-ticks = 2710
+ticks = 2759
 open_loop = 9
 clock_waits = 0
 
 [journeys.hud-damage]
-ticks = 4396
+ticks = 4397
 open_loop = 43
 clock_waits = 0
 
 [journeys.hud-history]
-ticks = 2131
+ticks = 2133
 open_loop = 13
 clock_waits = 0
 
 [journeys.hud-interact]
-ticks = 3433
+ticks = 3434
 open_loop = 18
 clock_waits = 0
 
 [journeys.hud-selection]
-ticks = 2501
+ticks = 2502
 open_loop = 14
 clock_waits = 0
 
 [journeys.hud-weapons]
-ticks = 5961
+ticks = 5962
 open_loop = 36
 clock_waits = 0
 
 [journeys.intro]
-ticks = 1348
+ticks = 1349
 open_loop = 4
 clock_waits = 0
 
 [journeys.intro-skip]
-ticks = 899
+ticks = 901
 open_loop = 4
 clock_waits = 0
 
 [journeys.intro-skip-cross]
-ticks = 899
+ticks = 901
 open_loop = 4
 clock_waits = 0
 
 [journeys.journey]
-ticks = 4005
+ticks = 4003
 open_loop = 14
 clock_waits = 0
 
 [journeys.maker-ammo357-c2a1]
-ticks = 3299
+ticks = 3317
 open_loop = 0
 clock_waits = 0
 
 [journeys.maker-ammo357-c2a1a]
-ticks = 3416
+ticks = 3373
 open_loop = 0
 clock_waits = 0
 
 [journeys.maker-babycrab-c4a2b]
-ticks = 1988
+ticks = 1962
 open_loop = 0
 clock_waits = 0
 
 [journeys.maker-snark-c2a5f]
-ticks = 2376
+ticks = 2402
 open_loop = 0
 clock_waits = 0
 
 [journeys.maker-snark-c3a1]
-ticks = 1825
+ticks = 1837
 open_loop = 0
 clock_waits = 0
 
 [journeys.music-swap]
-ticks = 2757
+ticks = 2758
 open_loop = 14
 clock_waits = 0
 
 [journeys.parity-barnacle]
-ticks = 5495
+ticks = 5499
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-barnacle-bullets]
-ticks = 5611
+ticks = 5614
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a1b-exit-grate]
-ticks = 9889
+ticks = 9855
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a1b-grate-rise]
-ticks = 8959
+ticks = 8897
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a1c-vent-bars]
-ticks = 3425
+ticks = 3426
 open_loop = 6
 clock_waits = 0
 
 [journeys.parity-c1a1f-carry]
-ticks = 8321
+ticks = 8322
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a1f-crab]
-ticks = 4249
+ticks = 4253
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a1f-tower]
-ticks = 4074
+ticks = 4077
 open_loop = 12
 clock_waits = 0
 
 [journeys.parity-c1a2-gun-crate]
-ticks = 2064
+ticks = 2066
 open_loop = 6
 clock_waits = 0
 
 [journeys.parity-c1a2-gun-deploy]
-ticks = 3019
+ticks = 3023
 open_loop = 6
 clock_waits = 0
 
 [journeys.parity-c1a2-pressure-crate]
-ticks = 4409
+ticks = 4413
 open_loop = 6
 clock_waits = 0
 
@@ -204,7 +204,7 @@ open_loop = 15
 clock_waits = 0
 
 [journeys.present-cap]
-ticks = 5843
+ticks = 5841
 open_loop = 0
 clock_waits = 0
 
@@ -224,27 +224,27 @@ open_loop = 21
 clock_waits = 0
 
 [journeys.skill-easy]
-ticks = 1468
+ticks = 1469
 open_loop = 7
 clock_waits = 0
 
 [journeys.skill-hard]
-ticks = 1468
+ticks = 1469
 open_loop = 7
 clock_waits = 0
 
 [journeys.skill-medium]
-ticks = 1440
+ticks = 1441
 open_loop = 6
 clock_waits = 0
 
 [journeys.skill-save]
-ticks = 4756
+ticks = 4753
 open_loop = 14
 clock_waits = 0
 
 [journeys.smoke-boot-play]
-ticks = 2870
+ticks = 2872
 open_loop = 0
 clock_waits = 0
 
@@ -254,62 +254,62 @@ open_loop = 0
 clock_waits = 0
 
 [journeys.stage-c1a1c-canal]
-ticks = 8142
+ticks = 8152
 open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1c-mid]
-ticks = 4881
+ticks = 4883
 open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1c-return]
-ticks = 4640
+ticks = 4648
 open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1c-vent]
-ticks = 3142
+ticks = 3144
 open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a1d]
-ticks = 7806
+ticks = 7808
 open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a2-part1]
-ticks = 14676
+ticks = 14622
 open_loop = 12
 clock_waits = 0
 
 [journeys.stage-c1a2-part2]
-ticks = 6945
+ticks = 6965
 open_loop = 6
 clock_waits = 0
 
 [journeys.stage-c1a2-part3]
-ticks = 5126
+ticks = 5163
 open_loop = 6
 clock_waits = 0
 
 [journeys.unstick-vent]
-ticks = 1080
+ticks = 1086
 open_loop = 1
 clock_waits = 0
 
 [journeys.voice-pool]
-ticks = 2755
+ticks = 2762
 open_loop = 14
 clock_waits = 0
 
 [journeys.weapon-models-c2a5e]
-ticks = 2356
+ticks = 2359
 open_loop = 11
 clock_waits = 0
 
 [journeys.weapon-models-c3a2d]
-ticks = 2302
+ticks = 2305
 open_loop = 11
 clock_waits = 0
 
@@ -319,27 +319,27 @@ open_loop = 20
 clock_waits = 0
 
 [journeys.weapons-357]
-ticks = 2366
+ticks = 2367
 open_loop = 14
 clock_waits = 0
 
 [journeys.weapons-crossbow]
-ticks = 2745
+ticks = 2744
 open_loop = 14
 clock_waits = 0
 
 [journeys.weapons-crowbar]
-ticks = 3583
+ticks = 3584
 open_loop = 15
 clock_waits = 0
 
 [journeys.weapons-egon]
-ticks = 3198
+ticks = 3199
 open_loop = 17
 clock_waits = 0
 
 [journeys.weapons-gauss]
-ticks = 3058
+ticks = 3059
 open_loop = 16
 clock_waits = 0
 
@@ -349,12 +349,12 @@ open_loop = 15
 clock_waits = 0
 
 [journeys.weapons-grenade]
-ticks = 3326
+ticks = 3325
 open_loop = 16
 clock_waits = 0
 
 [journeys.weapons-hornet]
-ticks = 3232
+ticks = 3230
 open_loop = 15
 clock_waits = 0
 
@@ -364,7 +364,7 @@ open_loop = 15
 clock_waits = 0
 
 [journeys.weapons-rpg]
-ticks = 2831
+ticks = 2834
 open_loop = 14
 clock_waits = 0
 
@@ -374,26 +374,26 @@ open_loop = 18
 clock_waits = 0
 
 [journeys.weapons-shotgun]
-ticks = 2748
+ticks = 2750
 open_loop = 16
 clock_waits = 0
 
 [journeys.weapons-snark]
-ticks = 3567
+ticks = 3571
 open_loop = 18
 clock_waits = 0
 
 [journeys.weapons-tripmine]
-ticks = 3611
+ticks = 3610
 open_loop = 16
 clock_waits = 0
 
 [journeys.weapons-tripmine-floor]
-ticks = 3532
+ticks = 3534
 open_loop = 16
 clock_waits = 0
 
 [host]
 
 [maps]
-ship = "c33088e52c656a9af940aeec4f2f09bdd6e0c9ec373d18936094d9c54e429b77"
+ship = "e7700539b230b1dc5af1dfbc421633f947e7a02d7149fdf1456e6d6412c4690d"
