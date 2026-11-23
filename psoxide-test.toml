@@ -27,9 +27,12 @@ commands = [
   # The gate reads a map row `hl_psx::SIM_NOW (.0)` as `(.0)`: list those statics by name.
   ["sh", "-c", "awk 'NF == 6 && $6 ~ /^[(][.][0-9]+[)]$/ {print $1, $5}' .hlpsx/hl-psx.map > {out}/symbols.txt"],
 ]
-collect = { "hl-psx.bin" = "dist/hl-psx.bin", "hl-psx.cue" = "dist/hl-psx.cue", "hl-psx.exe" = "game/target/mipsel-sony-psx/release/hl-psx.exe", "hl-psx.map" = ".hlpsx/hl-psx.map", "hl-intro.map" = ".hlpsx/intro/hl-intro.map" }
+collect = { "hl-psx.bin" = "dist/hl-psx.bin", "hl-psx.cue" = "dist/hl-psx.cue", "hl-psx.exe" = "game/target/mipsel-sony-psx/release/hl-psx.exe", "hl-psx.map" = ".hlpsx/hl-psx.map", "hl-intro.map" = ".hlpsx/intro/hl-intro.map", "hl-psx.order" = ".hlpsx/hl-psx.order", "hl-psx.order.placed" = ".hlpsx/hl-psx.order.placed" }
 disc = "hl-psx.cue"
 map = "hl-psx.map"
+# The ordering file the ship link followed (game/pgo/hl-psx.layout placed on this code), with its
+# .placed sidecar: the build stage proves the link map followed it.
+order = "hl-psx.order"
 
 # The probe disc (scripts/gate.sh's): the interaction probe from tests/probes/gate.txt, no intro,
 # rooms t0a0b (98) and c1a1b (14); the journeys in tests/probe-journeys.txt play it. It runs
