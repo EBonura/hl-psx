@@ -5805,190 +5805,190 @@ w 0:17632 1:17632 2:17632 3:17632 4:17632 5:17632 6:17632 7:17632 8:17632 9:1763
 w 16:17632 20:17632 21:17632 22:17632 23:17632 24:17632 25:17632 41:17632 42:17632 43:17632 44:17632 45:17632 46:17632 47:17632 48:17632 49:17632
 w 50:17632 51:17632 52:17632
 c 17632 20 __psx_rt_present_kick
-# placement: psoxide-pgo search, seed 1 rounds 600 batch 24: 28802 window replays, 197 moves kept, objective 2.0000 -> 0.9332
+# placement: psoxide-pgo search, seed 1 rounds 600 batch 24: 28802 window replays, 171 moves kept, objective 2.0000 -> 0.9385
 # placement windows: c4a3 (weight 1), c0a0 (weight 1)
 s 800100a0
-o e53ec12e09ee9daf 1006 800100a0 hl_psx::emit_world_tri
-o 85c0fe860c663937 15 80011058 psx_vram::texture_window_units
-o 82a269c48f2e64ec 160 80011094 memcpy
-o cda1c5e14b9b8ccc 109 80011314 hl_psx::ent_draw_offset
-o 88c4053d82c8e017 59 800114c8 hl_psx::prop_touch_triggers
-o b53846a62f3ab584 527 800115b4 hl_psx::emit_pvs_walk
-o bc242a4ca512e314 15 80011df0 __psx_rt_dispatch_update
-o e66dedcc3840b2ae 22849 80011e2c hl_psx::play
-o acbc86bec3a4af52 491 80028330 hl_psx::garg::flame_task
-o c120a3abee8f7267 11 80028adc <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::charger_stop @hl_psx
-o 4c9c242f865ef4fb 310 80028b08 hl_psx::emit_world_face_loop
-o 372b9ff001f16188 622 80028fe0 main
-o 15aade6876581bd1 51 80029998 hl_psx::run_pause_menu::{closure#1} @hl_psx
-o fd6b7b168421a2b6 139 80029a64 <hl_psx::map::Map>::select_dynamic_face
-o 996653c600f48dae 904 80029c90 hl_psx::species::tick_leech
-o f815289c096d9fdb 177 8002aab0 <hl_psx::map::Map>::logic
-o de1e8cc6993c22e4 994 8002ad74 hl_psx::fire_hitscan
-o 8086c2b475a797c1 10 8002bcfc hl_psx::noise_heard_with
-o bca8e71f096d4e71 74 8002bd24 psx_goldsrc::render::project_soft::<psx_goldsrc::render::FullView> @hl_psx
-o 7c9ef58fd15aa36e 958 8002be4c hl_psx::emit_submodel_loop_tri_projected
-o 554ad306b2dde083 62 8002cd44 hl_psx::dry_leaf_above
+o 73f5710d068201e6 45 800100a0 hl_psx::species::idle_think
+o 82a269c48f2e64ec 160 80010154 memcpy
+o 7c9ef58fd15aa36e 958 800103d4 hl_psx::emit_submodel_loop_tri_projected
+o a4fe57e2871cbc74 19 800112cc hl_psx::pause_glow
+o cda1c5e14b9b8ccc 109 80011318 hl_psx::ent_draw_offset
+o 2072842a04e9dbdc 30 800114cc hl_psx::run_pause_menu::{closure#4} @hl_psx
+o b53846a62f3ab584 527 80011544 hl_psx::emit_pvs_walk
+o de1e8cc6993c22e4 994 80011d80 hl_psx::fire_hitscan
+o 8086c2b475a797c1 10 80012d08 hl_psx::noise_heard_with
+o e66dedcc3840b2ae 22849 80012d30 hl_psx::play
+o 41d137085ae8ac2c 564 80029234 hl_psx::prop_studio_segment
+o 4c9c242f865ef4fb 310 80029b04 hl_psx::emit_world_face_loop
+o 372b9ff001f16188 622 80029fdc main
+o 3c820e441c6f2cae 20 8002a994 psx_io::gpu::handoff::write_command_slow
+o fd6b7b168421a2b6 139 8002a9e4 <hl_psx::map::Map>::select_dynamic_face
+o 9145ae8e0048bf28 885 8002ac10 hl_psx::damage_prop
+o 54869c3cd6ae8f3a 7 8002b9e4 <[i16; 3]>::try_map::<core::ops::try_trait::NeverShortCircuit<i32>, core::ops::try_trait::Wrapped<i32, i16, <i32 as core::convert::From<i16>>::from>> @hl_psx
+o f815289c096d9fdb 177 8002ba00 <hl_psx::map::Map>::logic
+o 6c6354e372322129 21 8002bcc4 <psx_mc::fs::DataWriter>::push::<psx_mc::hardware::HardwareCard> @hl_psx
+o bca8e71f096d4e71 74 8002bd18 psx_goldsrc::render::project_soft::<psx_goldsrc::render::FullView> @hl_psx
+o e53ec12e09ee9daf 1006 8002be40 hl_psx::emit_world_tri
+o 915f48a95f9fdbee 17 8002cdf8 <core::ops::range::RangeInclusive<i32> as core::ops::range::RangeBounds<i32>>::contains::<i32> @hl_psx
 o aad0689c6cdbe2c1 1521 8002ce3c hl_psx::try_emit_quad_ctx
 o aa7b0a36204a2b75 858 8002e600 hl_psx::init_prop_state
 o 0e26d7359eb6fc19 61 8002f368 hl_psx::draw_damage_compass::{closure#2} @hl_psx
 o 8d68a2f6b8009232 25 8002f45c <hl_psx::CameraVisibility>::sphere
 o 6d69835bcb55b1b0 54 8002f4c0 hl_psx::phys::mover_may_touch_segment
 o fa1e96c8855b8099 168 8002f598 hl_psx::note_damage_direction
-o 305808c9dcd3bcb3 463 8002f838 hl_psx::vram::upload_one
-o 4531be1bc8bbed16 27 8002ff74 hl_psx::houndeye_blast::{closure#0} @hl_psx
-o 8d00342d1e4d46ce 421 8002ffe0 hl_psx::prop_environment_move
-o 3faf8d45d55d4027 766 80030674 hl_psx::tick_pushables
-o ee7c709b1a4828ae 9 8003126c hl_psx::make_world_noise
-o cffb4fc520a8c151 168 80031290 psx_goldsrc::render::visible_clip::<psx_goldsrc::render::FullView> @hl_psx
-o 201a1c73e363e4b7 33 80031530 hl_psx::hev::spu_bytes
-o 4d3965406f0bc9fe 51 800315b4 <hl_psx::map::Map>::node
-o 8b67425f9f3bf0fa 797 80031680 hl_psx::run_pause_menu
-o c23b973a2a0c7ea9 56 800322f4 hl_psx::proj_params
-o 8050d051586c1ac7 47 800323d4 <psx_engine::render::PrimitivePacketArena>::fence
-o bc51480e7bab014c 440 80032490 hl_psx::carry_player_on_brush_mover
-o 9145ae8e0048bf28 885 80032b70 hl_psx::damage_prop
-o 7e7b1bb6976f7907 122 80033944 hl_psx::tick_pending_changelevel
-o 023f95cfd5e34d76 352 80033b2c hl_psx::emit_world_face_patches
-o 52de5e880db179a1 69 800340ac hl_psx::classic_native_patch_mask
-o c166e5a95f7b69c8 252 800341c0 <hl_psx::map::Map>::impact_material_faces
-o ab9e9f3d3ee9f94d 472 800345b0 hl_psx::emit_screen_triangle
-o 1c27a2de36d06841 621 80034d10 hl_psx::osprey::tick_osprey
-o 358a7342583ebd84 26 800356c4 <psx_gpu::display::DisplayConfig>::vertical_range_command
-o 6b73f1a2a419bdc3 182 8003572c hl_psx::sound_room_think
-o f1fc2da41990a3cd 677 80035a04 hl_psx::save::with_card::<hl_psx::save::CardResult, hl_psx::save::card_write::{closure#0}> @hl_psx
-o c597e16d486684bd 33 80036498 <hl_psx::map::Map>::apply_dynamic_loop_light
-o fc99ff2e82083f75 424 8003651c hl_psx::sky_piece
-o 957f844e7d953369 10 80036bbc hl_psx::tank::atan_s
-o 8a32f2d460aa041d 588 80036be4 hl_psx::emit_cv_clipped
-o a822f1fd626e3aac 844 80037514 hl_psx::logic_try_use
-o 810d7549ec0703d2 25 80038244 psx_io::gpu::write_commands_when_ready_slow
-o 7b0a8988b2d9bcbd 82 800382a8 <psx_gpu::prim::QuadTexturedMaterial>::with_material
-o 73f5710d068201e6 45 800383f0 hl_psx::species::idle_think
-o 4243cbfab80ba4ae 860 800384a4 hl_psx::logic_touch_triggers
-o da6df4ecfedba3fc 843 80039214 <hl_psx::map::Map>::load
-o 087a3fae6a58f201 44 80039f40 <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::any::check<usize, hl_psx::brush_touches_actor::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
-o d1cbb835dfd64438 40 80039ff0 psx_goldsrc::visibility_logic::sphere_in_camera_frustum
-o 3cf5a0181d9ee6d1 165 8003a090 hl_psx::push_from_rotation
-o 27fb841d12ea898b 77 8003a324 hl_psx::tram_pos_ext
-o fd71237c9cfe2350 556 8003a458 hl_psx::tick_snark
-o 54869c3cd6ae8f3a 7 8003ad08 <[i16; 3]>::try_map::<core::ops::try_trait::NeverShortCircuit<i32>, core::ops::try_trait::Wrapped<i32, i16, <i32 as core::convert::From<i16>>::from>> @hl_psx
-o 68c39ba1a29b8c46 30 8003ad24 <psx_font::BitmapFont>::glyph_advance.866
-o 40bf991ab56d9335 460 8003ad9c hl_psx::tank::think
-o be20a2f26265569e 9 8003b4cc hl_psx::menu::play_menu_move
-o 80e078c455dfb292 1055 8003b4f0 hl_psx::emit_world_loop_tri
-o 369eae4d3ca37313 59 8003c56c hl_psx::classic_native_patch_mask::{closure#0} @hl_psx
-o e17f54f7625937ee 243 8003c658 hl_psx::monster_shot_lands
-o 4abeca42628d7c8e 92 8003ca24 hl_psx::record_prop_anim_clips
-o 036dff057b89991a 827 8003cb94 hl_psx::species::tick_tentacle
-o 31edbd5c2a6906b6 142 8003d880 hl_psx::vm_publish_streamed
-o f554aadbe268cf4d 800 8003dab8 hl_psx::emit_soft_quad_split
-o 9d732acd6c374f32 819 8003e738 hl_psx::nav_waypoint_towards
-o 9333b856331e06ac 115 8003f404 hl_psx::tex_anim_init
-o e6a1ab898df05a2f 720 8003f5d0 hl_psx::tick_scripted_actor
-o b60e2b88463a8063 814 80040110 hl_psx::snapshot_transition_actors
-o d4cd24cd41ccb952 57 80040dc8 hl_psx::pursue_point
-o 7cade11fe2946556 103 80040eac hl_psx::script_primed_actor_holds
-o d599ffb04078c810 33 80041048 hl_psx::spark_sound
-o cb2f38f5cbcc3144 779 800410cc hl_psx::prop_anim_frame
-o ba496ef1914bdc9f 817 80041cf8 <hl_psx::phys::Player>::update_swim
-o 156bf54a4e1151a6 73 800429bc <hl_psx::map::Map>::render_tri
-o 56964a493df1d974 8 80042ae0 hl_psx::rank_affine_patch
-o c3e2f42f9597b752 451 80042b00 hl_psx::logic_blood
-o 93d0e7528509c138 40 8004320c psx_pack::visibility::decode::<true, false> @hl_psx
-o dfa2734e334cef42 29 800432ac hl_psx::sfx::play_vol
-o b5b18fd19d9c3e2d 270 80043320 hl_psx::env_funnel_fx::emit
-o 2ef8eddfcee5407d 169 80043758 hl_psx::emit_cv_flat
-o 8e73b0742cd83379 506 800439fc hl_psx::try_emit_native_residue
-o 915f48a95f9fdbee 17 800441e4 <core::ops::range::RangeInclusive<i32> as core::ops::range::RangeBounds<i32>>::contains::<i32> @hl_psx
-o 740dc5fbe9746b42 26 80044228 <core::iter::adapters::zip::Zip<core::slice::iter::IterMut<psx_goldsrc::render::SVert>, core::array::iter::IntoIter<&psx_goldsrc::render::CVert, 3>> as core::iter::adapters::zip::ZipImpl<core::slice::iter::IterMut<psx_goldsrc::render::SVert>, core::array::iter::IntoIter<&psx_goldsrc::render::CVert, 3>>>::next @hl_psx
-o 248cd5408b077915 384 80044290 hl_psx::vm_switch_begin
-o 31e4608d7cbd1ab0 70 80044890 hl_psx::train_corner
-o a29203bd7577de11 419 800449a8 hl_psx::pushable_sweep_fraction
-o 72b2a90e2b8992f8 27 80045034 <hl_psx::env_funnel::Burst>::advance
-o e185f32751366866 173 800450a0 hl_psx::tripmine::tick_map
-o e8fb97fad1cbc806 103 80045354 hl_psx::push_tri_gpu_split
-o 8a010b5066a72a22 723 800454f0 hl_psx::queue_impact_marks
-o b0be4fa3d45d1441 97 8004603c hl_psx::nav_next_node
-o 3f46d40c1edb0d3a 89 800461c0 hl_psx::soft_snap_corner
-o 1cb452c4618ce37a 580 80046324 hl_psx::tick_beam_extended
-o 42cd1d2b91dc7cfa 11 80046c34 hl_psx::sfx::bank_stop
-o d4873d68171bb5b5 610 80046c60 hl_psx::queue_world_beams
-o eb0eaa6db0dc76db 62 800475e8 hl_psx::try_emit_tri_pair_quad_values
-o b8a75d5dd0f216ce 8 800476e0 hl_psx::view_rotation
-o c898f24f29ca4c5b 32 80047700 hl_psx::cache_projected_vert
-o dd4f424406dcf734 695 80047780 hl_psx::tick_headcrab
-o a1032036b465de3e 310 8004825c hl_psx::scientist_try_hello
-o 5d563158ab7ec05f 8 80048734 hl_psx::push_tracer
-o 96f7405f461df9ab 374 80048754 hl_psx::emit_billboard_rgb_mode
-o dff2dc73c4d1bca3 611 80048d2c hl_psx::mapsnap::walk_world
-o 0bc2dacba8611442 340 800496b8 hl_psx::monster_sight_ai_triggers
-o b589bb9cd09d064f 178 80049c08 hl_psx::refresh_live_entity_pvs
-o 407bf9df6dc76aa0 157 80049ed0 hl_psx::hud::ammo_bar::<1> @hl_psx
-o bdc46611f0ad1b22 386 8004a144 hl_psx::tick_beams
-o e570f1a29313f2c7 80 8004a74c hl_psx::spark_burst
-o 2bbc24e10bf22c95 988 8004a88c hl_psx::emit_cv_split_route
-o bef08ce548370534 47 8004b7fc <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_voice @hl_psx
+o 8d00342d1e4d46ce 421 8002f838 hl_psx::prop_environment_move
+o d757f36f438417e8 256 8002fecc hl_psx::scientist_dialogue_local_id
+o cffb4fc520a8c151 168 800302cc psx_goldsrc::render::visible_clip::<psx_goldsrc::render::FullView> @hl_psx
+o 47d8fd231d999aab 16 8003056c hl_psx::run_pause_menu::{closure#2} @hl_psx
+o 4d3965406f0bc9fe 51 800305ac <hl_psx::map::Map>::node
+o da6df4ecfedba3fc 843 80030678 <hl_psx::map::Map>::load
+o c23b973a2a0c7ea9 56 800313a4 hl_psx::proj_params
+o bc51480e7bab014c 440 80031484 hl_psx::carry_player_on_brush_mover
+o 996653c600f48dae 904 80031b64 hl_psx::species::tick_leech
+o 4ce71bc17ae94b90 106 80032984 hl_psx::tripmine::place
+o 023f95cfd5e34d76 352 80032b2c hl_psx::emit_world_face_patches
+o 52de5e880db179a1 69 800330ac hl_psx::classic_native_patch_mask
+o 9bba6b3b657ad8c3 204 800331c0 hl_psx::spawn_projectile
+o ab9e9f3d3ee9f94d 472 800334f0 hl_psx::emit_screen_triangle
+o dd4f424406dcf734 695 80033c50 hl_psx::tick_headcrab
+o 6b73f1a2a419bdc3 182 8003472c hl_psx::sound_room_think
+o d363757f96e81233 53 80034a04 hl_psx::seed_prop_render_transform
+o c597e16d486684bd 33 80034ad8 <hl_psx::map::Map>::apply_dynamic_loop_light
+o 8b67425f9f3bf0fa 797 80034b5c hl_psx::run_pause_menu
+o ee7c709b1a4828ae 9 800357d0 hl_psx::make_world_noise
+o 8a32f2d460aa041d 588 800357f4 hl_psx::emit_cv_clipped
+o 2bf862745e9d9ff9 145 80036124 hl_psx::logic_phase_step
+o 7b0a8988b2d9bcbd 82 80036368 <psx_gpu::prim::QuadTexturedMaterial>::with_material
+o a822f1fd626e3aac 844 800364b0 hl_psx::logic_try_use
+o 5fd906f9c4cadf96 177 800371e0 hl_psx::init_monster_trigger
+o 4243cbfab80ba4ae 860 800374a4 hl_psx::logic_touch_triggers
+o 036dff057b89991a 827 80038214 hl_psx::species::tick_tentacle
+o dff5cc8bb9b27ae2 20 80038f00 hl_psx::platrot_offset
+o d1cbb835dfd64438 40 80038f50 psx_goldsrc::visibility_logic::sphere_in_camera_frustum
+o d2f3353dc57785f2 203 80038ff0 hl_psx::tank::tanks_init
+o 27fb841d12ea898b 77 8003931c hl_psx::tram_pos_ext
+o f1fc2da41990a3cd 677 80039450 hl_psx::save::with_card::<hl_psx::save::CardResult, hl_psx::save::card_write::{closure#0}> @hl_psx
+o c4b6e15a788221cb 28 80039ee4 hl_psx::tram_seg_heading_q28
+o 68c39ba1a29b8c46 30 80039f54 <psx_font::BitmapFont>::glyph_advance.866
+o 0d3fdf8eb7c5da50 329 80039fcc hl_psx::mapsnap::walk_props
+o 80e078c455dfb292 1055 8003a4f0 hl_psx::emit_world_loop_tri
+o 369eae4d3ca37313 59 8003b56c hl_psx::classic_native_patch_mask::{closure#0} @hl_psx
+o fd71237c9cfe2350 556 8003b658 hl_psx::tick_snark
+o 5d563158ab7ec05f 8 8003bf08 hl_psx::push_tracer
+o 4abeca42628d7c8e 92 8003bf28 hl_psx::record_prop_anim_clips
+o 9d732acd6c374f32 819 8003c098 hl_psx::nav_waypoint_towards
+o ea10cc23d5320c5b 109 8003cd64 hl_psx::scientist_hello_local_id
+o f554aadbe268cf4d 800 8003cf18 hl_psx::emit_soft_quad_split
+o 1c27a2de36d06841 621 8003db98 hl_psx::osprey::tick_osprey
+o 201a1c73e363e4b7 33 8003e54c hl_psx::hev::spu_bytes
+o e6a1ab898df05a2f 720 8003e5d0 hl_psx::tick_scripted_actor
+o ba496ef1914bdc9f 817 8003f110 <hl_psx::phys::Player>::update_swim
+o d4cd24cd41ccb952 57 8003fdd4 hl_psx::pursue_point
+o 7cade11fe2946556 103 8003feb8 hl_psx::script_primed_actor_holds
+o 93d0e7528509c138 40 80040054 psx_pack::visibility::decode::<true, false> @hl_psx
+o cb2f38f5cbcc3144 779 800400f4 hl_psx::prop_anim_frame
+o b60e2b88463a8063 814 80040d20 hl_psx::snapshot_transition_actors
+o ba0457136ddd039b 66 800419d8 hl_psx::queue_explosion_fx
+o 56964a493df1d974 8 80041ae0 hl_psx::rank_affine_patch
+o acbc86bec3a4af52 491 80041b00 hl_psx::garg::flame_task
+o dfa2734e334cef42 29 800422ac hl_psx::sfx::play_vol
+o 3faf8d45d55d4027 766 80042320 hl_psx::tick_pushables
+o 2ef8eddfcee5407d 169 80042f18 hl_psx::emit_cv_flat
+o 4531be1bc8bbed16 27 800431bc hl_psx::houndeye_blast::{closure#0} @hl_psx
+o 740dc5fbe9746b42 26 80043228 <core::iter::adapters::zip::Zip<core::slice::iter::IterMut<psx_goldsrc::render::SVert>, core::array::iter::IntoIter<&psx_goldsrc::render::CVert, 3>> as core::iter::adapters::zip::ZipImpl<core::slice::iter::IterMut<psx_goldsrc::render::SVert>, core::array::iter::IntoIter<&psx_goldsrc::render::CVert, 3>>>::next @hl_psx
+o 248cd5408b077915 384 80043290 hl_psx::vm_switch_begin
+o 31e4608d7cbd1ab0 70 80043890 hl_psx::train_corner
+o a29203bd7577de11 419 800439a8 hl_psx::pushable_sweep_fraction
+o 72b2a90e2b8992f8 27 80044034 <hl_psx::env_funnel::Burst>::advance
+o 3cf5a0181d9ee6d1 165 800440a0 hl_psx::push_from_rotation
+o e8fb97fad1cbc806 103 80044334 hl_psx::push_tri_gpu_split
+o 8a010b5066a72a22 723 800444d0 hl_psx::queue_impact_marks
+o 0c5cc6d0f66b7ec2 105 8004501c hl_psx::species::tentacle_slot
+o 3f46d40c1edb0d3a 89 800451c0 hl_psx::soft_snap_corner
+o 1cb452c4618ce37a 580 80045324 hl_psx::tick_beam_extended
+o c120a3abee8f7267 11 80045c34 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::charger_stop @hl_psx
+o d4873d68171bb5b5 610 80045c60 hl_psx::queue_world_beams
+o 554ad306b2dde083 62 800465e8 hl_psx::dry_leaf_above
+o b8a75d5dd0f216ce 8 800466e0 hl_psx::view_rotation
+o dff2dc73c4d1bca3 611 80046700 hl_psx::mapsnap::walk_world
+o 0fd190374621fabb 385 8004708c hl_psx::tick_momentary
+o c898f24f29ca4c5b 32 80047690 hl_psx::cache_projected_vert
+o 050bd6b51d358d97 16 80047710 hl_psx::platrot_rotation
+o 96f7405f461df9ab 374 80047750 hl_psx::emit_billboard_rgb_mode
+o e5c65e44a6bc3703 610 80047d28 hl_psx::restore_transition_actors
+o 0bc2dacba8611442 340 800486b0 hl_psx::monster_sight_ai_triggers
+o b589bb9cd09d064f 178 80048c00 hl_psx::refresh_live_entity_pvs
+o 265a2787325bddcb 156 80048ec8 hl_psx::touch_triggers_box
+o bdc46611f0ad1b22 386 80049138 hl_psx::tick_beams
+o c108ba48fed722cc 553 80049740 hl_psx::species::tick_gonarch
+o 47df7eca5071a2c0 376 80049fe4 <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::prime_persistent_entries @hl_psx
+o 957f844e7d953369 10 8004a5c4 hl_psx::tank::atan_s
+o 2bbc24e10bf22c95 988 8004a5ec hl_psx::emit_cv_split_route
+o f689d4cc5109aeea 215 8004b55c hl_psx::hev::load
 o e6af6557063d66e6 87 8004b8b8 hl_psx::species::tick_monster
-o e5c65e44a6bc3703 610 8004ba14 hl_psx::restore_transition_actors
-o 8c0b864ef5def06a 220 8004c39c hl_psx::script_human_actor_blocked_fraction
+o 6a51b0830ef1de39 551 8004ba14 hl_psx::restore_transition_doors
+o b5b18fd19d9c3e2d 270 8004c2b0 hl_psx::env_funnel_fx::emit
+o be20a2f26265569e 9 8004c6e8 hl_psx::menu::play_menu_move
 o 5aef038f494a8a8c 146 8004c70c hl_psx::phys::trace_point_all
-o 41d137085ae8ac2c 564 8004c954 hl_psx::prop_studio_segment
-o 37482a377a83af11 74 8004d224 hl_psx::sfx::checked_room_bank
+o aeb21666a720026c 544 8004c954 hl_psx::radius_damage
+o 9b760fbbb5c6e7df 94 8004d1d4 hl_psx::fly_move
 o 37f778570f7593d6 793 8004d34c <hl_psx::phys::Player>::update
-o c108ba48fed722cc 553 8004dfb0 hl_psx::species::tick_gonarch
-o 03b6573cab0a9525 446 8004e854 hl_psx::emit_platrot_entity
-o f59945106eeacaef 81 8004ef4c <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::update_map_loops @hl_psx
-o 8795a0eaf13a8c0b 358 8004f090 hl_psx::menu::draw_options_menu
-o fcca6af46e8d6010 653 8004f628 hl_psx::draw_sky_windows
-o 47df7eca5071a2c0 376 8005005c <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::prime_persistent_entries @hl_psx
-o 4a48547a70bac17d 509 8005063c hl_psx::emit_projected
-o 3298bcf63541be6d 440 80050e30 hl_psx::garg::tick
-o ce4fddd12df94702 350 80051510 hl_psx::sfx::apply_room
-o 6a51b0830ef1de39 551 80051a88 hl_psx::restore_transition_doors
-o 9507bafb58a8dc3d 171 80052324 hl_psx::tram_trackchange_offset_q28
-o 163b336bdf4d8b43 61 800525d0 hl_psx::emit_soft_quad_split::{closure#1} @hl_psx
-o aeb21666a720026c 544 800526c4 hl_psx::radius_damage
-o aa9e9e22131785b8 195 80052f44 hl_psx::pushable_use_target
-o 98aa616fb1b502be 51 80053250 hl_psx::sim_pvs_refresh
-o 7c956229007a2b2e 50 8005331c hl_psx::emit_soft_quad_split::{closure#0} @hl_psx
-o 3b4ca7c103876f37 422 800533e4 hl_psx::resolve_player_actor_collision
-o 89c905d5dc2ce3f7 537 80053a7c <psx_asset::hmd8::Model>::layout
-o cb6aea7e0c89021d 438 800542e0 hl_psx::map::tri_pair_quad_corners
-o c9ee0cafb55622d7 92 800549b8 hl_psx::poll_live_semantic_input
-o 036904bc7ce46cce 318 80054b28 hl_psx::tick_alien_attack
-o 798ec25e41780c9e 34 80055020 hl_psx::load_streamed_chunk
-o ddb06deccd5a0b29 1109 800550a8 hl_psx::tick_projectiles
-o 9ca4f4d2a21c078a 209 800561fc hl_psx::save::encode_inner
-o 45ab77c20ead6e8f 122 80056540 hl_psx::monster_voice::think
-o f6ab08d1ad1bf497 533 80056728 hl_psx::apache::hunt
-o 41daf8826c2c6167 164 80056f7c hl_psx::damage_brush_ent
-o e4a6185eb3494ec4 105 8005720c hl_psx::hev::tick
-o 4f18bac2f654c314 503 800573b0 hl_psx::gauss_beam
-o 5360d43e934dd1ac 247 80057b8c hl_psx::init_trains
+o 89c905d5dc2ce3f7 537 8004dfb0 <psx_asset::hmd8::Model>::layout
+o 305808c9dcd3bcb3 463 8004e814 hl_psx::vram::upload_one
+o f59945106eeacaef 81 8004ef50 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::update_map_loops @hl_psx
+o 31edbd5c2a6906b6 142 8004f094 hl_psx::vm_publish_streamed
+o fcca6af46e8d6010 653 8004f2cc hl_psx::draw_sky_windows
+o f6ab08d1ad1bf497 533 8004fd00 hl_psx::apache::hunt
+o e430c6ec7fe0f74f 234 80050554 hl_psx::houndeye_blast
+o 4a48547a70bac17d 509 800508fc hl_psx::emit_projected
+o e01a7655d1c448c2 266 800510f0 hl_psx::hud::draw_weapon_selection::<1> @hl_psx
+o ce4fddd12df94702 350 80051518 hl_psx::sfx::apply_room
+o 8e73b0742cd83379 506 80051a90 hl_psx::try_emit_native_residue
+o 9ca4f4d2a21c078a 209 80052278 hl_psx::save::encode_inner
+o 163b336bdf4d8b43 61 800525bc hl_psx::emit_soft_quad_split::{closure#1} @hl_psx
+o 4f18bac2f654c314 503 800526b0 hl_psx::gauss_beam
+o 47120a90e663d7bf 239 80052e8c hl_psx::camera_tick
+o 98aa616fb1b502be 51 80053248 hl_psx::sim_pvs_refresh
+o 15aade6876581bd1 51 80053314 hl_psx::run_pause_menu::{closure#1} @hl_psx
+o 3b4ca7c103876f37 422 800533e0 hl_psx::resolve_player_actor_collision
+o 40bf991ab56d9335 460 80053a78 hl_psx::tank::think
+o c3e2f42f9597b752 451 800541a8 hl_psx::logic_blood
+o a6b99d02f4bd4fe2 67 800548b4 hl_psx::sfx::bank_play
+o c9ee0cafb55622d7 92 800549c0 hl_psx::poll_live_semantic_input
+o 036904bc7ce46cce 318 80054b30 hl_psx::tick_alien_attack
+o 9c2e055dfb3515be 36 80055028 psx_goldsrc::ladder_logic::goldsrc_velocity_q6::{closure#0} @hl_psx
+o ddb06deccd5a0b29 1109 800550b8 hl_psx::tick_projectiles
+o 6fa39149826eee18 206 8005620c hl_psx::draw_debug_stats
+o 45ab77c20ead6e8f 122 80056544 hl_psx::monster_voice::think
+o 03b6573cab0a9525 446 8005672c hl_psx::emit_platrot_entity
+o b97ca36ecf7765c9 284 80056e24 hl_psx::fire_weapon
+o e4a6185eb3494ec4 105 80057294 hl_psx::hev::tick
+o 3298bcf63541be6d 440 80057438 hl_psx::garg::tick
+o 1f8ce2bf25ade0c3 268 80057b18 hl_psx::species::tick_slave
+o 6d5eaa2e620d2770 8 80057f48 hl_psx::emit_billboard_rgb
 o db8fd6bcaf18e4ad 261 80057f68 hl_psx::tick_env_sparks
 o 9aae8d6107e72d06 136 8005837c hl_psx::clear_combat_fx
 o 04f09041093744ce 82 8005859c hl_psx::tram_integrate_yaw_q28
-o c044c389e12986d0 27 800586e4 hl_psx::nihilanth::bind::{closure#0} @hl_psx
-o 2519f01a8ff1fdcc 694 80058750 hl_psx::nihilanth::tick
-o 5a49e69cd684b727 412 80059228 hl_psx::snapshot_transition_doors
-o 838c33757ea94567 101 80059898 psx_goldsrc::hitbox_logic::ray_aabb_fraction_q12
+o c54ec1d02de1428b 93 800586e4 psx_spu::init_with
+o 2519f01a8ff1fdcc 694 80058858 hl_psx::nihilanth::tick
+o cb6aea7e0c89021d 438 80059330 hl_psx::map::tri_pair_quad_corners
+o 73b87e876af668be 9 80059a08 hl_psx::menu::play_menu_accept
 o cefeac6c4162c266 57 80059a2c <psx_io::cd::xa::Engine>::poll_stopping::<psx_io::periph::Cd> @psx_io
-o 9d9c4eefb3e51ed0 409 80059b10 hl_psx::script_assign_actor
-o dc72c4289ab4f8be 267 8005a174 hl_psx::restore_transition_pushables
+o fc99ff2e82083f75 424 80059b10 hl_psx::sky_piece
+o c166e5a95f7b69c8 252 8005a1b0 <hl_psx::map::Map>::impact_material_faces
 o 97902155ff91976d 67 8005a5a0 hl_psx::tick_tram_snapshot
-o 63b57e0862a6bf53 407 8005a6ac hl_psx::prop_try_step
-o fa5bacf9362bda31 403 8005ad08 hl_psx::prop_controller_move_towards
-o 47d7ccd44f350c4b 69 8005b354 hl_psx::tick_camera_snapshot
-o 33e2cbeb80fc57d1 402 8005b468 hl_psx::tank::fire
-o 053e3eba8c5c201c 310 8005bab0 hl_psx::apache::fire_gun
-o 433bcd85bfd5cf1b 40 8005bf88 hl_psx::apply_debug_toggles
-o 0fd190374621fabb 385 8005c028 hl_psx::tick_momentary
-o b2952f3e4bc439d9 375 8005c62c <psx_goldsrc::chunk_stream::EntryCache<hl_psx::cdstream::target::Arena, 32>>::lookup_entry::<psx_io::cd::reader::SectorReader> @hl_psx
-o 79e4fb41b461f12f 187 8005cc08 hl_psx::scientist_talk_friend
-o a111e299c0c17d79 294 8005cef4 hl_psx::garg::tick_world
-o a2cf089a297444bd 367 8005d38c hl_psx::train_seek_position
-o dd3393862cd0cc46 26 8005d948 hl_psx::pause_restore
+o 5a49e69cd684b727 412 8005a6ac hl_psx::snapshot_transition_doors
+o fa5bacf9362bda31 403 8005ad1c hl_psx::prop_controller_move_towards
+o 47d7ccd44f350c4b 69 8005b368 hl_psx::tick_camera_snapshot
+o 9d9c4eefb3e51ed0 409 8005b47c hl_psx::script_assign_actor
+o a1032036b465de3e 310 8005bae0 hl_psx::scientist_try_hello
+o 433bcd85bfd5cf1b 40 8005bfb8 hl_psx::apply_debug_toggles
+o 63b57e0862a6bf53 407 8005c058 hl_psx::prop_try_step
+o 33e2cbeb80fc57d1 402 8005c6b4 hl_psx::tank::fire
+o e61230494943fb41 127 8005ccfc <psx_asset::Audio>::from_bytes
+o a111e299c0c17d79 294 8005cef8 hl_psx::garg::tick_world
+o b2952f3e4bc439d9 375 8005d390 <psx_goldsrc::chunk_stream::EntryCache<hl_psx::cdstream::target::Arena, 32>>::lookup_entry::<psx_io::cd::reader::SectorReader> @hl_psx
+o c54054f582f4102a 17 8005d96c hl_psx::run_pause_menu::{closure#0} @hl_psx
 o 6a6bc1b998eab724 365 8005d9b0 hl_psx::apache::tick
 o 58a077460c34abec 164 8005df64 <psx_pad::tracker::PadTracker>::update
 o 6d79320696259bb9 131 8005e1f4 hl_psx::mortar::tick
@@ -5996,1003 +5996,1003 @@ o 33137b374e5ec3cb 136 8005e400 hl_psx::tank::tank_try_control
 o 421e3d06d7c48e9d 56 8005e620 hl_psx::update_rpg_spot
 o 8b1b595d30032e54 218 8005e700 hl_psx::save::with_card::<core::result::Result<usize, hl_psx::save::CardResult>, hl_psx::save::card_read::{closure#0}> @hl_psx
 o 4f0721772d3b0eea 177 8005ea68 hl_psx::tick_gauss_secondary
-o a820064bb3dccfae 365 8005ed2c hl_psx::tick_boss_walker
-o 1f8ce2bf25ade0c3 268 8005f2e0 hl_psx::species::tick_slave
-o fe6126c8cc0d09db 68 8005f710 hl_psx::snapshot_prop_transforms
-o d757f36f438417e8 256 8005f820 hl_psx::scientist_dialogue_local_id
-o 6a4ac1edf5d50f97 124 8005fc20 hl_psx::damage_player_fan_contacts
-o b6337d76936c3c56 353 8005fe10 hl_psx::script_dynamic_local_replan
-o a9c30a090818ce6e 352 80060394 hl_psx::species::tick_hound
-o 2a1643c4c3561107 116 80060914 hl_psx::update_platrot_rider_local
-o 629f805b10635781 141 80060ae4 hl_psx::alert_friends
+o a2cf089a297444bd 367 8005ed2c hl_psx::train_seek_position
+o dc72c4289ab4f8be 267 8005f2e8 hl_psx::restore_transition_pushables
+o fe6126c8cc0d09db 68 8005f714 hl_psx::snapshot_prop_transforms
+o a200bd812be78f50 252 8005f824 hl_psx::species::tick_squid
+o 6a4ac1edf5d50f97 124 8005fc14 hl_psx::damage_player_fan_contacts
+o a820064bb3dccfae 365 8005fe04 hl_psx::tick_boss_walker
+o 13d0c2b7319995ba 340 800603b8 hl_psx::sky_tri
+o 7b7e8d1568c55e55 9 80060908 psx_pad::nobody_answered::<psx_io::periph::ControllerPort> @psx_pad
+o 2a1643c4c3561107 116 8006092c hl_psx::update_platrot_rider_local
+o b704ca2a14594574 135 80060afc hl_psx::stream_one_viewmodel
 o 940464c2a5cd03d8 78 80060d18 <hl_psx::player_rules::Breath>::tick
-o 13d0c2b7319995ba 340 80060e50 hl_psx::sky_tri
-o cd2a1e84df2ca436 64 800613a0 psx_pack::visibility::decode::<false, false> @hl_psx
+o 8795a0eaf13a8c0b 358 80060e50 hl_psx::menu::draw_options_menu
+o a201a911166099f1 46 800613e8 hl_psx::leech::in_view
 o 39fd9b2cb739b7fe 40 800614a0 <hl_psx::player_rules::Poison>::tick
-o 09bf1a0810bd375f 339 80061540 hl_psx::prop_move_towards_point
-o d36004fd2143084a 231 80061a8c hl_psx::tick_mortar
-o cad9b8de5232f7dd 52 80061e28 <hl_psx::senses::PlayerNoise>::tick
-o 06b808bc6b2e022f 338 80061ef8 hl_psx::sky_cut_region
-o 6ee0c824cb189f08 60 80062440 hl_psx::skill_damage
+o b6337d76936c3c56 353 80061540 hl_psx::script_dynamic_local_replan
+o eb0d256b4bc05d8b 218 80061ac4 hl_psx::track_hornet
+o cad9b8de5232f7dd 52 80061e2c <hl_psx::senses::PlayerNoise>::tick
+o a9c30a090818ce6e 352 80061efc hl_psx::species::tick_hound
+o 4c61553e0ba1e651 45 8006247c hl_psx::proj_fx::body::{closure#1} @hl_psx
 o f2bd84ebb1266a51 196 80062530 hl_psx::spawn_projectile_dir
 o 8ecc4bcfcf509bc7 116 80062840 hl_psx::hev::react::<hl_psx::hev_hit::{closure#0}> @hl_psx
 o 66e59b16e1fc96fa 36 80062a10 hl_psx::player_rules::view_height_next
-o b115b5bf90710d94 224 80062aa0 hl_psx::sky_cut_pass
-o 57910153d628c922 72 80062e20 <hl_psx::phys::Player>::set_crouch
-o f60e308e08536fe5 336 80062f40 hl_psx::prop_air_tick
-o 2ad108756dfa1be0 331 80063480 hl_psx::autoaim_rotation
-o d4a72dc8e776d353 40 800639ac <core::iter::adapters::chain::Chain<core::slice::iter::Iter<i32>, core::slice::iter::Iter<i32>> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::any::check<&i32, hl_psx::tram_logic::project_onto_segment::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
+o 09bf1a0810bd375f 339 80062aa0 hl_psx::prop_move_towards_point
+o b115b5bf90710d94 224 80062fec hl_psx::sky_cut_pass
+o 57910153d628c922 72 8006336c <hl_psx::phys::Player>::set_crouch
+o 06b808bc6b2e022f 338 8006348c hl_psx::sky_cut_region
+o 33519217f5a14596 30 800639d4 hl_psx::monster_shot_lands::{closure#0} @hl_psx
 o b1a039fe8012d1c0 91 80063a4c hl_psx::music_apply
-o 0d3fdf8eb7c5da50 329 80063bb8 hl_psx::mapsnap::walk_props
-o d0f856b691ff1e9c 327 800640dc hl_psx::snapshot_transition_pushables
-o bd52fdde04f0f105 322 800645f8 hl_psx::emit_actor_occluding_face
-o 6d5eaa2e620d2770 8 80064b00 hl_psx::emit_billboard_rgb
+o f60e308e08536fe5 336 80063bb8 hl_psx::prop_air_tick
+o 2ad108756dfa1be0 331 800640f8 hl_psx::autoaim_rotation
+o a5c7251cd18d05bc 319 80064624 hl_psx::restore_transition_trains
 o dc2fd85e53ff94be 48 80064b20 hl_psx::drop_punch_angle
-o 966403b9c18adaa3 321 80064be0 hl_psx::apache::flight
-o 33d6911734e0735f 320 800650e4 <psx_font::FontAtlas>::upload
-o 5243f4c7c82c9f7e 160 800655e4 <psx_asset::hmd8::InterpolatedModelFrame>::bone
+o d0f856b691ff1e9c 327 80064be0 hl_psx::snapshot_transition_pushables
+o bd52fdde04f0f105 322 800650fc hl_psx::emit_actor_occluding_face
+o 5b5a92a21bcb917d 152 80065604 <hl_psx::Arsenal>::set_pickup_rounds
 o 12cf46618a25e01c 45 80065864 hl_psx::tick_flashlight_battery
-o a5c7251cd18d05bc 319 80065918 hl_psx::restore_transition_trains
-o 768977e34cde2b42 44 80065e14 hl_psx::draw_sky_windows::{closure#1} @hl_psx
+o 966403b9c18adaa3 321 80065918 hl_psx::apache::flight
+o bcc6cb9e807c57f7 42 80065e1c hl_psx::settings::apply_display
 o a0ab83941df4f340 180 80065ec4 <hl_psx::prop_pool::PropPool<hl_psx::air_navigation::Flight, 25>>::release @hl_psx
-o 657b30af191104e6 306 80066194 hl_psx::emit_world_face_tris
-o 937a39142a997580 74 8006665c core::array::try_from_fn::<core::ops::try_trait::NeverShortCircuit<i32>, 3, core::ops::try_trait::Wrapped<i32, usize, hl_psx::blood_position::{closure#0}>> @hl_psx
-o 24c1b9518359712d 741 80066784 hl_psx::proj_fx::queue
-o 6b1e7c544d6a2767 305 80067318 hl_psx::phys::recurse_clear
-o 2bf862745e9d9ff9 145 800677dc hl_psx::logic_phase_step
+o 33d6911734e0735f 320 80066194 <psx_font::FontAtlas>::upload
+o 053e3eba8c5c201c 310 80066694 hl_psx::apache::fire_gun
+o 03d9efafcdf48db6 125 80066b6c <hl_psx::Arsenal>::refill_ammo
+o 24c1b9518359712d 741 80066d60 hl_psx::proj_fx::queue
+o 854074c59f492cac 75 800678f4 hl_psx::save_with_badge
 o cc12cd79a891a645 126 80067a20 hl_psx::render_debris::<1> @hl_psx
 o 409c58cb75cfcab5 261 80067c18 hl_psx::phys::recurse_node_trace
-o 429120fc158cab5c 159 8006802c hl_psx::scientist_try_response
-o 92994bea1f90ad83 160 800682a8 hl_psx::tick_shard
-o 33b8ea8f4360f61b 87 80068528 hl_psx::hud::history_add
-o afaa8478fe45f7e9 148 80068684 hl_psx::finish_deferred_overlays
-o 9d2ac6b690fabfa2 304 800688d4 psx_asset::hma1::tracks_fit
-o abe1053b1cf59638 134 80068d94 hl_psx::phys::controller_world_line_clear
+o 5243f4c7c82c9f7e 160 8006802c <psx_asset::hmd8::InterpolatedModelFrame>::bone
+o 92994bea1f90ad83 160 800682ac hl_psx::tick_shard
+o c793c2de786d3301 90 8006852c hl_psx::brush_touches_actor
+o afaa8478fe45f7e9 148 80068694 hl_psx::finish_deferred_overlays
+o 657b30af191104e6 306 800688e4 hl_psx::emit_world_face_tris
+o 6be5bc38274f74a6 128 80068dac <hl_psx::leech::Swim>::recalculate_water::<hl_psx::species::LeechWorld> @hl_psx
 o 6880389128ef5fb9 165 80068fac psx_goldsrc::texture_animation::tick::<core::iter::adapters::map::Map<core::ops::range::Range<usize>, hl_psx::tex_anim_tick::{closure#0}>, hl_psx::map::tex_anim_set> @hl_psx
-o eb28a3098ca8ea8b 298 80069240 hl_psx::draw_loading_strip
-o afd43b5af445d391 158 800696e8 hl_psx::menu::draw_sheen
-o 7cc3c2844a34d88b 40 80069960 hl_psx::vis_row_ensure
-o a505ca9409bf9fbe 150 80069a00 hl_psx::menu::update_logo_anim
-o e01a7655d1c448c2 266 80069c58 hl_psx::hud::draw_weapon_selection::<1> @hl_psx
-o db5d1e1ff5e256c7 31 8006a080 <hl_psx::map::Map>::face_bounds
-o ba0457136ddd039b 66 8006a0fc hl_psx::queue_explosion_fx
+o 6b1e7c544d6a2767 305 80069240 hl_psx::phys::recurse_clear
+o 7cebc6911e718620 152 80069704 hl_psx::throwable::rocket_think
+o 7cc3c2844a34d88b 40 80069964 hl_psx::vis_row_ensure
+o 734c026e7b24fcdf 24 80069a04 <psx_vram::VramRect>::new
+o a505ca9409bf9fbe 150 80069a64 hl_psx::menu::update_logo_anim
+o da873b69596a6330 245 80069cbc <psx_io::cd::reader::SectorReader>::prepare_with_mode
+o db5d1e1ff5e256c7 31 8006a090 <hl_psx::map::Map>::face_bounds
+o eb0eaa6db0dc76db 62 8006a10c hl_psx::try_emit_tri_pair_quad_values
 o d0727f97a89c3e61 59 8006a204 <psx_rt::present::Presenter>::submit
-o 3cb7e5e72c76fd7f 294 8006a2f0 hl_psx::scientist_try_idle_speak
-o dc266a0f165d01bc 264 8006a788 compiler_builtins::mem::memmove
-o 73b87e876af668be 9 8006aba8 hl_psx::menu::play_menu_accept
-o 93fe8046e9c78f6f 94 8006abcc hl_psx::insert_model_depth_stream
-o 2457bf15d95dbdc0 23 8006ad44 hl_psx::brush_train_audio_stop
+o 9d2ac6b690fabfa2 304 8006a2f0 psx_asset::hma1::tracks_fit
+o dc266a0f165d01bc 264 8006a7b0 compiler_builtins::mem::memmove
+o 93fe8046e9c78f6f 94 8006abd0 hl_psx::insert_model_depth_stream
+o b6ec57956b146355 22 8006ad48 hl_psx::music::locate_files::{closure#0} @hl_psx
 o 22d6c447ebe40157 48 8006ada0 <psx_rt::present::Presenter>::begin_frame
-o 034284c6c0116932 134 8006ae60 hl_psx::segments::consume
-o ce0605d47d8f55a6 143 8006b078 <psx_font::FontAtlas>::draw_text_with_spacing
-o 59448ebd30baf3ee 180 8006b2b4 hl_psx::carry_pushables_on_support
-o 892e449224a0993e 606 8006b584 hl_psx::draw_screen_fx
-o 270f28e126f8baa3 141 8006befc hl_psx::mover_blocked
+o f24fadb68306b4e3 132 8006ae60 hl_psx::logic_tick_momentary
+o ce0605d47d8f55a6 143 8006b070 <psx_font::FontAtlas>::draw_text_with_spacing
+o 982c407872bec327 184 8006b2ac hl_psx::garg::stomp_attack
+o 892e449224a0993e 606 8006b58c hl_psx::draw_screen_fx
+o 6d14b11ad6ffcebd 139 8006bf04 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::init_from_pack @hl_psx
 o 03e4166a68e066a8 144 8006c130 hl_psx::train_set_offset
 o f37f10f93746c916 143 8006c370 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_loop_authored @hl_psx
 o 04e2cdd098c85db0 142 8006c5ac hl_psx::fx_quad_add
-o f31424682b6b4740 292 8006c7e4 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::load_dialogue_pack @hl_psx
-o eb0d256b4bc05d8b 218 8006cc74 hl_psx::track_hornet
-o 9375556d58fceee2 38 8006cfdc <hl_psx::Arsenal>::is_spent_thrown
-o b97ca36ecf7765c9 284 8006d074 hl_psx::fire_weapon
-o 6f6e63f8b860fca3 68 8006d4e4 hl_psx::arm_map_progress
-o dba223044e72bc66 182 8006d5f4 hl_psx::view_rotation_roll
-o 6cbd8248e0e9884d 284 8006d8cc hl_psx::species::tick_zombie
-o fd19385798b98155 129 8006dd3c hl_psx::nihilanth::note_shot
+o eb28a3098ca8ea8b 298 8006c7e4 hl_psx::draw_loading_strip
+o b06c6b03442c4bb8 207 8006cc8c <psx_asset::hmd8::ModelFrame>::bone_with_mouth
+o 9375556d58fceee2 38 8006cfc8 <hl_psx::Arsenal>::is_spent_thrown
+o 3cb7e5e72c76fd7f 294 8006d060 hl_psx::scientist_try_idle_speak
+o 29eb20093614fcdd 126 8006d4f8 hl_psx::menu::draw_map_menu
+o dba223044e72bc66 182 8006d6f0 hl_psx::view_rotation_roll
+o f31424682b6b4740 292 8006d9c8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::load_dialogue_pack @hl_psx
+o 055bd06b4a74535c 58 8006de58 hl_psx::in_monsterclip
 o b2b9a6b871b23649 176 8006df40 hl_psx::recover_camera_leaf
-o 982c407872bec327 184 8006e200 hl_psx::garg::stomp_attack
-o 1c971d986822129c 22 8006e4e0 <psx_gpu::display::DoubleBuffer>::clear
-o 255b33ee6cbfcbbc 283 8006e538 hl_psx::mortar::field_use
-o 6ffbc271298e6393 281 8006e9a4 hl_psx::script_local_detour
-o e265ae432e13c8e4 31 8006ee08 __psx_rt_flush_i_cache
+o b584886bb67dcc8b 190 8006e200 hl_psx::logic_restore_saved_suit
+o 1c971d986822129c 22 8006e4f8 <psx_gpu::display::DoubleBuffer>::clear
+o 6cbd8248e0e9884d 284 8006e550 hl_psx::species::tick_zombie
+o 255b33ee6cbfcbbc 283 8006e9c0 hl_psx::mortar::field_use
+o 2cab35702526d2bc 22 8006ee2c hl_psx::satchels_out
 o de5948b793ec6166 119 8006ee84 hl_psx::env_bubbles_fx::render
-o a200bd812be78f50 252 8006f060 hl_psx::species::tick_squid
-o d5e22ccc9d2cd49c 251 8006f450 hl_psx::tram_advance
-o 1173dfd12b9fbd5d 113 8006f83c hl_psx::logic_check_multisources
+o 6ffbc271298e6393 281 8006f060 hl_psx::script_local_detour
+o d5e22ccc9d2cd49c 251 8006f4c4 hl_psx::tram_advance
+o 9614ec377b89d7d9 84 8006f8b0 hl_psx::vm_cache_store_live
 o 83967921fe5ea4c8 24 8006fa00 hl_psx::light_tick
 o 30d23e3ce72e97e6 251 8006fa60 hl_psx::nearest_actor_ahead
 o c20a38d13a3cf614 251 8006fe4c hl_psx::tick_bolt
-o 1f516038757771fc 66 80070238 hl_psx::platrot_local_to_world
-o 25ba65280debd0df 206 80070340 hl_psx::door_seals
-o 12e492c681e915e6 249 80070678 psx_goldsrc::emit::emit_soft_leaf::<hl_psx::GameEmit> @hl_psx
-o e2627b90f1e756a4 249 80070a5c hl_psx::env_bubbles_fx::emit
-o 7489ab4b4b357eff 247 80070e40 hl_psx::tram_logic::project_onto_segment
-o 4f528fc2431c33a2 56 8007121c <hl_psx::Arsenal>::finish_reload
+o 12e492c681e915e6 249 80070238 psx_goldsrc::emit::emit_soft_leaf::<hl_psx::GameEmit> @hl_psx
+o 7e7b1bb6976f7907 122 8007061c hl_psx::tick_pending_changelevel
+o 25ba65280debd0df 206 80070804 hl_psx::door_seals
+o e2627b90f1e756a4 249 80070b3c hl_psx::env_bubbles_fx::emit
+o 5360d43e934dd1ac 247 80070f20 hl_psx::init_trains
 o 66b1f3339ba25101 70 800712fc hl_psx::interpolated_camera
-o 72bc089a8477504e 114 80071414 hl_psx::rotating_door_swing_away
-o 927fb686447b3498 78 800715dc hl_psx::update_flashlight_reach
-o da873b69596a6330 245 80071714 <psx_io::cd::reader::SectorReader>::prepare_with_mode
-o 371cee5b0595fbb4 244 80071ae8 hl_psx::phys::trace_down_support
-o 8274eb7a39a3591d 110 80071eb8 hl_psx::scientist_heal_tick
+o 9333b856331e06ac 115 80071414 hl_psx::tex_anim_init
+o 927fb686447b3498 78 800715e0 hl_psx::update_flashlight_reach
+o 7489ab4b4b357eff 247 80071718 hl_psx::tram_logic::project_onto_segment
+o 371cee5b0595fbb4 244 80071af4 hl_psx::phys::trace_down_support
+o 618cc025b48a54b7 107 80071ec4 <hl_psx::Arsenal>::give_chapter_loadout
 o 738ba8891e121823 18 80072070 hl_psx::reset_world_affine_frame
 o db5dd7b08e89a82c 21 800720b8 hl_psx::prepare_world_affine_candidates
-o 5df7a87a981954e7 50 8007210c hl_psx::spawn_debris
+o 7c956229007a2b2e 50 8007210c hl_psx::emit_soft_quad_split::{closure#0} @hl_psx
 o 485aa12fa804f73d 71 800721d4 hl_psx::invalidate_actor_occlusion
-o 05099c8f3bb12ddc 242 800722f0 hl_psx::vram::upload_tex_blob_raw
-o 6a67a2bb39b58920 171 800726b8 <hl_psx::Arsenal>::try_fire
-o 0ea412293cafb01d 119 80072964 hl_psx::menu::draw_menu_row
-o 47120a90e663d7bf 239 80072b40 hl_psx::camera_tick
-o eeeb772c47b63dc7 235 80072efc hl_psx::emit_affine_quad_child
-o 63b75faad4e099af 201 800732a8 hl_psx::think_rocket
-o 954401dc70c5321f 275 800735cc hl_psx::queue_shards
-o 9b760fbbb5c6e7df 94 80073a18 hl_psx::fly_move
+o e17f54f7625937ee 243 800722f0 hl_psx::monster_shot_lands
+o 13a16731274372d5 161 800726bc hl_psx::tripmine::beam_broken
+o 0ea412293cafb01d 119 80072940 hl_psx::menu::draw_menu_row
+o 05099c8f3bb12ddc 242 80072b1c hl_psx::vram::upload_tex_blob_raw
+o eeeb772c47b63dc7 235 80072ee4 hl_psx::emit_affine_quad_child
+o 443bb160ad302532 215 80073290 hl_psx::init_room_logic
+o 954401dc70c5321f 275 800735ec hl_psx::queue_shards
+o 997016fa5b3ad6ee 86 80073a38 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::stop_map_loop @hl_psx
 o 4e580818fee0ec46 180 80073b90 hl_psx::render_blood_fx
-o e430c6ec7fe0f74f 234 80073e60 hl_psx::houndeye_blast
-o f44e37d032fd85c1 164 80074208 hl_psx::sfx::load_bank
-o 5c32d0d0140b4ea3 113 80074498 hl_psx::render_explosions
-o f7e2dec993e307e6 229 8007465c hl_format::pvs_pair::validate_room
-o b6da5de8a2582c7e 216 800749f0 hl_psx::spawn_breakable_shards
-o d1bd2358ac10980f 249 80074d50 hl_psx::env_funnel_fx::render
-o 56da3ad4b72d6469 228 80075134 hl_psx::shatter_breakable
-o 7bd8fc02c7a5a94b 158 800754c4 hl_psx::species::acquire
-o 95e649286f9fe19a 294 8007573c hl_psx::proj_fx::draw_bodies
-o 9dea1e0215f94d23 228 80075bd4 hl_psx::next_actor_on_segment
-o e24ba1b33d7c90af 85 80075f64 hl_psx::draw_beam_textured::{closure#2} @hl_psx
-o 22d0c68eaa97fc61 106 800760b8 hl_psx::menu::draw_shell
-o da63a92856464086 216 80076260 hl_psx::save::decode
-o 491fee6f5917a631 145 800765c0 hl_psx::osprey::osprey_update_goal
-o c428dcb0206c1089 106 80076804 psx_goldsrc::present::title_flip
-o 542eb940c312e152 91 800769ac hl_psx::spawn_gibs
+o d36004fd2143084a 231 80073e60 hl_psx::tick_mortar
+o 8ba7218b3e9bbd5e 168 800741fc hl_psx::logic_state::logic_name_hash32
+o 5c32d0d0140b4ea3 113 8007449c hl_psx::render_explosions
+o f7e2dec993e307e6 229 80074660 hl_format::pvs_pair::validate_room
+o b6da5de8a2582c7e 216 800749f4 hl_psx::spawn_breakable_shards
+o d1bd2358ac10980f 249 80074d54 hl_psx::env_funnel_fx::render
+o 56da3ad4b72d6469 228 80075138 hl_psx::shatter_breakable
+o 384b2c19e6e2f7b1 202 800754c8 psx_spu::dma_write
+o 95e649286f9fe19a 294 800757f0 hl_psx::proj_fx::draw_bodies
+o 9dea1e0215f94d23 228 80075c88 hl_psx::next_actor_on_segment
+o 9e3dc16513f12dbb 100 80076018 <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::xfer @hl_psx
+o 22d0c68eaa97fc61 106 800761a8 hl_psx::menu::draw_shell
+o 8c0b864ef5def06a 220 80076350 hl_psx::script_human_actor_blocked_fraction
+o b061897a8f0f1820 100 800766c0 hl_psx::apache::init
+o c428dcb0206c1089 106 80076850 psx_goldsrc::present::title_flip
+o 176ce54356e9bdac 72 800769f8 hl_psx::pause_option_row
 o a312cb12602cb5db 83 80076b18 <psx_fx::particles::ParticlePool<64>>::render_into_frame::<1> @hl_psx
-o 0c5cc6d0f66b7ec2 105 80076c64 hl_psx::species::tentacle_slot
-o e4f77fbcdb25f1d2 104 80076e08 hl_psx::damage_player
-o d7773817adc94585 113 80076fa8 hl_psx::apache::aim_vectors
+o 163c64370c3595d9 104 80076c64 hl_psx::script_remaining_path_distance
+o e4f77fbcdb25f1d2 104 80076e04 hl_psx::damage_player
+o 72bc089a8477504e 114 80076fa4 hl_psx::rotating_door_swing_away
 o 26b091e5966cea98 47 8007716c hl_psx::hud::prepare::<1> @hl_psx
-o f689d4cc5109aeea 215 80077228 hl_psx::hev::load
-o abca5f779887274c 76 80077584 hl_psx::water_tri_hidden
-o 06ff40be2def1ae1 97 800776b4 hl_psx::play::{closure#19} @hl_psx
-o 443bb160ad302532 215 80077838 hl_psx::init_room_logic
-o 5e59753a4b0460fd 57 80077b94 hl_psx::tram_seat_to_world
-o 87c800a23c55b844 191 80077c78 hl_psx::draw_damage_compass
-o 9e88f4ae40283153 215 80077f74 hl_psx::barnacle::find_prey
-o b06c6b03442c4bb8 207 800782d0 <psx_asset::hmd8::ModelFrame>::bone_with_mouth
-o 6fa39149826eee18 206 8007860c hl_psx::draw_debug_stats
-o 9bba6b3b657ad8c3 204 80078944 hl_psx::spawn_projectile
-o 08b272dc73166eb3 110 80078c74 psx_goldsrc::hltext::upload_gameplay_atlas
-o 5fe84a12c8a17ad5 93 80078e2c hl_psx::menu::draw_text_glow
-o d2f3353dc57785f2 203 80078fa0 hl_psx::tank::tanks_init
-o c54054f582f4102a 17 800792cc hl_psx::run_pause_menu::{closure#0} @hl_psx
+o da63a92856464086 216 80077228 hl_psx::save::decode
+o f49f1fad82a78c41 77 80077588 hl_psx::proj_fx::body::{closure#2} @hl_psx
+o 06ff40be2def1ae1 97 800776bc hl_psx::play::{closure#19} @hl_psx
+o 9e88f4ae40283153 215 80077840 hl_psx::barnacle::find_prey
+o 63b75faad4e099af 201 80077b9c hl_psx::think_rocket
+o f69710d8319a9017 201 80077ec0 hl_psx::osprey::osprey_deploy
+o 542fca6e66d3b30a 119 800781e4 <hl_psx::Arsenal>::start_reload
+o 87c800a23c55b844 191 800783c0 hl_psx::draw_damage_compass
+o 8960b7eb7df6757d 199 800786bc hl_psx::spawn_blood
+o 2ddcf60e30a63fa0 198 800789d8 hl_psx::barnacle::tick
+o a68beee2bc36b52e 18 80078cf0 hl_psx::pause_dim
+o 5fe84a12c8a17ad5 93 80078d38 hl_psx::menu::draw_text_glow
+o 90d883a24dc785e7 198 80078eac hl_psx::release_loot
+o 4372990e80762d0c 83 800791c4 hl_psx::save_slot_row
 o f716b88df479be83 108 80079310 hl_psx::emit_patch_fallback
-o 384b2c19e6e2f7b1 202 800794c0 psx_spu::dma_write
-o 7e4cec2d29a2ee92 74 800797e8 hl_psx::prop_use_reply
-o c399f844558659c4 540 80079910 hl_psx::hud::draw::<1> @hl_psx
-o f69710d8319a9017 201 8007a180 hl_psx::osprey::osprey_deploy
-o 8960b7eb7df6757d 199 8007a4a4 hl_psx::spawn_blood
-o 2ddcf60e30a63fa0 198 8007a7c0 hl_psx::barnacle::tick
-o 90d883a24dc785e7 198 8007aad8 hl_psx::release_loot
-o e37977767178167f 98 8007adf0 psx_goldsrc::fx::sprite_textured_material::<hl_psx::overlay::OverlayTail> @hl_psx
-o 02e9a0ef3e47e1ac 74 8007af78 psx_goldsrc::render::near_clip
-o 8850ad08e28ff53b 198 8007b0a0 hl_psx::settings::adjust
-o f8b0a836976cc4ee 196 8007b3b8 hl_psx::script_find_actor
-o 43741066c7a4db53 194 8007b6c8 hl_psx::fire_secondary
-o 428f3d7c22594a30 194 8007b9d0 hl_psx::prop_push_step
-o 1608aa712fabc27e 172 8007bcd8 hl_psx::music::locate_files
-o 9537b16ec5bb1b1c 55 8007bf88 psx_goldsrc::render::clip_view_plane::<psx_goldsrc::render::FullView> @hl_psx
-o b584886bb67dcc8b 190 8007c064 hl_psx::logic_restore_saved_suit
-o bf0140eb8f71a3c0 190 8007c35c hl_psx::menu::intro
-o 54c564c656379f5f 187 8007c654 hl_psx::logic_state::rotating_cosmetic_phase_q16
-o 7b7e8d1568c55e55 9 8007c940 psx_pad::nobody_answered::<psx_io::periph::ControllerPort> @psx_pad
-o 547ea03e7d8cfff8 47 8007c964 hl_psx::emit_projected::{closure#0} @hl_psx
-o 9f4f553d76737993 49 8007ca20 hl_psx::proj_submodel_vert
-o 923d550095391364 214 8007cae4 hl_psx::push_blocked_edge_skirts
+o 8850ad08e28ff53b 198 800794c0 hl_psx::settings::adjust
+o 37482a377a83af11 74 800797d8 hl_psx::sfx::checked_room_bank
+o c399f844558659c4 540 80079900 hl_psx::hud::draw::<1> @hl_psx
+o f8b0a836976cc4ee 196 8007a170 hl_psx::script_find_actor
+o aa9e9e22131785b8 195 8007a480 hl_psx::pushable_use_target
+o 43741066c7a4db53 194 8007a78c hl_psx::fire_secondary
+o 428f3d7c22594a30 194 8007aa94 hl_psx::prop_push_step
+o 0c4ae27852fff89c 121 8007ad9c hl_psx::nav_nearest
+o 02e9a0ef3e47e1ac 74 8007af80 psx_goldsrc::render::near_clip
+o 9537b16ec5bb1b1c 55 8007b0a8 psx_goldsrc::render::clip_view_plane::<psx_goldsrc::render::FullView> @hl_psx
+o bf0140eb8f71a3c0 190 8007b184 hl_psx::menu::intro
+o 79e4fb41b461f12f 187 8007b47c hl_psx::scientist_talk_friend
+o 68a73899d7db4c1f 88 8007b768 __psx_rt_dispatch_tramp
+o 8b22886f7a58faa8 30 8007b8c8 hl_psx::maker_make::{closure#0} @hl_psx
+o 9ff31565d6825ac6 88 8007b940 hl_psx::logic_cd_radius_poll
+o 547ea03e7d8cfff8 47 8007baa0 hl_psx::emit_projected::{closure#0} @hl_psx
+o 54c564c656379f5f 187 8007bb5c hl_psx::logic_state::rotating_cosmetic_phase_q16
+o 3ce647e022eb4fbf 186 8007be48 <hl_psx::tentacle::Tentacle>::next::<hl_psx::species::TentacleWorld> @hl_psx
+o fb6cc2e850951595 186 8007c130 hl_psx::tram_seek_nearest
+o b1668d318c2813fa 186 8007c418 hl_psx::tram_path_lookahead_q8
+o 475193e6e67c1073 186 8007c700 <u16 as core::slice::cmp::SliceContains>::slice_contains
+o 923d550095391364 214 8007c9e8 hl_psx::push_blocked_edge_skirts
+o 6b341d10e0c2f87b 63 8007cd40 hl_psx::vm_backup_live_tail
 o 2af2af68a0dfae34 50 8007ce3c <hl_psx::map::Map>::logic_touches_bounds
-o 3ce647e022eb4fbf 186 8007cf04 <hl_psx::tentacle::Tentacle>::next::<hl_psx::species::TentacleWorld> @hl_psx
-o 854074c59f492cac 75 8007d1ec hl_psx::save_with_badge
-o fe4bc9827a9cfb3d 128 8007d318 hl_psx::fix_projected_vertex
-o fb6cc2e850951595 186 8007d518 hl_psx::tram_seek_nearest
-o 0c4ae27852fff89c 121 8007d800 hl_psx::nav_nearest
-o d56bfb54225b3286 76 8007d9e4 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_vol @hl_psx
-o 6922661e9d0da661 59 8007db14 hl_psx::prop_is_enemy_target
-o d19b9d9baaf93c92 1110 8007dc00 hl_psx::draw_viewmodel
-o 9bbf5d02752d50bd 34 8007ed58 hl_psx::fire_weapon::{closure#0} @hl_psx
-o 2d9d0c20c317a85a 101 8007ede0 hl_psx::viewmodel_anim_frame
-o 3c820e441c6f2cae 20 8007ef74 psx_io::gpu::handoff::write_command_slow
-o 07dce370efe2021f 71 8007efc4 hl_psx::camera_leaf
-o 47d8fd231d999aab 16 8007f0e0 hl_psx::run_pause_menu::{closure#2} @hl_psx
-o dcb07e73d24ccc35 76 8007f120 hl_psx::proj_fx::unit
-o b1668d318c2813fa 186 8007f250 hl_psx::tram_path_lookahead_q8
-o 475193e6e67c1073 186 8007f538 <u16 as core::slice::cmp::SliceContains>::slice_contains
-o dca1d04a072a4738 184 8007f820 psx_pack::lz4_block_decode_in_place
-o 7c1c5b80f46f391a 44 8007fb00 hl_psx::sentry_schedule_wake
-o 51842adb7f9ee3ce 9 8007fbb0 <psx_font::FontAtlas>::draw_text
-o 73f84791161976f9 183 8007fbd4 hl_psx::rebuild_prop_hotlists
-o ced46a50dde8d1c2 98 8007feb0 hl_psx::draw_muzzle_flash
-o 5bbad0e1d53d7c73 68 80080038 psx_gpu::wait_idle_impl
-o 8ba7218b3e9bbd5e 168 80080148 hl_psx::logic_state::logic_name_hash32
-o 58e598bb9a794821 109 800803e8 hl_psx::emit_cv
-o c09a360144327246 183 8008059c hl_psx::nihilanth::damage
-o 585e731c6496466a 87 80080878 hl_psx::sprite::load_pack
-o dda2eb873bdda23f 67 800809d4 hl_psx::nihilanth::launch
-o f7740bf1078a4d86 54 80080ae0 hl_psx::emit_patch_triangle
-o 87396fe7c817389f 176 80080bb8 <psx_gte_core::math::Mat3I16>::mul
-o a201a911166099f1 46 80080e78 hl_psx::leech::in_view
-o f183e5f75a663ca7 44 80080f30 hl_psx::actor_collision_bounds
-o 241f843a4c4b53ac 121 80080fe0 hl_psx::logic_activate_door_linked
-o 594cb1a314b96366 24 800811c4 hl_psx::skill_value
-o 1405ee2b89e8cee8 105 80081224 hl_psx::prop_check_support
-o dd4eba8ebb112d86 66 800813c8 hl_psx::dir_q12
-o 11d56af52f1104c8 182 800814d0 hl_psx::emit_world_face
-o 4372990e80762d0c 83 800817a8 hl_psx::save_slot_row
-o 80a6d83708cc32bf 65 800818f4 hl_psx::hud::damage_kind
-o 4f988f4daf2304c9 181 800819f8 hl_psx::menu_start
-o 5fd906f9c4cadf96 177 80081ccc hl_psx::init_monster_trigger
-o ddf92445389b838f 12 80081f90 hl_psx::draw_next_loading_screen
-o d454377d1ae7adf0 405 80081fc0 hl_psx::logic_hurt_touch
-o 41000297872d9530 70 80082614 hl_psx::talk_hurt_by_player
-o 09bc365ae0ffd715 62 8008272c hl_psx::nihilanth::marker
-o 84ac18535cdf23f2 177 80082824 hl_psx::save::settings_decode
-o 0f9e8438c9f4b6ad 176 80082ae8 psx_goldsrc::hltext::draw_text_gameplay_scaled::<hl_psx::overlay::OverlayTail> @hl_psx
-o 8f9c3c9811ff6be6 163 80082da8 hl_psx::logic_activate_button
-o 9b1ea27cf835632e 60 80083034 psx_vram::copy_to_vram_header
-o 082eaf9cd4d04ecf 76 80083124 hl_psx::sky_texel_d
-o 833ffd30eaef1156 104 80083254 psx_goldsrc::render::clip_edge
-o 1edb67a01892fa2c 44 800833f4 hl_psx::logic_state::rotating_goldsrc_full_speed_samples
-o 9f5d321da6393265 799 800834a4 hl_psx::project_hmd7_model_inner
-o e61230494943fb41 127 80084120 <psx_asset::Audio>::from_bytes
-o 7fe23d0d33021c96 20 8008431c hl_psx::phys::mover_local_segment
-o dd83228308b54aa8 93 8008436c <psx_asset::hmd8::Pose>::bone
-o d684b6f9c0511497 59 800844e0 hl_psx::nihilanth::name_id
-o b9f11a1881429767 168 800845cc hl_psx::menu::ending
-o 253a244ed9890b84 168 8008486c hl_psx::species::lay_baby
-o eb24718292576575 199 80084b0c hl_psx::compose_hmd7_bone_gte
-o ac3116f6e9d1ed30 41 80084e28 psx_io::gpu::wait_ready_slow
-o ac00c17ad0f29805 111 80084ecc hl_psx::prop_clip
-o 66e232e4f28ef153 10 80085088 __psx_rt_call_on_stack
-o 13a16731274372d5 161 800850b0 hl_psx::tripmine::beam_broken
-o 265a2787325bddcb 156 80085334 hl_psx::touch_triggers_box
-o 9d34224e493743a0 145 800855a4 psx_goldsrc::ground_logic::sweep_player_actor
-o 3b999c9341a1533e 55 800857e8 <psx_font::FontAtlas>::glyph_uv
-o fc2e576c45054ae7 155 800858c4 psx_goldsrc::hltext::draw_text_scaled::<hl_psx::overlay::OverlayTail> @hl_psx
-o 5b5a92a21bcb917d 152 80085b30 <hl_psx::Arsenal>::set_pickup_rounds
-o 37912898ed81e3c4 133 80085d90 <hl_psx::senses::Sounds>::heard_with
-o 3ac5d78aa16fc17e 54 80085fa4 hl_psx::logic_teleport_touch
-o 7cebc6911e718620 152 8008607c hl_psx::throwable::rocket_think
-o d67f6c25070ecfe9 99 800862dc hl_psx::tick_talk_move_away
-o 9acd5c84a9277064 1367 80086468 psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit> @hl_psx
-o 9c2e055dfb3515be 36 800879c4 psx_goldsrc::ladder_logic::goldsrc_velocity_q6::{closure#0} @hl_psx
-o 08feaea550a05180 1062 80087a54 <hl_psx::SplitWalk as psx_rt::scratchpad::StackEntry>::enter
-o b704ca2a14594574 135 80088aec hl_psx::stream_one_viewmodel
-o 0e3f118612958cdd 2 80088d08 <psx_rt::scratchpad::ScratchpadStack<536, 832>>::stack_entry_fn::<hl_psx::SplitWalk> @hl_psx
-o 966fc71e198f8ab5 152 80088d10 <psx_engine::render::PrimitivePacketWordReservation>::commit
-o cbdc0cd58fefb116 151 80088f70 <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::load_chunk_decompressed @hl_psx
-o be11c8ce934ffe26 150 800891cc hl_psx::sky_tri::{closure#0} @hl_psx
-o 86f3a3c1685ae703 71 80089424 <hl_psx::map::Map>::dynamic_corner
-o dca98f8e4a3d8dee 51 80089540 psx_gpu::gpu::draw::<psx_gpu::prim::QuadTexturedMaterial> @psx_gpu
-o f49f1fad82a78c41 77 8008960c hl_psx::proj_fx::body::{closure#2} @hl_psx
-o e762848662fa3fbf 22 80089740 <hl_psx::map::Map>::logic_aux
-o afd632275027538f 48 80089798 <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_gpu::prim::QuadTexturedGouraud> @hl_psx
-o 0fddf05c8a4e9c17 150 80089858 hl_psx::put_impact_mark
-o fe7ac293e4aa18b6 150 80089ab0 hl_psx::throwable::bounce_with
-o 328de811d93028c2 150 80089d08 <psx_asset::hmd8::ModelFrame>::bone
-o c14bfbbae74154c5 148 80089f60 hl_psx::draw_pause_list
-o 43bb12af450a8ecd 148 8008a1b0 hl_psx::monster_opens_door
-o 0e01866647860fc3 147 8008a400 <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::read_frame @hl_psx
-o 8eaa78d3b4a87ebd 121 8008a64c hl_psx::finalize_changelevel_player
-o 5f97108c3a1937d0 566 8008a830 hl_psx::draw_model
-o 1fde73e5d943d433 144 8008b108 <psx_io::cd::reader::SectorReader>::send_command_waiting
-o a2ec6f5e370f684b 141 8008b348 hl_psx::nav_route_simplified_entry
-o 68a73899d7db4c1f 88 8008b57c __psx_rt_dispatch_tramp
-o 310dded087e3368b 45 8008b6dc hl_psx::menu::draw_simple_list
-o 87d1aad1d168598b 141 8008b790 psx_pad::controllers::config::<psx_io::periph::ControllerPort> @psx_engine
-o af13aae5d907a2ec 141 8008b9c4 <psx_io::cd::reader::SectorReader>::wait_irq_with
-o 36ca3a053b1d7e60 82 8008bbf8 hl_psx::logic_activate_door
-o a842e95ffc07c7f2 179 8008bd40 hl_psx::phys::recurse_visual_clear
-o b4d1f82e0e27455a 141 8008c00c psx_rt::entry::set_entry_state
-o 485d6dda45d51fd8 140 8008c240 hl_psx::tick_soda_can
-o 6859b508d47b5548 140 8008c470 hl_psx::garg::swipe
-o 6d14b11ad6ffcebd 139 8008c6a0 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::init_from_pack @hl_psx
-o 1381c14fc53aaacc 11 8008c8cc hl_psx::phys::inside_clip_hull
-o dba259f972c436e0 41 8008c8f8 psx_vram::upload_bytes
-o 45854d7d705ba6cd 135 8008c99c <hl_psx::Arsenal>::give_arrival_loadout
-o 3223a60a10872740 112 8008cbb8 hl_psx::explode
-o b1ee0437549ba27d 40 8008cd78 hl_psx::menu::menu_buttons
-o a36e58b0b26f80ed 135 8008ce18 hl_psx::menu::draw_debug_menu
-o 600eb1a74acf8d4e 135 8008d034 hl_psx::species::gonarch_slash
-o b13eca3a563a5fe6 135 8008d250 hl_format::pvs_pair::validate
-o 53be844cb30adc00 133 8008d46c hl_psx::tram_logic::atan2_q28
-o 920e3cafb1515b0c 133 8008d680 hl_psx::phys::try_unstick
-o c1804b7d4c57930b 61 8008d894 psx_goldsrc::pushable::clamp_velocity
-o 8b22886f7a58faa8 30 8008d988 hl_psx::maker_make::{closure#0} @hl_psx
-o 24af55a30933bb29 67 8008da00 hl_psx::emit_cv_near_fan
-o 7835a4c6216404af 66 8008db0c <hl_psx::CameraVisibility>::view_center
-o f24fadb68306b4e3 132 8008dc14 hl_psx::logic_tick_momentary
-o 29cb125c07d80065 131 8008de24 hl_psx::pushable_publish_offset
-o 6437226cdff5ae65 131 8008e030 hl_psx::sprite::load_explosion
-o a097fb22d72e89d2 130 8008e23c hl_psx::depth_split_point
-o 9cfdad46af04b2c7 129 8008e444 hl_psx::throwable::hand_grenade_velocity
-o 9cba14727aeaeb11 39 8008e648 <psx_font::BitmapFont>::text_width
-o 6be5bc38274f74a6 128 8008e6e4 <hl_psx::leech::Swim>::recalculate_water::<hl_psx::species::LeechWorld> @hl_psx
-o d6fabeeba0669a2c 128 8008e8e4 hl_psx::sky_draw_region
-o b67363efe7e9d873 128 8008eae4 hl_psx::try_start_talk_move_away
-o 129717801b3388b6 128 8008ece4 hl_psx::monster_damage_ai_triggers
-o d363757f96e81233 53 8008eee4 hl_psx::seed_prop_render_transform
-o 5590ff61ff1513ff 37 8008efb8 hl_psx::aabb_overlaps
-o 04afe7a51aad15aa 128 8008f04c psx_spu::upload_adpcm_pio
-o 488dd9894eb97048 50 8008f24c hl_psx::vm_evict_selected
-o 24a7cbdce0566e4d 294 8008f314 hl_psx::project_beam_segment
-o 3b07172a053aabe5 76 8008f7ac psx_asset::hmd8::compose_affine
-o f621b5445a43488b 211 8008f8dc psx_goldsrc::render::lerp_cv_near
-o ecc0a57135b78739 36 8008fc28 hl_psx::script_clip_hold_ticks
-o ef939e372c2ae1c9 36 8008fcb8 hl_psx::feet_in_water
-o 29eb20093614fcdd 126 8008fd48 hl_psx::menu::draw_map_menu
-o d40e5fd5b5e14255 25 8008ff40 hl_psx::loading_idle
-o bc702a8b366179bf 36 8008ffa4 psx_gpu::gpu::draw::<psx_gpu::prim::QuadFlat> @psx_gpu
-o 03d9efafcdf48db6 125 80090034 <hl_psx::Arsenal>::refill_ammo
-o 0cef88bbb9e35c7a 125 80090228 hl_psx::sprite::load_decals
-o d9721c13f064afac 121 8009041c hl_psx::proj_fx::lit
-o 339161c838e63c30 121 80090600 core::str::count::do_count_chars
-o de9f73e2083e39dd 55 800907e4 <psx_mc::fs::DataWriter>::flush_frame::<psx_mc::hardware::HardwareCard> @hl_psx
-o 9ba21bd67ca7eaee 135 800908c0 psx_goldsrc::render::guard_clip
-o b818682edceeedca 120 80090adc hl_psx::pushable_float_step
-o 70424fbf6f75ff60 120 80090cbc hl_psx::tripmine::chain
-o ec8a84c8d6733e45 35 80090e9c psx_rt::present::stop_walk_and_raise
-o 45e2d7508de98e29 14 80090f28 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#0}> @hl_psx
-o f1675c40e0cc4ea1 15 80090f60 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#1}> @hl_psx
-o 36f81c795a312ce7 32 80090f9c hl_psx::player_tram_audio_start
-o 3604752d41c813c1 31 8009101c hl_psx::push_tracer_styled
-o 542fca6e66d3b30a 119 80091098 <hl_psx::Arsenal>::start_reload
-o 6b341d10e0c2f87b 63 80091274 hl_psx::vm_backup_live_tail
-o 84203773abda631b 35 80091370 hl_psx::phys::trace_nodes
-o a79415c71a35afd9 33 800913fc <hl_psx::scientist_logic::HealClock>::start
-o 46c9e5468f51024f 31 80091480 psx_goldsrc::driver::quad_flat
-o 27a7d6efd0fb33bc 14 800914fc hl_psx::platrot_world_yaw
-o ee32dc17e64938ad 14 80091534 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#2}> @hl_psx
-o d1cfbe3dd3e7cee4 57 8009156c hl_psx::tram_seat_raw_local
-o c24891a1b4aaf566 15 80091650 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#3}> @hl_psx
-o 9b3e0b7a3e940722 31 8009168c hl_psx::autoaim::aim_at::{closure#0} @hl_psx
-o ff322419808507e0 31 80091708 psx_vram::packed_upload_word
-o 1e5ec7312923adc1 119 80091784 <psx_asset::hmd8::Model>::from_bytes_with_vertex_cap
-o 5545ee5ed53972df 118 80091960 hl_psx::beam_live_point
-o b1f2ce5372d4c221 118 80091b38 <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::write_frame @hl_psx
-o 9aa419ff2ac06170 117 80091d10 psx_math::int32::div_u64_by_u32
-o f170d8674a78e041 116 80091ee4 hl_psx::launch_landmark_record
-o a6b99d02f4bd4fe2 67 800920b4 hl_psx::sfx::bank_play
-o 56c6fdba79085a08 124 800921c0 hl_psx::emit_residue_children
-o 814b030a10618b19 114 800923b0 hl_psx::mapsnap::remove_dead
-o 20dc0752f93dadc8 112 80092578 <hl_psx::phys::Player>::jump_launch
-o e6696385e50face5 112 80092738 hl_psx::menu::upload_tex
-o abbc83a25af0646e 112 800928f8 hl_psx::phys::packed_euler_rotation
-o 8bc8b25dbc412c79 111 80092ab8 hl_psx::autoaim::aim_at
-o f10a855986659c45 47 80092c74 hl_psx::project_beam_segment::{closure#1} @hl_psx
-o 3ad7c4710903ed94 176 80092d30 hl_psx::refresh_prop_near_ents
-o 7cdfe1ae855cb78f 24 80092ff0 hl_psx::species::cue_or
-o ea10cc23d5320c5b 109 80093050 hl_psx::scientist_hello_local_id
-o b13a9ee7422c33dc 109 80093204 hl_psx::script_human_chord_clear
-o 674993b687c894f8 36 800933b8 hl_psx::script_human_chord_clear_actors
-o 2a8cbb0d627b52e8 22 80093448 hl_psx::hev_hit
-o 7a795b2cb47890bb 22 800934a0 hl_psx::player_rules::compass_intensity
-o 7bb5bacc369bce41 108 800934f8 psx_goldsrc::fx::quad_textured_material::<hl_psx::overlay::OverlayTail> @hl_psx
-o 7f4bb5a534bc95e3 108 800936a8 hl_psx::logic_apply_brush_train_command
-o 16e91d97f31d9174 108 80093858 hl_psx::apache::dying
-o d92f339e7eb570da 69 80093a08 hl_psx::shade_world_rgb
-o 406d6541a7ba8c3f 19 80093b1c hl_psx::global_is_on
-o bcc6cb9e807c57f7 42 80093b68 hl_psx::settings::apply_display
-o e7dd657dd105864b 38 80093c10 <psx_engine::render::PrimitivePacketArena>::reuse_packet::<psx_gpu::prim::TriTexturedGouraud> @hl_psx
-o c793c2de786d3301 90 80093ca8 hl_psx::brush_touches_actor
-o 6c12fbf766e6ff80 17 80093e10 hl_psx::skill_hit
-o 5866dc66394089bd 83 80093e54 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_at_distance @hl_psx
-o 93744abacbc303ef 16 80093fa0 hl_psx::setpiece_sfx::play
-o 050bd6b51d358d97 16 80093fe0 hl_psx::platrot_rotation
-o 2e3833728c0c40d1 16 80094020 psx_goldsrc::driver::quad_textured_material
-o 618cc025b48a54b7 107 80094060 <hl_psx::Arsenal>::give_chapter_loadout
-o 4ce71bc17ae94b90 106 8009420c hl_psx::tripmine::place
-o 163c64370c3595d9 104 800943b4 hl_psx::script_remaining_path_distance
-o 710beea3917a6b91 104 80094554 <psx_io::cd::reader::SectorReader>::get_status
-o 21e8edc71812c5cc 9 800946f4 psx_rt::dispatch::detach
-o ae9a9297e4d0f58e 29 80094718 psx_goldsrc::render::guard_clip::{closure#0} @psx_goldsrc
-o dff5cc8bb9b27ae2 20 8009478c hl_psx::platrot_offset
-o 7e20d0d89f0b909a 56 800947dc hl_psx::hud::sprite::<1> @hl_psx
-o 923f9ceeb45ac585 74 800948bc hl_psx::proj_fx::push_tri
-o 0175e0f34084b9b2 248 800949e4 psx_math_clip_lanes8_plane
-o 8d8e9c1c3ecc4f5c 102 80094dc4 hl_psx::script_root_motion
-o d666532700af5198 102 80094f5c <psx_gte_core::math::Mat3I16>::transform
-o cbd49139a2163be4 101 800950f4 hl_psx::barnacle::tongue
-o 9e3dc16513f12dbb 100 80095288 <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::xfer @hl_psx
-o b061897a8f0f1820 100 80095418 hl_psx::apache::init
-o 35a4b182e398a359 98 800955a8 hl_psx::momentary_apply_phase
-o 055bd06b4a74535c 58 80095730 hl_psx::in_monsterclip
-o 1b847c5c6e227836 240 80095818 psx_goldsrc::render::lerp_sv
-o aade3e4a72607da4 98 80095bd8 hl_psx::phys::visual_sphere_solid_from
-o 63926c09d3538313 98 80095d60 <core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match
-o a3e671f0bf3268d4 98 80095ee8 psx_cdstream::drain::take_sector
-o 85cf492a7629e20f 97 80096070 hl_psx::tram_lookahead_q8
-o 30ff623ed69643d6 97 800961f4 hl_psx::tram_path_track_use
-o 0eeffeb9eb7e2306 34 80096378 hl_psx::emit_affine_quad_child::{closure#2} @hl_psx
-o 920702c1a90cce08 60 80096400 hl_psx::phys::mover_local
-o 7a4f656d3aa6eac2 97 800964f0 hl_psx::depth_split_underlay
-o 3b8a35505e8e51ab 34 80096674 hl_psx::prop_start_health
-o e75aef467d902261 177 800966fc hl_psx::box_touches_pvs_node
-o d1b66e491e8eaa5b 20 800969c0 <hl_psx::map::Map>::waypoint
-o b88477eaeb3c4836 72 80096a10 hl_psx::phys::node_point_solid_from
-o cb57fd10d052334f 65 80096b30 hl_psx::prop_can_gib
-o d1fd24ced30a6b8c 97 80096c34 <psx_io::cd::xa::Engine>::poll::<psx_io::periph::Cd> @psx_io
-o fd7bb1122e0938d1 97 80096db8 <hl_psx::map::Map>::nav_route_next
-o a9c056aa38104dc0 97 80096f3c hl_psx::menu::draw_segment_menu
-o 1cb85d5f44d61309 71 800970c0 hl_psx::phys::mover_turn_delta
-o 164aa910fce56544 621 800971dc hl_psx::draw_beam_textured
-o 0d747334b775d98e 90 80097b90 hl_psx::prop_spawn_floor_y_down
-o d4f6502a927a4a4d 22 80097cf8 psx_math::sincos::sin_q12
-o 73126b30921589c4 96 80097d50 hl_psx::segment_box_frac
-o e0a92bdbb69320f1 96 80097ed0 hl_psx::env_sound_audio::bank_end
-o 4fc2de6f5607c7fb 96 80098050 hl_psx::tripmine::touches
-o 1b2bc01ea91df344 96 800981d0 <psx_asset::hmd8::ModelFrame>::mouth_xform
-o fd04c94721548042 95 80098350 hl_psx::draw_pause_menu
-o d8129fe99db2cec3 95 800984cc hl_psx::proj_fx::egon_beam
-o 997016fa5b3ad6ee 86 80098648 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::stop_map_loop @hl_psx
-o 239723ab20dba598 172 800987a0 hl_psx::try_emit_clipped_residue
-o c54ec1d02de1428b 93 80098a50 psx_spu::init_with
-o ed4ebc04d3037b16 93 80098bc4 hl_psx::skill_scaled_damage
-o d670d2db7e8e09df 93 80098d38 <psx_mc::Card<psx_mc::hardware::HardwareCard>>::chain @hl_psx
-o db35700c584fc551 93 80098eac hl_psx::save::read_latest
-o 202cb2aab8130b6e 92 80099020 hl_psx::proj_logic::segment_closest
-o 514ebe844d8e3c6a 92 80099190 <psx_loading::Style>::content_width
-o dd3f21f5fc4dd398 91 80099300 hl_psx::shoot_buttons
-o 67b20c817b638b14 91 8009946c <hl_psx::map::Map>::tri_rgb_words
-o 8889f4abd360da11 64 800995d8 hl_psx::save::read_settings
-o 31ae58aeb223bc5b 33 800996d8 <hl_psx::map::Map>::prop
-o d77b9890bb57a924 120 8009975c hl_psx::phys::line_clear_movers
-o 5670b689e7dbf068 44 8009993c psx_spu::begin_dma_write
-o 413a529f23b4fbe5 32 800999ec <psx_gpu::prim::Sprite>::with_material
-o 1393124f8f12903a 362 80099a6c hl_psx::pick_target
-o fe1ad8d7fa4c8560 127 8009a014 hl_psx::prop_occlusion_visible
-o d0966b81ebd5af52 91 8009a210 psx_asset::hmd8::hma1_section_valid
-o f16fe23b712aa42c 90 8009a37c <hl_psx::Arsenal>::give_all_debug
-o 3947d30c77a7e5e4 62 8009a4e4 <hl_psx::hev::Suit>::request
-o feb7969e422a317a 66 8009a5dc hl_psx::project_beam_segment::{closure#0} @hl_psx
-o acd4b3850d8e0037 74 8009a6e4 hl_psx::sprite::slot_for
-o 46338ed3bd8c1d0a 90 8009a80c hl_psx::tripmine::tick_placed
-o 57ca6aac59a0c079 89 8009a974 hl_psx::logic_shoot
-o 450b768cb80c5812 89 8009aad8 psx_goldsrc::driver::tri_flat_blended::{closure#0} @psx_goldsrc
-o 9ff31565d6825ac6 88 8009ac3c hl_psx::logic_cd_radius_poll
-o 5b7bce91110856b8 88 8009ad9c <psx_asset::hmd8::Model>::clip_end_pose
-o 31c0243c438e8df4 88 8009aefc hl_psx::menu::draw_scroll_bar
-o 0abfac8ae88e8227 49 8009b05c hl_psx::phys::mover_world_vector
-o 21a6f2536e63360c 67 8009b120 hl_psx::senses::relation
-o c91fed9cce03187c 316 8009b22c hl_psx::logic_fire_targets
-o 924244206a53e48e 88 8009b71c <psx_io::cd::reader::SectorReader>::read_sector
-o 2758c55c0c5e688f 75 8009b87c hl_psx::monster_command_touch
-o 7a152496a3c17e9f 24 8009b9a8 hl_psx::project_beam_segment::{closure#2} @hl_psx
-o d70047e8a27794cf 86 8009ba08 hl_psx::music::start
-o bdfb8734f7d218e8 86 8009bb60 hl_psx::apache::corner
-o 147b45cb746ce485 39 8009bcb8 hl_psx::beam_sparks
-o 035a8496d5343e5b 147 8009bd54 hl_psx::logic_kill_targets
-o a4fe57e2871cbc74 19 8009bfa0 hl_psx::pause_glow
-o b53b059d888369e4 352 8009bfec hl_psx::draw_beam
-o a47ad1fd90c7c542 86 8009c56c hl_psx::mortar::controller
-o a3c28f3c04ec7e93 13 8009c6c4 hl_psx::platrot_yaw
-o 834bdc47573c698a 978 8009c6f8 <psx_asset::hma1::Model>::decode_with
-o f8e343c83e0dad59 85 8009d640 hl_psx::eject_casing
-o dd760e015d8e8a2a 85 8009d794 <hl_psx::species::LeechWorld as hl_psx::leech::World>::look
-o 9614ec377b89d7d9 84 8009d8e8 hl_psx::vm_cache_store_live
-o aa5d450be7ffce62 84 8009da38 <hl_psx::Arsenal>::cycle
-o 428a25f311ab032b 84 8009db88 hl_psx::proj_fx::gauss_beam
-o 8415a72055fb70df 84 8009dcd8 hl_psx::nihilanth::bind
-o 9a235bef52f7f234 83 8009de28 hl_psx::phys::actor_line_clear_movers
-o 88bf453a5cfbec73 81 8009df74 hl_psx::emit_submodel_face::{closure#3} @hl_psx
-o 325c4d9a44a6e80c 81 8009e0b8 hl_psx::aim_rotation
-o eef24867a543900d 81 8009e1fc hl_psx::tram_desired_yaw_q28
-o 685fb154a569c582 77 8009e340 hl_psx::hit_group_damage
-o 0c27b1ea9f566d44 39 8009e474 hl_psx::sprite::def
-o bd7c615ad9fe40ac 81 8009e510 <hl_psx::Arsenal>::retire_spent
-o 7abef2ac180b7ce5 81 8009e654 psx_io::cd::lba_to_bcd_msf
-o cb12f056740bcbe8 31 8009e798 hl_psx::damage_target
-o f14eb348cabc380a 192 8009e814 psx_pad::poll_selected::<psx_io::periph::ControllerPort> @psx_engine
-o 8fb546bff793315c 81 8009eb14 psx_rt::cache::wait_for_quiet::<psx_rt::cache::HwBus> @psx_rt
-o fecadb3c5ebeb97e 15 8009ec58 hl_psx::axial_brush_rotation
-o 9557a205ae2d71fa 95 8009ec94 psx_goldsrc::render::perspective_screen_midpoint
-o 5df541ea31a0da24 80 8009ee10 hl_psx::actor_chord_blocked
-o 48a85d46d54a4b9e 80 8009ef50 hl_psx::nav_route_available
-o 0da515a0605aeb41 80 8009f090 hl_psx::menu::draw_credits_menu
-o 10ee6263e3738f83 79 8009f1d0 hl_psx::prop_flinch_ticks
-o 75362cf412c062f7 17 8009f30c hl_psx::actor_nav_hull
-o 6aef23cfd62e3c93 34 8009f350 hl_psx::phys::trace
-o 5b68959481e6df07 260 8009f3d8 hl_psx::prop_push_vector
-o 0079410427f34e98 172 8009f7e8 <psx_asset::hmd8::Model>::tracks
-o eb5c230513132e6b 60 8009fa98 hl_psx::logic_sub_use_targets
-o a9c2e46f8c76d360 79 8009fb88 <hl_psx::phys::Player>::push_by_mover
-o 4c61553e0ba1e651 45 8009fcc4 hl_psx::proj_fx::body::{closure#1} @hl_psx
-o 2bcc801ce64031cc 61 8009fd78 hl_psx::try_emit_clipped_residue::{closure#1} @hl_psx
-o 854b745774d008f8 79 8009fe6c hl_psx::garg::shake
-o 6f3171047cdcd9fa 79 8009ffa8 psx_cdstream::drain::on_cd_interrupt
-o c0c97c360ce2dfe8 79 800a00e4 <psx_display::label::Label>::toward
-o 42d13088faf81907 79 800a0220 <psx_pad::controllers::Slot>::settle::<psx_io::periph::ControllerPort> @psx_engine
-o 97ebf52d9a9fb433 78 800a035c hl_psx::load_accounted_map_chunk
-o 0a82d0066a998751 78 800a0494 psx_segments::validate::<u16, hl_psx::segments::Spawn, &hl_psx::save::Checkpoint> @hl_psx
-o 85cf92d667e17be7 78 800a05cc <psx_fx::particles::ParticlePool<64>>::spawn_burst @hl_psx
-o 77d73834fa2fcc83 78 800a0704 hl_psx::phys::movers_clear_at_hull
-o a21b7bf0537319b5 211 800a083c hl_psx::phys::trace_all
-o 5e32e824e9628db4 78 800a0b88 core::slice::memchr::memchr_aligned::runtime
-o 04288ddd2b130a03 77 800a0cc0 <hl_psx::map::Map>::apply_dynamic_light
-o 0342de16237db0ae 77 800a0df4 psx_goldsrc::ladder_logic::goldsrc_velocity_q6
-o f056f60ebca1cf3b 77 800a0f28 hl_psx::phys::point_in_movers
-o b8c5c24763b09767 76 800a105c <psx_engine::render::PrimitivePacketArena>::reserve_packet_words
-o 5c48d83713b07457 75 800a118c hl_psx::menu::split_menu
-o a68beee2bc36b52e 18 800a12b8 hl_psx::pause_dim
-o 8d9f94d3c0faa8cc 678 800a1300 hl_psx::emit_affine_quad_children
-o f4ee6a6cd07dafbb 97 800a1d98 hl_psx::tram_path_pos
-o 4dae17d056732d5f 102 800a1f1c hl_psx::project_world_point
-o 8028e7d43cfaa13c 54 800a20b4 psx_goldsrc::render::quad_fits_gpu_xy
-o 4ea7d343e07b79df 94 800a218c psx_pad::pad_exchange::<psx_io::periph::ControllerPort> @psx_pad
-o 65ac3dde24d016a8 22 800a2304 psx_math::int32::isqrt_u32
-o 31e1c308a6f2530d 27 800a235c psx_asset::hma1::seg
-o d0d34a60aaa061c0 43 800a23c8 <psx_gpu::material::TexturedGouraudPacketMaterial>::from_texture
-o 3ef7083f55c107c0 120 800a2474 hl_psx::push_affine_quad_gt4
-o 8c75298082f873ab 75 800a2654 psx_asset::hma1::validated_layout
-o 6c6354e372322129 21 800a2780 <psx_mc::fs::DataWriter>::push::<psx_mc::hardware::HardwareCard> @hl_psx
-o f167aa93cd24957e 16 800a27d4 <hl_psx::map::Map>::leaf_liquid
-o a0348bbfa45f7d05 73 800a2814 hl_psx::try_emit_native_residue::{closure#1} @hl_psx
-o 5865d6d47786ce91 55 800a2938 psx_goldsrc::fx::quad_flat::<hl_psx::overlay::OverlayTail> @hl_psx
-o 464894f272e8e8b5 151 800a2a14 hl_psx::script_tick_studio_events
-o f0d54d35ecae15e2 73 800a2c70 <hl_psx::map::Map>::tex_anim_chain
-o 8a480a2722e268ee 73 800a2d94 <hl_psx::map::Map>::entity
-o f42bf69fe8aebe10 73 800a2eb8 hl_format::pvs_pair::validate_room::{closure#1} @hl_format
-o f0beb168d1d650b2 73 800a2fdc <psx_gpu::prim::TriTextured>::with_material
-o 176ce54356e9bdac 72 800a3100 hl_psx::pause_option_row
-o f8a7c6d543b17362 72 800a3220 hl_psx::phys::rot_axis
-o 33b2adce81ea74e4 72 800a3340 hl_psx::music::position
-o 8b6971644135ec9e 70 800a3460 hl_psx::draw_dark_text_panel
-o bef91c8b3cb3e601 70 800a3578 hl_psx::sfx::init_from_pack
-o 9ffef2123accfdce 69 800a3690 hl_psx::merge_vis
-o 0dd66ce3e570f7fb 69 800a37a4 hl_psx::menu::draw_vol_bar
-o 108eb6e6fd97562e 69 800a38b8 hl_psx::phys::mover_clear_at_hull
-o 80cb8497a16106fc 69 800a39cc hl_psx::tank::ray_hits_player
-o c105e863a4b52311 69 800a3ae0 psx_rt::entry::spu_entry_state
-o 9327dd70a2f6ac18 11 800a3bf4 hl_psx::cdstream::target::load_chunk_decompressed
-o ac2df203c84568ff 42 800a3c20 hl_psx::draw_look
-o 18b7a8cb06178d59 68 800a3cc8 hl_psx::detonate_satchels
-o 1ec5d5d9796ffaaa 68 800a3dd8 <hl_psx::phys::Player>::set_carried_position
-o 597749eb24d5eeac 68 800a3ee8 hl_psx::scientist_logic::scientist_use_score
-o 9e4b4f1da1b42104 67 800a3ff8 hl_psx::sfx::load_dialogue_pack
-o c109adfe2d4c02b9 67 800a4104 <psx_mc::fs::DataCursor>::next_byte::<psx_mc::hardware::HardwareCard> @hl_psx
-o 8cc8d9b9e90d5f5f 67 800a4210 hl_psx::camera_use
-o 55f153f48e96501b 67 800a431c hl_psx::consume_weapon_pickup
-o 4bff8fa0d9454871 66 800a4428 hl_psx::scientist_logic::precise_yaw_from_vec
-o 358665c9e111d8e2 50 800a4530 hl_psx::interpolated_tram_pose
-o cf6010b933ad40cd 69 800a45f8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::level_authored_loop @hl_psx
-o 64447cc73bf31649 66 800a470c <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::exchange_card @hl_psx
-o f814792e057c7a1b 65 800a4814 hl_psx::depth_split_row
-o f58f2a9738737188 65 800a4918 hl_psx::logic_breakable_touch
-o cc5326e8871e8a87 65 800a4a1c psx_goldsrc::emit::words::platrot_world_to_local
-o c580dc7acdddea02 65 800a4b20 psx_io::gpu::kick_draw_done_list
-o 300514c980853f05 63 800a4c24 hl_psx::logic_fire_global_autos
-o eafa9df5034bda39 63 800a4d20 hl_psx::menu::draw_control_column
-o 7a19d124b82e97ad 20 800a4e1c <hl_psx::Arsenal>::select
-o e2ead3fbd83f66de 191 800a4e6c hl_psx::water_touch
-o 3d39f091282af493 139 800a5168 <psx_asset::hmd8::Model>::pose
-o b7729dc6f11223a8 59 800a5394 hl_psx::tram_next
-o 5a9cb96460c3019c 484 800a5480 hl_psx::phys::recurse
-o a783cc87fb833d83 104 800a5c10 hl_psx::hud::number_3::<1> @hl_psx
-o 60227e90a25e5500 63 800a5db0 psx_goldsrc::driver::sprite_material::{closure#0} @psx_goldsrc
-o ac5e06b1bf3e11a3 19 800a5eac hl_psx::platrot_angles_q8
-o 9a72130f3f9809ba 39 800a5ef8 <psx_engine::render::PrimitivePacketArena as psx_engine::render::PrimitiveSink<psx_gpu::prim::QuadTexturedGouraud>>::push_unchecked @hl_psx
-o bf8309cd61d68c08 63 800a5f94 psx_gpu::gpu::write_draw_target
-o d046561d08b7a13c 62 800a6090 hl_psx::tank::vectors
-o efe729b9971c4161 61 800a6188 hl_psx::phys::clip_velocity_over
-o 7362af7769e70566 60 800a627c hl_psx::revert_saved_tick
-o f856eef0d2840e42 12 800a636c hl_psx::run_pause_menu::{closure#3} @hl_psx
-o a8fe2f6297d5ab08 75 800a639c <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::authored_gain @hl_psx
-o fd5445fe70814c5e 1132 800a64c8 hl_psx::phys::slide_move
-o c40d3b260b5f19c9 49 800a7678 <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::any::check<usize, hl_psx::global_is_on::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
-o 4f0cc4c9dc14f4cb 53 800a773c psx_rt::present::wait_slot_empty_on::<psx_rt::present::Hardware> @psx_rt
-o 256dc5633ba4e008 60 800a7810 hl_psx::boss_walker_damage
-o c4b6e15a788221cb 28 800a7900 hl_psx::tram_seg_heading_q28
-o 6131ccc51aeaefad 8 800a7970 hl_psx::phys::trace_line
-o dfd17ad054b7aa00 60 800a7990 hl_psx::pushable_detect_support
-o 2072842a04e9dbdc 30 800a7a80 hl_psx::run_pause_menu::{closure#4} @hl_psx
-o 6818fa1c22bc2538 35 800a7af8 psx_goldsrc::ground_logic::ground_contact_q6
-o 31e602db87b1bfb4 60 800a7b84 <psx_mc::Card<psx_mc::hardware::HardwareCard>>::free_blocks_in @hl_psx
-o 5cbc8221e402173c 60 800a7c74 hl_psx::mapsnap::capture_here
-o dfafc3e48548afd7 60 800a7d64 psx_io::cd::pause::pause_until_stopped::<psx_io::cd::reader::ReaderPause> @psx_io
-o 28e18e60177c2566 60 800a7e54 psx_rt::interrupts::pace_direct_flip
-o bb9e7e38294c61ba 59 800a7f44 <hl_psx::map::Map>::signed_plane
-o dd7685ac17a1aecb 49 800a8030 <hl_psx::leech::Swim>::think::<hl_psx::species::LeechWorld>::{closure#0} @hl_psx
-o d3817d22941931be 200 800a80f4 hl_psx::live_entity_pvs_bounds
-o 8e8dd522089701f7 59 800a8414 hl_psx::phys::mat_local
-o 8125b98829ba7d67 59 800a8500 hl_psx::phys::mat_world
-o 7a1589e7f2cadc9a 59 800a85ec hl_psx::tank::barrel
-o 33d68fc261963f4e 59 800a86d8 psx_rt::interrupts::install_vblank_counter
-o c398c25fc3cabe35 58 800a87c4 hl_psx::logic_infodecal
-o 98147d6df4e0a417 58 800a88ac hl_psx::fire_gauss_charge
-o 6cb9eced03375c2f 58 800a8994 hl_psx::music_stop_for_menu
-o 62eaf52e33d26093 58 800a8a7c <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::stream_pump @hl_psx
-o 8256450abe8e7f9e 58 800a8b64 <psx_asset::hmd8::Model>::vertex_unchecked
-o 36b367c23da587e4 58 800a8c4c hl_psx::menu::draw_logo_tinted
-o 5f5e9be529d5b87e 58 800a8d34 hl_psx::tank::tank_player_fire
-o b16a385a3c3f2243 58 800a8e1c <psx_io::cd::reader::SectorReader>::pop_sector
-o 4fbebf85852be57b 57 800a8f04 hl_psx::append_kv
-o f02cf3da7b90de24 57 800a8fe8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_voice_authored @hl_psx
-o 71dba42099371395 57 800a90cc psx_io::cd::wait_ack_then_complete
-o 94508cfbbbbe586b 56 800a91b0 hl_psx::apache::norm
-o f0eed8101285fa03 37 800a9290 hl_psx::hud::flat::<1> @hl_psx
-o ba2f4310ddee7fc5 251 800a9324 hl_psx::try_emit_native_affine_quad
-o 31b90b24b332f031 55 800a9710 hl_psx::grenade_blast_origin
-o 892d119c38dc22bf 55 800a97ec <hl_psx::senses::Sounds>::insert
-o ff5df359a403ba79 55 800a98c8 hl_psx::proj_logic::segment_hits_cylinder
-o a189ec438ae4d2ec 55 800a99a4 hl_psx::save::settings_encode
-o 5ebe5291f9eb16b9 55 800a9a80 hl_psx::mapsnap::pending
-o fee0c5e8cfe0d9e9 55 800a9b5c hl_psx::settings::persist_if_changed
-o d45195d27b255297 19 800a9c38 hl_psx::apache::at
-o 17bc04690299a3a2 68 800a9c84 <psx_gpu::prim::QuadTexturedGouraud>::with_packet_material_packed_uv_words
-o ea7771ad736bc770 55 800a9d94 __psx_rt_present_kick
-o 54641d0c6a624cf1 63 800a9e70 psx_pad::poll_once::<psx_io::periph::ControllerPort> @psx_engine
-o fd159ccfb85e7386 128 800a9f6c psx_goldsrc::fx::submit_list
-o dcc35ba658e32e32 55 800aa16c psx_goldsrc::emit::words::tri_fits_gpu
-o 0cf3137c7f1dc0bd 54 800aa248 psx_mc::hardware::write_transaction::<psx_io::periph::ControllerPort> @hl_psx
-o b73527f394d364cd 12 800aa320 psx_io::cd::ack_all_and_reset_parameters
-o 7a4976da72975b42 86 800aa350 hl_psx::nudge_outward
-o 6a6e983415c763f4 45 800aa4a8 psx_goldsrc::hsfx::clamped_distance_squared
-o 0a2fa8dc173ffa48 54 800aa55c <psx_fx::particles::Particle>::rect
-o eadccf5eddf01ad6 54 800aa634 hl_psx::save::write
-o 374dcc84c24d63eb 54 800aa70c hl_psx::osprey::osprey_corner
-o 01b2368f8007680a 54 800aa7e4 psx_cdstream::drain::poll::{closure#0} @psx_cdstream
-o cfacba49aa747a79 54 800aa8bc <psx_io::cd::xa::Engine>::setup::<psx_io::periph::Cd> @psx_io
-o 9dc8466172d275f9 54 800aa994 psx_rt::interrupts::wait_vblank
-o 25ae032998f3357a 53 800aaa6c psx_goldsrc::ladder_logic::mount_target
-o f180164ba8a824df 53 800aab40 hl_psx::air_navigation::distance2
-o a2b3f281bc99e52a 53 800aac14 hl_psx::menu::draw_chapter_menu
-o 744b6a8028adfb93 53 800aace8 hl_psx::tank::tick_tanks
-o 463133d275218fea 53 800aadbc psx_pack::decompress_hlzc_in_place
-o 6663f48c60f2efa2 52 800aae90 hl_psx::vm_restore_live_tail
-o f3d74450c0a5d6f1 41 800aaf60 hl_psx::turret_deploy
-o a266bf2a56587ca3 272 800ab004 hl_psx::push_actors_from_mover
-o 56b377c1c42404b5 52 800ab444 hl_psx::script_authored_hold_ticks
-o a3ed2c6ad84f72e5 52 800ab514 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::set_map_loop_volume @hl_psx
-o c63476ab21f45cf6 51 800ab5e4 hl_psx::blast_sees
-o 7fc091ed76313e86 51 800ab6b0 hl_psx::prop_voice
-o cc9c657cc28c15ad 51 800ab77c hl_psx::spawn_debris_fixed
-o 78f042497c90e7f1 51 800ab848 hl_psx::music_suspend_for_stream
-o bc7198bdcf11a532 34 800ab914 <hl_psx::trigger_rules::DeadGlobals<32>>::kill @hl_psx
-o d8617e9f000dc1cf 343 800ab99c <psx_asset::hmd8::Model>::timed_clip_phase
-o 9d897d26c38bc6ad 51 800abef8 hl_psx::seg_len
-o dbf843f8d92b1ca0 51 800abfc4 <psx_mc::Card<psx_mc::hardware::HardwareCard>>::read_dir @hl_psx
-o e414411ab00bc85f 181 800ac090 hl_psx::phys::sound_contents
-o 1aa056a118ef76a3 40 800ac364 <psx_asset::hmd8::Model>::clip_hold_ticks
-o 3a6e03efd51427dd 67 800ac404 <psx_rt::present::Presenter>::write_preamble
-o 78fae4aa7692db27 21 800ac510 psx_goldsrc::fx::chain_submit
-o b253edd49808861f 51 800ac564 hl_psx::save::latest_sequence
-o 84f7e34b5038807a 51 800ac630 <psx_io::periph::SpuDma>::write_counted
-o b6ec57956b146355 22 800ac6fc hl_psx::music::locate_files::{closure#0} @hl_psx
-o bbdadec54bae3b1f 293 800ac754 hl_psx::rebuild_pvs_cache
-o 1733dbee8e965a2a 193 800acbe8 hl_psx::phys::line_clear_movers_visual
-o 8aeb90fd1e9fe396 47 800aceec <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_goldsrc::fx::Packet> @hl_psx
-o 2ae834b142bf0bd8 72 800acfa8 psx_goldsrc::fx::chain_push::<hl_psx::overlay::OverlayTail> @hl_psx
-o 30a64aec035618f6 175 800ad0c8 psx_pad::poll_state::<psx_io::periph::ControllerPort> @psx_engine
-o 40d9920d490ae416 51 800ad384 <psx_io::cd::reader::SectorReader>::start_read
-o d820672a2d3f0fa9 8 800ad450 psx_pad::pad_begin::<psx_io::periph::ControllerPort> @psx_pad
-o 8740d37750664e6b 50 800ad470 hl_psx::player_rules::bunny_cap
-o d147cc5b14e6dab3 50 800ad538 hl_psx::menu::draw_list_row
-o 5812f7eee01fb28f 50 800ad600 hl_psx::osprey::osprey_init
-o 2d7abaad1689beaf 50 800ad6c8 <psx_io::cd::xa::Engine>::launch::<psx_io::periph::Cd> @psx_io
-o 4c275a56c4dd795f 50 800ad790 <psx_io::cd::reader::SectorReader>::ack_unexpected
-o 7fb5165f1f5286a5 50 800ad858 <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::wait_completion
-o f084d6b9c5f47346 50 800ad920 psx_mc::fs::entry_name_eq
-o 2c096b9f194c6426 49 800ad9e8 <psx_asset::hmd8::Model>::clip_frame
-o 52b8a36a6f059d73 49 800adaac <psx_loading::Gp0 as psx_loading::Sink>::packet
-o cd7b094cc02e86d2 49 800adb70 psx_rt::present::count_signal
-o 563d7dd63c9545af 48 800adc34 <psx_engine::render::PrimitivePacketArena>::push_packet::<hl_psx::BeamTri> @hl_psx
-o 3434c381ab065c03 48 800adcf4 <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_gpu::prim::TriTexturedGouraud> @hl_psx
-o e8584d93baf902fb 48 800addb4 <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_gpu::prim::TriFlat> @hl_psx
-o aa51bf151ede69fe 48 800ade74 hl_psx::momentary_owner
-o a44096d42f999207 48 800adf34 hl_psx::fall_damage_player
-o 7b6b6ef1b6ad4060 48 800adff4 hl_psx::sfx::locate_bank_region
-o 7e5c2aed2a61310d 48 800ae0b4 hl_psx::tank::pose
-o 28417a70a1adb0bb 48 800ae174 hl_psx::sprite::reset
-o 1c66f4c22d279d6f 48 800ae234 <psx_io::cd::xa::Engine>::begin_read_at::<psx_io::periph::Cd> @psx_io
-o 97d541433e73d7e3 43 800ae2f4 hl_psx::logic_spark_use
-o ecb5b0d9d7027dab 48 800ae3a0 <psx_pad::RawPoll>::to_state
-o 91d8188e000cdf95 47 800ae460 hl_psx::rot_door_pose
-o 9b4aa65e37fd54aa 47 800ae51c hl_psx::blood_position
-o d66caa9f6c9d206f 47 800ae5d8 hl_psx::brush_train_sound_pos
-o 70d918166ab5f718 47 800ae694 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::map_loop_world_gain @hl_psx
-o ca00417f65799c54 47 800ae750 hl_psx::save::write_settings
-o 778692d854ac917c 47 800ae80c hl_psx::save::read
-o c4be85f36df32705 47 800ae8c8 psx_goldsrc::driver::gp0_words
-o cf73abec28c40541 47 800ae984 psx_gpu::gpu::set_draw_mode
-o d46d4f6308529567 46 800aea40 <psx_mc::hardware::HardwareCard as psx_mc::Block>::read_frame @hl_psx
-o 664ea3d08a31865a 45 800aeaf8 hl_psx::nav_actor_node
-o 18fa2e763bf73607 45 800aebac <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::select @hl_psx
-o 84da480edf0fc51c 45 800aec60 psx_gpu::gpu::draw::<psx_gpu::prim::TriTextured> @psx_goldsrc
-o d64444107ff825ff 45 800aed14 psx_loading::ring_cell
-o 6f61a4173170c54c 45 800aedc8 psx_pack::cd::load_header_sector
-o c8a31e43e1bfed0c 43 800aee7c hl_psx::pushable_touch_triggers
-o 37702332a972c0c5 43 800aef28 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_loop_with_volume @hl_psx
-o 734c026e7b24fcdf 24 800aefd4 <psx_vram::VramRect>::new
-o c5b5c714ff9261e3 19 800af034 psx_goldsrc::pads::poll
-o 158ffd7ff6fbe2d5 43 800af080 hl_psx::tripmine::beam_end
-o e4ed79dac44f81ed 43 800af12c <psx_loading::Style>::content_height
-o 818883023bc1d670 42 800af1d8 <hl_psx::leech::Swim>::switch_state::<hl_psx::species::LeechWorld> @hl_psx
-o a9d1997b6090069b 42 800af280 hl_psx::target_org
-o 049db57828607fad 42 800af328 hl_psx::load_weapon_bank
-o 94eee4fc73c5af69 42 800af3d0 <psx_asset::hmd8::Model>::vertex_gte_words_unchecked
-o a2440476ad2ce2dd 42 800af478 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::sound
-o 03ffca3a16ad3d92 42 800af520 <psx_rt::cache::HwBus as psx_rt::cache::Bus>::dma_busy
-o e019b422440d6a09 41 800af5c8 hl_psx::spawn_impact_particles
-o 00575b1e6dba7d4e 41 800af66c <hl_psx::phys::Player>::try_set_planar_position
-o f65ae34cd7bf3773 41 800af710 hl_psx::menu::draw_controls_menu
-o c7db53991b016009 41 800af7b4 <psx_io::cd::xa::Engine>::stop_without_waiting::<psx_io::periph::Cd> @psx_io
-o d8d3ad3dff52f5c4 40 800af858 hl_psx::tram_seat_to_local
-o fabac3510a7f400e 40 800af8f8 hl_psx::monster_voice::step
-o 33519217f5a14596 30 800af998 hl_psx::monster_shot_lands::{closure#0} @hl_psx
-o 997a771284987c7f 66 800afa10 hl_psx::phys::trace_line_skip
-o 3eb26c976b716de6 40 800afb18 hl_psx::autoaim::steer
-o 81f3319decec3e89 40 800afbb8 hl_psx::species::launch_mortar
-o 6870abd858dcf9e7 40 800afc58 psx_cdstream::drain::with_drain::<psx_cdstream::drain::DrainState, psx_cdstream::drain::poll::{closure#0}> @psx_cdstream
-o df54a9d1a74786a9 40 800afcf8 <psx_io::cd::reader::SectorReader>::stop
-o 5e729c0dd9018c9f 40 800afd98 psx_rt::entry::settle_channel
-o fb6185c4a0c352c5 40 800afe38 psx_vram::upload_16bpp
-o 55c16b4008b9775a 39 800afed8 hl_psx::surface_lift
-o 0cf6685eeb8377b2 39 800aff74 hl_psx::depth_split_project
-o 40e06b64e63448fb 39 800b0010 hl_psx::map_catalog::diagnostic_has_weapon
-o 422cd8996e513389 39 800b00ac hl_psx::menu::draw_centered
-o 790dfdf8a8598911 38 800b0148 <psx_gpu::display::DisplayConfig>::horizontal_range_command
-o 56a06e8a4d87b50d 38 800b01e0 <hl_psx::map::Map>::plane_q5
-o 42ee106841fe4799 38 800b0278 hl_psx::menu::draw_bonnie_tinted
-o da40f3cb90c6fa89 38 800b0310 hl_psx::proj_fx::mine_beam
-o 36064cbe433d936d 38 800b03a8 psx_cdstream::drain::pop_sector
-o 1af24ce80412a0b0 38 800b0440 psx_pack::parse_entry_at
-o b531668ad8a50167 37 800b04d8 <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::all::check<usize, hl_psx::monsterjump::touches::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
-o 03c3e690d628d9a7 37 800b056c hl_psx::prop_ramp_step
-o f8e470c4df881e2e 37 800b0600 hl_psx::prop_script_clear
-o d779b4214e52b4db 37 800b0694 hl_psx::nav_actor_distance
-o 99de45c7a1964d70 37 800b0728 <psx_asset::hmd8::Model>::clip_rec
-o e5bec867b84dd09b 37 800b07bc <hl_psx::Arsenal>::can_deploy
-o 8f9995b5b689c1d4 37 800b0850 psx_goldsrc::ground_logic::actor_candidate_overlaps_player
-o c17779fa5b2d4a63 37 800b08e4 hl_psx::garg::player_frac
-o b8c204dbdc767205 37 800b0978 <psx_io::periph::Cd>::try_set_target_lba
-o 2b80c242a11d0fe7 36 800b0a0c hl_psx::vram::upload_tex_chunk_append_raw
-o 718fb579c9ae9561 27 800b0a9c hl_psx::tram_next_open
-o 97a59c7b56287193 22 800b0b08 <hl_psx::map::Map>::leaf
-o 4e6a5b7a78426123 39 800b0b60 psx_asset::hma1::layout
-o c227ca4283f8f2ba 257 800b0bfc hl_psx::hud::draw_history::<1> @hl_psx
-o e55aaa2aff1142a4 134 800b1000 hl_psx::hud::draw_damage_icons::<1> @hl_psx
-o 0d324a43c2e75bb1 60 800b1218 psx_goldsrc::scratchpad::call_on_projection_stack::<172, hl_psx::project_hmd7_model::{closure#0}> @hl_psx
-o 8bcf85b00effee74 36 800b1308 core::unicode::unicode_data::white_space::lookup
-o e54b0a3c350dd393 59 800b1398 hl_psx::try_emit_native_affine_quad::{closure#0} @hl_psx
-o 337e9dbce2574830 34 800b1484 <psx_gpu::display::DoubleBuffer>::draw_target_words
-o 8f9bdab36a375285 10 800b150c psx_rt::present::wait_idle_on::<psx_rt::present::Hardware> @psx_rt
-o e01572176ae0c921 11 800b1534 psx_io::gpu::handoff::run_armed_guard
-o 51a8fe262f0e1f46 92 800b1560 psx_goldsrc::visibility_logic::translated_padded_bounds
-o 739357ecbb45bbed 610 800b16d0 hl_psx::tick_shooter
-o dfecd0af5c3ba8dd 36 800b2058 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::finish_begin @hl_psx
-o 740eb19941fa43aa 36 800b20e8 psx_rt::cache::run_when_dma_idle::<psx_rt::cache::HwBus, (), psx_rt::cache::with_dma_quiesced<(), psx_rt::cache::flush_instruction_cache::{closure#0}>::{closure#0}> @psx_rt
-o 63c2715736fff66c 35 800b2178 hl_psx::nav_route_fail_open
-o a84f6a0dfa379965 35 800b2204 <psx_mc::Card<psx_mc::hardware::HardwareCard>>::is_formatted @hl_psx
-o d11b1892a8c09ab2 25 800b2290 hl_psx::prop_set_pos
-o 8360eb748065e1c4 65 800b22f4 psx_goldsrc::fx::tri_flat_blended::<hl_psx::overlay::OverlayTail> @hl_psx
-o b93675d815e803ed 35 800b23f8 <core::str::iter::SplitInternal<char>>::next @hl_psx
-o 4b7235c423ce9b33 35 800b2484 hl_psx::osprey::osprey_has_dead
-o 0ab93ef481c6c476 35 800b2510 core::slice::index::into_slice_range
-o c53b46c5b6df5f1d 201 800b259c hl_psx::live_semantic_sample
-o 0ab93ef481c6c476 35 800b28c0 core::slice::index::into_slice_range.1118
-o dbfc71650866e362 107 800b294c <psx_pad::controllers::Controllers>::step::<psx_io::periph::ControllerPort> @psx_engine
-o fa5d5e3b6c9d4a26 35 800b2af8 <psx_segments::Provenance>::is_valid
-o 2945139d67f95754 34 800b2b84 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_world @hl_psx
-o bd724363424228f9 11 800b2c0c <hl_psx::species::LeechWorld as hl_psx::leech::World>::wet
-o 71982f41f9735b9b 49 800b2c38 core::str::validations::next_code_point::<core::slice::iter::Iter<u8>> @psx_goldsrc
-o a43e2f6dcca08831 31 800b2cfc hl_psx::spawn_impact_fx
-o f50ee3500736112f 47 800b2d78 <hl_psx::map::Map>::sprite_prop
-o 39e5f7bfb6673715 27 800b2e34 hl_psx::project_hmd7_model_stack_entry
-o 7414f9fd0fffff02 44 800b2ea0 hl_psx::senses::in_view_cone
-o 56a7870a1f92a273 33 800b2f50 <[u8]>::eq_ignore_ascii_case_simple
-o 852521744a8a7f37 33 800b2fd4 hl_psx::hud::has_ammo
-o 8f3dd8f780f45443 33 800b3058 hl_psx::throwable::satchel_velocity
-o 49513964ef9c5c60 33 800b30dc psx_gpu::gpu::draw::<psx_gpu::prim::Sprite> @psx_gpu
-o 87011266d9d9d53d 33 800b3160 <psx_gpu::display::DoubleBuffer>::swap
-o 98c52fe037af17f0 32 800b31e4 hl_psx::script_prime_idle_actor
-o 3304bcf73070ef19 32 800b3264 hl_psx::settings::value
-o 03227a0544fc1104 32 800b32e4 <psx_goldsrc::hsfx::MapLoops>::claim
-o 413a529f23b4fbe5 32 800b3364 <psx_gpu::prim::Sprite>::with_material.934
-o c820d1dc7e621c33 32 800b33e4 <psx_io::cd::xa::Engine>::start::<psx_io::periph::Cd> @psx_io
-o 80e9387c663ee365 31 800b3464 hl_psx::revert_saved_use
-o a54d4d801d1a86db 31 800b34e0 hl_psx::stream_menu_assets
-o 9f6649e161da31c7 31 800b355c <hl_psx::mapsnap::Port>::b
-o 1f697f798bceaf85 31 800b35d8 hl_psx::setpiece_sfx::bind
-o 5ec57a12bc412c37 31 800b3654 hl_psx::scientist_logic::aabb_in_search_radius
-o 2368f7b7d20b0eba 31 800b36d0 hl_psx::tank::tank_use
-o cdf7a52052302764 31 800b374c <[u8]>::copy_within::<core::ops::range::Range<usize>> @psx_asset
-o 91f2df0447369c30 31 800b37c8 <psx_goldsrc::hsfx::AuthoredLoops>::remove
-o 63106362d1d2140d 31 800b3844 psx_goldsrc::hltext::text_width_scaled
-o b6ff94f2405fee45 31 800b38c0 psx_goldsrc::hltext::text_width_gameplay_scaled
-o cdf7a52052302764 31 800b393c <[u8]>::copy_within::<core::ops::range::Range<usize>> @psx_pack
-o 9328ef4c42701891 30 800b39b8 hl_psx::try_emit_native_residue::{closure#2} @hl_psx
-o 8693cca18c5a0424 30 800b3a30 hl_psx::anim_event
-o e09fca7141bc480a 30 800b3aa8 hl_psx::spawn_impact_mark
-o 08ff7da6845b1775 30 800b3b20 hl_psx::rpg_reload_blocked
-o 05ce52c9e037785a 30 800b3b98 hl_psx::brush_train_audio_start
-o 738c34774b9745d0 30 800b3c10 <hl_psx::map::Map>::nav_node
-o 514ea0f6a24ad407 30 800b3c88 <hl_psx::mapsnap::Port>::w
-o d374e5115da5f175 30 800b3d00 <hl_psx::Arsenal>::give_weapon
-o 745ed677a7a631fe 23 800b3d78 hl_psx::phys::line_clear_world
-o e306183dc040ccda 35 800b3dd4 psx_rt::present::wait_drawn_idle_on::<psx_rt::present::Hardware> @psx_rt
-o 727db029ceba65bd 30 800b3e60 <core::str::iter::CharIndices as core::iter::traits::iterator::Iterator>::next
-o afbe2608ec212b93 30 800b3ed8 <psx_gpu::gpu::Gpu>::set_display_start
-o 4919e301be7b6984 30 800b3f50 <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::wait_seek_end
-o 143fe3c98e420000 29 800b3fc8 hl_psx::project_vert_fixed
-o a7e2762daab7a3a7 29 800b403c hl_psx::nav_land_node
-o a040fd60e4a593db 29 800b40b0 hl_psx::gib_prop
-o f1b463407ebba65e 29 800b4124 <psx_mc::Card<psx_mc::hardware::HardwareCard>>::write_dir @hl_psx
-o 97254134df9ea155 29 800b4198 hl_psx::setpiece_sfx::keep_loop
-o cfca26e339793cdc 29 800b420c hl_psx::scientist_logic::nearest_aabb_delta
-o 6aa74728cd6aa6ee 24 800b4280 <hl_psx::save::Writer>::bytes
-o d780ca4b64bdcbb4 24 800b42e0 hl_psx::prop_model_rotation
-o b722d75b66eabe57 29 800b4340 hl_psx::hev::unload
-o b2957dec99408cab 29 800b43b4 hl_psx::nihilanth::zen_sound
-o 06190132559442fa 29 800b4428 <psx_vram::VramRect>::new.881
-o bc939411520a7ebb 29 800b449c psx_io::cd::pause::settle_drive::<psx_io::cd::reader::ReaderPause> @psx_io
-o a67d409ba7ad4d97 29 800b4510 psx_io::gpu::handoff::write_commands_slow
-o 356ec40db6d985c8 29 800b4584 psx_io::gpu::settle_busy_gpu_channel
-o 8f3c7c21c2c4088e 29 800b45f8 psx_loading::rect
-o d354e2a3117301d9 29 800b466c psx_math::fmt::i32_dec
-o 86bb7f3bccc9745e 29 800b46e0 <psx_rt::present::Presenter>::new
-o 56f05587b8ede754 28 800b4754 hl_psx::prop_studio_hit_fraction
-o fb0d0e8d68d0f555 28 800b47c4 <hl_psx::map::Map>::group_plane
-o 0a08bec8417d367c 28 800b4834 hl_psx::tank::round_damage
-o 3225b1bbabd0fbab 28 800b48a4 core::slice::memchr::memchr
-o b7b3da9bcc3e1c66 24 800b4914 hl_psx::proj_logic::integrate_q4
-o 5633c3dfc5b47087 139 800b4974 psx_goldsrc::hsfx::authored_gain_milli
-o e25fb24a4e0fee38 43 800b4ba0 hl_psx::find_actor_target
-o 75abbc95ee7e6f8c 28 800b4c4c psx_io::cd::finish_failed_polled_command
-o 12ca50a276e6c675 28 800b4cbc <psx_font::BitmapFont>::glyph_advance.1081
-o f6014c0172dfff7e 27 800b4d2c <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::stream_abort @hl_psx
-o 5a50db5c521dd2dc 27 800b4d98 psx_goldsrc::driver::sprite_material
-o 269ab9f55247d6e7 27 800b4e04 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::look_pause
-o dc9f9b363e12c074 20 800b4e70 hl_psx::garg::hurt_player
-o df86c9d0869f6891 55 800b4ec0 hl_psx::prop_hit_extent
-o 92d2510df2301c0d 27 800b4f9c <psx_io::cd::reader::SectorReader>::set_location
-o cee0ce3b285b9152 27 800b5008 psx_rt::cache::spin_until_idle::<psx_rt::cache::HwBus> @psx_rt
-o cf9467c18fbf3a46 26 800b5074 hl_psx::prop_studio_touch
-o 6a7d81f90cd6b548 26 800b50dc hl_psx::nav_actor_vertical
-o 1dfba2b2f1f2887a 26 800b5144 hl_psx::player_tram_audio_stop
-o ff119453e64b8a4c 26 800b51ac hl_psx::sky_draw
-o 1f01367550053e7f 26 800b5214 <core::str::iter::SplitInternal<char>>::get_end @hl_psx
-o d820672a2d3f0fa9 8 800b527c hl_psx::retry_streamed_chunk
-o 108d03ca263ede1c 64 800b529c hl_psx::retained_actor_target
-o c1ba18f70bff83bf 26 800b539c hl_psx::garg::along
-o ceb0e0dc5a86615c 26 800b5404 hl_psx::mapsnap::apply_props
-o 06a3c16fe2b88fa5 14 800b546c <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::set_map_loop_world @hl_psx
-o dfba99aff4ad658b 23 800b54a4 hl_psx::prop_waits_for_trigger
-o 1d04101d99854c7b 26 800b5500 hl_psx::settings::apply_audio
-o 8e03ed653cfdb9d4 26 800b5568 <core::str::iter::Chars as core::iter::traits::iterator::Iterator>::count
-o d0fbd157d3bccfa8 25 800b55d0 hl_psx::pushable_apply_settle
-o 19d7d4f9b6a70127 25 800b5634 <hl_psx::map::Map>::way_alt
-o 62b4517db4f3dc1f 25 800b5698 <hl_psx::map::Map>::way_next
-o 6ac5fa2f6e68fb60 25 800b56fc psx_gte::scene::load_rotation
-o 6b4eadfdf22e910b 25 800b5760 psx_goldsrc::driver::quad_half_black
-o 780726be2888a716 25 800b57c4 psx_io::cd::try_command_until_complete_inner
-o 06b2b6d27db485a7 21 800b5828 hl_psx::blast_line_clear
-o 1a47d1ea5e28e15e 108 800b587c hl_psx::phys::point_contents
-o 4f8d3e2c7dfaac39 25 800b5a2c <psx_io::cd::reader::SectorReader>::fifo_timed_out
-o 7cce4521506216d5 24 800b5a90 hl_psx::tank::slot
-o 90d92a30773d8eab 24 800b5af0 <psx_io::cd::xa::Engine>::reach_end::<psx_io::periph::Cd> @psx_io
-o a95b7de19855b3ac 17 800b5b50 <i32>::rem_euclid
-o 850571a0b00c894b 24 800b5b94 psx_math::fmt::u32_dec
-o 313d7cefb8a7d4df 24 800b5bf4 psx_settings::checksum
-o a7f2cfb95f288fbd 23 800b5c54 hl_psx::platrot_phase_from_offset
-o 3eda8d6addaf7c9e 2069 800b5cb0 hl_psx::logic_use_entity
-o fd08dc927072df2a 23 800b7d04 hl_psx::garg::forward
-o 2e59c500fe1d81fe 23 800b7d60 hl_psx::menu::draw_select_bar
-o 1e6db25b926ab3a9 23 800b7dbc hl_psx::apache::mad
-o 5927716ba934e018 23 800b7e18 hl_psx::autoaim::shot_ray_component
-o 037bbaa72e56a7d7 23 800b7e74 psx_asset::hmd8::move_within
-o 252ce49319e357f7 23 800b7ed0 <psx_goldsrc::hsfx::AuthoredLoops>::index_of
-o 15a8231d9314a684 23 800b7f2c psx_goldsrc::driver::copy_vram
-o 2cab35702526d2bc 22 800b7f88 hl_psx::satchels_out
-o 0558e509b36ad30f 22 800b7fe0 hl_psx::script_lay_corpse
-o b33947731375459f 22 800b8038 hl_psx::monster_fire_ai_trigger
-o 41519a87b6091e55 22 800b8090 hl_psx::hev::request
-o cf556fc6b5c4104c 22 800b80e8 hl_psx::leech::flat_forward
-o 3672854100c76d15 22 800b8140 hl_psx::apache::sc
-o db3f709a15f2e256 22 800b8198 hl_psx::proj_fx::resident
-o ce7b69b0761f0f51 22 800b81f0 psx_goldsrc::emit::words::brush_angles_q8
-o 1a01f668040b2739 21 800b8248 hl_psx::vm_switch_retry_blocking
-o 38c52197bda15cf1 21 800b829c hl_psx::scientist_logic::follow_move_speed
-o 347c53c134f62984 21 800b82f0 hl_psx::phys::hull_blocked_fraction_movers
-o 06d54c2e35158e62 21 800b8344 <hl_psx::species::LeechWorld as hl_psx::leech::World>::free_frac
-o 5a5a0e37d6477315 21 800b8398 psx_goldsrc::driver::tri_flat_blended
-o e514bd6296c0152e 21 800b83ec <psx_io::periph::Cd as psx_io::cd::xa::Drive>::begin_stop
-o 4ffb71dcddbed7e7 20 800b8440 hl_psx::apache::dot
-o ea23be1cfcdf635e 20 800b8490 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::rand
-o ea23be1cfcdf635e 20 800b84e0 <hl_psx::species::LeechWorld as hl_psx::leech::World>::rand
-o 3c820e441c6f2cae 20 800b8530 psx_io::gpu::handoff::write_display_control_slow
-o 111886841b25a85c 20 800b8580 <psx_pack::Fnv32>::update
-o c89b8254d1095c36 19 800b85d0 hl_psx::apache::whole
-o 8995598790134b9d 19 800b861c hl_psx::mapsnap::keep_now
-o dfc066a6b9837506 19 800b8668 <hl_psx::species::LeechWorld as hl_psx::leech::World>::enemy
-o 9abcd5004eebd22f 19 800b86b4 psx_io::cd::pause::send_until_acknowledged::<psx_io::cd::reader::ReaderPause> @psx_io
-o dd4ac97a9daa7df4 19 800b8700 psx_rt::dispatch::attach
-o 0a69193f8f19ff90 18 800b874c hl_psx::sfx::play_map_loop_world
-o c7ea7b424f62abee 18 800b8794 hl_psx::save::card_write
-o b67d450388eb4b8d 18 800b87dc psx_rt_fatal_fault
-o f2294981890d6ab5 18 800b8824 psx_spu::upload_adpcm_unguarded
-o 53207ce05d9a0a98 17 800b886c hl_psx::show_trigger_hint
-o b40ffe5cdc292d51 17 800b88b0 <hl_psx::save::Writer>::u16
-o bddd068348d46639 17 800b88f4 hl_psx::phys::clear_at
-o 36d42acd9e5399ce 17 800b8938 <psx_gpu::material::TextureMaterial>::draw_mode_word.997
-o fe14467a7c295701 17 800b897c psx_io::cd::xa::set_mixer
-o 0258ecabbbe9aa90 16 800b89c0 <hl_psx::save::Writer>::u32
-o e7f816c43fa8cab1 16 800b8a00 <hl_psx::save::Reader>::u16
-o e437b49938ef9ea2 16 800b8a40 <hl_psx::save::Reader>::u32
-o 6a3286a8958ea26f 16 800b8a80 hl_psx::mapsnap::is_dead
-o 102bfcec8c21ffd1 16 800b8ac0 psx_goldsrc::driver::tri_textured_material
-o ef99681f7272a839 16 800b8b00 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::end_stop
-o c60eec9dbb9cbff9 16 800b8b40 <psx_io::cd::xa::Engine>::stop::<psx_io::periph::Cd> @psx_io
-o 46bf80a142c8afb1 15 800b8b80 hl_psx::cd_play
-o 93e13aa359e9f9ed 15 800b8bbc <psx_spu::Spu>::upload_adpcm
-o 5c78d3c91bb07364 14 800b8bf8 <hl_psx::save::Writer>::u8
-o e6c32977fe4ff976 14 800b8c30 hl_psx::sfx::stop_dialogue
-o 05c000d2b07ea113 61 800b8c68 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::begin_pad @psx_pad
-o ef9bb3d8db4b6547 14 800b8d5c hl_psx::save::checksum
-o 5a192089379724aa 14 800b8d94 <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::send_pause
-o b3729b8e6e2cb602 14 800b8dcc psx_io::gpu::handoff::display_control_guard_slow
-o 7e384b27ebf965f6 13 800b8e04 hl_psx::pain_clip_ticks
-o 978df2bbb3f1a199 13 800b8e38 <hl_psx::map::Map>::submodel
-o 83fe71e1328af0b1 29 800b8e6c <psx_pad::RawPoll>::negcon
-o df038f76e80f8033 13 800b8ee0 <hl_psx::save::Reader>::u8
-o 79f87e08b8df0c76 13 800b8f14 hl_psx::player_rules::longjump_velocity
-o 5c5363c84f5eacf4 13 800b8f48 hl_psx::phys::trace_clear
-o df3b0c0afb50af1b 13 800b8f7c hl_psx::save::card_read
-o 0ed6623630b357be 13 800b8fb0 hl_psx::apache::sub
-o 435d0a7de682dc6b 13 800b8fe4 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::hear
-o ae79983e3599af4c 13 800b9018 psx_goldsrc::chunk_stream::decompress_in_place
-o c22ef34521df6082 13 800b904c psx_rt::present::wait_slot_empty
-o 946f73f51625e06b 11 800b9080 psx_goldsrc::hsfx::rd_u32
-o b43ca914ee60a48b 11 800b90ac memmove
-o cdd96fff2b030013 8 800b90d8 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::ticks
-o f1e1b9c8d563361d 8 800b90f8 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::yaw_of
-o 475816b207552e0c 8 800b9118 psx_rt::cache::flush_instruction_cache
-o 564ad8c933cfaf7b 136 800b9138 hl_psx::proj_fx::tick
-o 55ccfad22b501430 204 800b9358 hl_psx::proj_fx::sprite_quad
-o 0e60ba29b41a9c17 17 800b9688 hl_psx::turret_spin_down
-o b49654701abfa04f 512 800b96cc hl_psx::maker_make
-o a1aaefd7726fa71c 12 800b9ecc <psx_rt::scratchpad::ScratchpadStack<172, 1024>>::stack_entry::<(), hl_psx::project_hmd7_model::{closure#0}> @hl_psx
-o b6a23b1be04f21c5 37 800b9efc <hl_psx::hev::Suit>::tick
-o 9e68109a7d147e7d 30 800b9f90 psx_gpu::gpu::draw::<psx_gpu::prim::FillRect> @psx_gpu
-o e644112ea7f2afaf 38 800ba008 hl_psx::master_ok
-o 578f2a453b51a443 66 800ba0a0 hl_psx::target_aim_point
-o 08d296b7f448b592 49 800ba1a8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::authored_volume @hl_psx
-o 5775366817912051 44 800ba26c hl_psx::nihilanth::clip
-o 2f522b97ce232636 67 800ba31c hl_psx::senses::within_cone
-o 2750284bc552d3b5 102 800ba428 hl_psx::proj_fx::cam
-o 3465f433608443c6 77 800ba5c0 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_authored @hl_psx
-o 961c9e6a0729546f 74 800ba6f4 hl_psx::prop_eye
-o d5622fafc31cfee4 76 800ba81c <hl_psx::map::Map>::retick_lightstyles
-o 6d977656b8813504 73 800ba94c hl_psx::prop_set_pos_exact
-o 8e799c59891b5831 47 800baa70 <psx_asset::hma1::Jaw>::open
-o 6765db5efdf9d9af 42 800bab2c <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_world @hl_psx
-o 0f6b2a841305d743 36 800babd4 hl_psx::logic_enqueue_event
-o ba0520f29ddc5f41 30 800bac64 <psx_sfx::OneShot>::configure
-o 6b50b3555fc3e3c5 23 800bacdc <psx_gte_core::math::Mat3I16>::rotate_y
-o 7ecab68a4bcf0fa7 49 800bad38 hl_psx::entity_touches_pvs
-o ea04e2a669245c46 50 800badfc <hl_psx::map::Map>::logic_name
-o 57812ccd87dfe0cc 416 800baec4 hl_psx::nihilanth::tick_balls
-o 0279586da1e4c39b 40 800bb544 psx_io::cd::begin_polled_command
-o 563300696bb8fec9 93 800bb5e4 psx_io::cd::run_command::<psx_io::cd::Mmio> @psx_io
-o d3ee0c40eadc56ab 62 800bb758 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::head_lba
-o c7ad8f7fb7706118 71 800bb850 psx_io::cd::wait_irq_flag::<psx_io::cd::irq_flag, <psx_io::cd::Mmio as psx_io::cd::CommandIo>::wait_irq::{closure#0}> @psx_io
-o 27761b6c52d960a3 44 800bb96c psx_io::cd::read_response_fifo
-o 34bbd5247ddfc4db 56 800bba1c <psx_spu::Voice>::configure_sample
-o c1aa78596fe38fc2 190 800bbafc hl_format::pvs_pair::decode
-o 6bf83672efce0785 41 800bbdf4 hl_psx::sprite_set_visible
-o f7d98f3f3140e754 80 800bbe98 hl_psx::decompress_vis
-o c0b98f6cc9bfa31e 9 800bbfd8 hl_psx::prop_free_mover
-o 8b13950fe1622261 23 800bbffc psx_io::cd::drain_response_limited
-o f8f86359d65845ee 8 800bc058 hl_psx::prop_floor_y
-o 424a4e7145eed785 56 800bc078 <hl_psx::map::Map>::decode_paired_pvs
-o 1c187b830aa9f528 401 800bc158 <hl_psx::map::Map>::compile_visible_faces
-o 2b1df6cfe148b03f 51 800bc79c psx_math::int32::mul_div_i32
-o 17974c2216b17053 79 800bc868 hl_psx::prop_face_point
-o 2bdf88ae9e12928a 535 800bc9a4 hl_psx::prop_floor_y_down
-o d9ce1e671a3c6d23 56 800bd200 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::key_map_loop @hl_psx
-o 6f75039fa0ea8bbd 73 800bd2e0 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_vol @hl_psx
-o 9052edbcbddabebb 18 800bd404 <psx_sfx::OneShot>::play
-o 5387e15c324cde84 48 800bd44c psx_math::sincos::atan2_q12
-o d01760874f088933 118 800bd50c hl_psx::logic_remove_entity
-o 30d6f4ab430c026b 288 800bd6e4 hl_psx::nihilanth::next_activity
-o aa5814099da7cae6 45 800bdb64 <psx_goldsrc::hsfx::MapLoops>::candidate
-o c3dbcf1bd3aadbe6 17 800bdc18 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::cs_high_gap @psx_pad
-o a4e6b151faa5d5db 37 800bdc5c hl_psx::monster_voice::cue
-o 626b0681678a2cd0 20 800bdcf0 hl_psx::prop_nav_cache_invalidate
-o 4fb9a17f5eae3723 50 800bdd40 <psx_goldsrc::hsfx::MapLoops>::claim_if_louder
-o 475fba2b194a91f0 25 800bde08 psx_pad::command_byte_failed::<psx_io::periph::ControllerPort> @psx_pad
-o a633cea320d2aaab 247 800bde6c __psx_rt_exception_handler
-o ef8a669c95ce42b0 1234 800be248 hl_psx::menu::run
+o dca1d04a072a4738 184 8007cf04 psx_pack::lz4_block_decode_in_place
+o 88bf453a5cfbec73 81 8007d1e4 hl_psx::emit_submodel_face::{closure#3} @hl_psx
+o fe4bc9827a9cfb3d 128 8007d328 hl_psx::fix_projected_vertex
+o 73f84791161976f9 183 8007d528 hl_psx::rebuild_prop_hotlists
+o 664ea3d08a31865a 45 8007d804 hl_psx::nav_actor_node
+o d56bfb54225b3286 76 8007d8b8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_vol @hl_psx
+o dcb07e73d24ccc35 76 8007d9e8 hl_psx::proj_fx::unit
+o c09a360144327246 183 8007db18 hl_psx::nihilanth::damage
+o 11d56af52f1104c8 182 8007ddf4 hl_psx::emit_world_face
+o 4f988f4daf2304c9 181 8007e0cc hl_psx::menu_start
+o e570f1a29313f2c7 80 8007e3a0 hl_psx::spark_burst
+o d19b9d9baaf93c92 1110 8007e4e0 hl_psx::draw_viewmodel
+o 59448ebd30baf3ee 180 8007f638 hl_psx::carry_pushables_on_support
+o 84ac18535cdf23f2 177 8007f908 hl_psx::save::settings_decode
+o 37912898ed81e3c4 133 8007fbcc <hl_psx::senses::Sounds>::heard_with
+o 2d9d0c20c317a85a 101 8007fde0 hl_psx::viewmodel_anim_frame
+o 07dce370efe2021f 71 8007ff74 hl_psx::camera_leaf
+o 0f9e8438c9f4b6ad 176 80080090 psx_goldsrc::hltext::draw_text_gameplay_scaled::<hl_psx::overlay::OverlayTail> @hl_psx
+o e185f32751366866 173 80080350 hl_psx::tripmine::tick_map
+o 1608aa712fabc27e 172 80080604 hl_psx::music::locate_files
+o 9507bafb58a8dc3d 171 800808b4 hl_psx::tram_trackchange_offset_q28
+o 6a67a2bb39b58920 171 80080b60 <hl_psx::Arsenal>::try_fire
+o 485d6dda45d51fd8 140 80080e0c hl_psx::tick_soda_can
+o 5bbad0e1d53d7c73 68 8008103c psx_gpu::wait_idle_impl
+o b9f11a1881429767 168 8008114c hl_psx::menu::ending
+o 58e598bb9a794821 109 800813ec hl_psx::emit_cv
+o 253a244ed9890b84 168 800815a0 hl_psx::species::lay_baby
+o 838c33757ea94567 101 80081840 psx_goldsrc::hitbox_logic::ray_aabb_fraction_q12
+o dda2eb873bdda23f 67 800819d4 hl_psx::nihilanth::launch
+o f7740bf1078a4d86 54 80081ae0 hl_psx::emit_patch_triangle
+o 87396fe7c817389f 176 80081bb8 <psx_gte_core::math::Mat3I16>::mul
+o 790dfdf8a8598911 38 80081e78 <psx_gpu::display::DisplayConfig>::horizontal_range_command
+o f183e5f75a663ca7 44 80081f10 hl_psx::actor_collision_bounds
+o 29cb125c07d80065 131 80081fc0 hl_psx::pushable_publish_offset
+o 594cb1a314b96366 24 800821cc hl_psx::skill_value
+o 1405ee2b89e8cee8 105 8008222c hl_psx::prop_check_support
+o dd4eba8ebb112d86 66 800823d0 hl_psx::dir_q12
+o 41daf8826c2c6167 164 800824d8 hl_psx::damage_brush_ent
+o d67f6c25070ecfe9 99 80082768 hl_psx::tick_talk_move_away
+o 80a6d83708cc32bf 65 800828f4 hl_psx::hud::damage_kind
+o f44e37d032fd85c1 164 800829f8 hl_psx::sfx::load_bank
+o 8f9c3c9811ff6be6 163 80082c88 hl_psx::logic_activate_button
+o d0d34a60aaa061c0 43 80082f14 <psx_gpu::material::TexturedGouraudPacketMaterial>::from_texture
+o d454377d1ae7adf0 405 80082fc0 hl_psx::logic_hurt_touch
+o 429120fc158cab5c 159 80083614 hl_psx::scientist_try_response
+o 966fc71e198f8ab5 152 80083890 <psx_engine::render::PrimitivePacketWordReservation>::commit
+o 09bc365ae0ffd715 62 80083af0 hl_psx::nihilanth::marker
+o afd43b5af445d391 158 80083be8 hl_psx::menu::draw_sheen
+o 7bd8fc02c7a5a94b 158 80083e60 hl_psx::species::acquire
+o 407bf9df6dc76aa0 157 800840d8 hl_psx::hud::ammo_bar::<1> @hl_psx
+o fc2e576c45054ae7 155 8008434c psx_goldsrc::hltext::draw_text_scaled::<hl_psx::overlay::OverlayTail> @hl_psx
+o e37977767178167f 98 800845b8 psx_goldsrc::fx::sprite_textured_material::<hl_psx::overlay::OverlayTail> @hl_psx
+o 9b1ea27cf835632e 60 80084740 psx_vram::copy_to_vram_header
+o cbdc0cd58fefb116 151 80084830 <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::load_chunk_decompressed @hl_psx
+o be11c8ce934ffe26 150 80084a8c hl_psx::sky_tri::{closure#0} @hl_psx
+o 0fddf05c8a4e9c17 150 80084ce4 hl_psx::put_impact_mark
+o fe7ac293e4aa18b6 150 80084f3c hl_psx::throwable::bounce_with
+o d46d4f6308529567 46 80085194 <psx_mc::hardware::HardwareCard as psx_mc::Block>::read_frame @hl_psx
+o 833ffd30eaef1156 104 8008524c psx_goldsrc::render::clip_edge
+o 629f805b10635781 141 800853ec hl_psx::alert_friends
+o 9f5d321da6393265 799 80085620 hl_psx::project_hmd7_model_inner
+o 2457bf15d95dbdc0 23 8008629c hl_psx::brush_train_audio_stop
+o 51842adb7f9ee3ce 9 800862f8 <psx_font::FontAtlas>::draw_text
+o 7fe23d0d33021c96 20 8008631c hl_psx::phys::mover_local_segment
+o dd83228308b54aa8 93 8008636c <psx_asset::hmd8::Pose>::bone
+o d684b6f9c0511497 59 800864e0 hl_psx::nihilanth::name_id
+o 328de811d93028c2 150 800865cc <psx_asset::hmd8::ModelFrame>::bone
+o c14bfbbae74154c5 148 80086824 hl_psx::draw_pause_list
+o a9c2e46f8c76d360 79 80086a74 <hl_psx::phys::Player>::push_by_mover
+o eb24718292576575 199 80086bb0 hl_psx::compose_hmd7_bone_gte
+o 43bb12af450a8ecd 148 80086ecc hl_psx::monster_opens_door
+o 0e01866647860fc3 147 8008711c <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::read_frame @hl_psx
+o 491fee6f5917a631 145 80087368 hl_psx::osprey::osprey_update_goal
+o 9d34224e493743a0 145 800875ac psx_goldsrc::ground_logic::sweep_player_actor
+o 1fde73e5d943d433 144 800877f0 <psx_io::cd::reader::SectorReader>::send_command_waiting
+o 270f28e126f8baa3 141 80087a30 hl_psx::mover_blocked
+o 300514c980853f05 63 80087c64 hl_psx::logic_fire_global_autos
+o ac00c17ad0f29805 111 80087d60 hl_psx::prop_clip
+o 542eb940c312e152 91 80087f1c hl_psx::spawn_gibs
+o 66e232e4f28ef153 10 80088088 __psx_rt_call_on_stack
+o a2ec6f5e370f684b 141 800880b0 hl_psx::nav_route_simplified_entry
+o 87d1aad1d168598b 141 800882e4 psx_pad::controllers::config::<psx_io::periph::ControllerPort> @psx_engine
+o af13aae5d907a2ec 141 80088518 <psx_io::cd::reader::SectorReader>::wait_irq_with
+o 147b45cb746ce485 39 8008874c hl_psx::beam_sparks
+o 3b999c9341a1533e 55 800887e8 <psx_font::FontAtlas>::glyph_uv
+o b4d1f82e0e27455a 141 800888c4 psx_rt::entry::set_entry_state
+o 6859b508d47b5548 140 80088af8 hl_psx::garg::swipe
+o 45854d7d705ba6cd 135 80088d28 <hl_psx::Arsenal>::give_arrival_loadout
+o 6aa74728cd6aa6ee 24 80088f44 <hl_psx::save::Writer>::bytes
+o 3ac5d78aa16fc17e 54 80088fa4 hl_psx::logic_teleport_touch
+o a36e58b0b26f80ed 135 8008907c hl_psx::menu::draw_debug_menu
+o aa5d450be7ffce62 84 80089298 <hl_psx::Arsenal>::cycle
+o 9acd5c84a9277064 1367 800893e8 psx_goldsrc::emit::emit_soft_cell::<hl_psx::GameEmit> @hl_psx
+o ec8a84c8d6733e45 35 8008a944 psx_rt::present::stop_walk_and_raise
+o 08feaea550a05180 1062 8008a9d0 <hl_psx::SplitWalk as psx_rt::scratchpad::StackEntry>::enter
+o 600eb1a74acf8d4e 135 8008ba68 hl_psx::species::gonarch_slash
+o 63c2715736fff66c 35 8008bc84 hl_psx::nav_route_fail_open
+o 0e3f118612958cdd 2 8008bd10 <psx_rt::scratchpad::ScratchpadStack<536, 832>>::stack_entry_fn::<hl_psx::SplitWalk> @hl_psx
+o b13eca3a563a5fe6 135 8008bd18 hl_format::pvs_pair::validate
+o abe1053b1cf59638 134 8008bf34 hl_psx::phys::controller_world_line_clear
+o 034284c6c0116932 134 8008c14c hl_psx::segments::consume
+o 1e5ec7312923adc1 119 8008c364 <psx_asset::hmd8::Model>::from_bytes_with_vertex_cap
+o dca98f8e4a3d8dee 51 8008c540 psx_gpu::gpu::draw::<psx_gpu::prim::QuadTexturedMaterial> @psx_gpu
+o 53be844cb30adc00 133 8008c60c hl_psx::tram_logic::atan2_q28
+o 920e3cafb1515b0c 133 8008c820 hl_psx::phys::try_unstick
+o 6437226cdff5ae65 131 8008ca34 hl_psx::sprite::load_explosion
+o a097fb22d72e89d2 130 8008cc40 hl_psx::depth_split_point
+o 0cef88bbb9e35c7a 125 8008ce48 hl_psx::sprite::load_decals
+o e762848662fa3fbf 22 8008d03c <hl_psx::map::Map>::logic_aux
+o fd19385798b98155 129 8008d094 hl_psx::nihilanth::note_shot
+o 9cfdad46af04b2c7 129 8008d298 hl_psx::throwable::hand_grenade_velocity
+o d6fabeeba0669a2c 128 8008d49c hl_psx::sky_draw_region
+o eafa9df5034bda39 63 8008d69c hl_psx::menu::draw_control_column
+o afd632275027538f 48 8008d798 <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_gpu::prim::QuadTexturedGouraud> @hl_psx
+o b67363efe7e9d873 128 8008d858 hl_psx::try_start_talk_move_away
+o 129717801b3388b6 128 8008da58 hl_psx::monster_damage_ai_triggers
+o 04afe7a51aad15aa 128 8008dc58 psx_spu::upload_adpcm_pio
+o 710beea3917a6b91 104 8008de58 <psx_io::cd::reader::SectorReader>::get_status
+o 5f97108c3a1937d0 566 8008dff8 hl_psx::draw_model
+o 241f843a4c4b53ac 121 8008e8d0 hl_psx::logic_activate_door_linked
+o 5b7bce91110856b8 88 8008eab4 <psx_asset::hmd8::Model>::clip_end_pose
+o 310dded087e3368b 45 8008ec14 hl_psx::menu::draw_simple_list
+o 97ebf52d9a9fb433 78 8008ecc8 hl_psx::load_accounted_map_chunk
+o a842e95ffc07c7f2 179 8008ee00 hl_psx::phys::recurse_visual_clear
+o 8eaa78d3b4a87ebd 121 8008f0cc hl_psx::finalize_changelevel_player
+o d9721c13f064afac 121 8008f2b0 hl_psx::proj_fx::lit
+o 339161c838e63c30 121 8008f494 core::str::count::do_count_chars
+o b818682edceeedca 120 8008f678 hl_psx::pushable_float_step
+o d4a72dc8e776d353 40 8008f858 <core::iter::adapters::chain::Chain<core::slice::iter::Iter<i32>, core::slice::iter::Iter<i32>> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::any::check<&i32, hl_psx::tram_logic::project_onto_segment::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
+o dba259f972c436e0 41 8008f8f8 psx_vram::upload_bytes
+o 70424fbf6f75ff60 120 8008f99c hl_psx::tripmine::chain
+o 5545ee5ed53972df 118 8008fb7c hl_psx::beam_live_point
+o b1f2ce5372d4c221 118 8008fd54 <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::write_frame @hl_psx
+o 9aa419ff2ac06170 117 8008ff2c psx_math::int32::div_u64_by_u32
+o f170d8674a78e041 116 80090100 hl_psx::launch_landmark_record
+o 814b030a10618b19 114 800902d0 hl_psx::mapsnap::remove_dead
+o 1173dfd12b9fbd5d 113 80090498 hl_psx::logic_check_multisources
+o d7773817adc94585 113 8009065c hl_psx::apache::aim_vectors
+o b1ee0437549ba27d 40 80090820 hl_psx::menu::menu_buttons
+o 854b745774d008f8 79 800908c0 hl_psx::garg::shake
+o 24af55a30933bb29 67 800909fc hl_psx::emit_cv_near_fan
+o 7835a4c6216404af 66 80090b08 <hl_psx::CameraVisibility>::view_center
+o 3223a60a10872740 112 80090c10 hl_psx::explode
+o 20dc0752f93dadc8 112 80090dd0 <hl_psx::phys::Player>::jump_launch
+o e6696385e50face5 112 80090f90 hl_psx::menu::upload_tex
+o abbc83a25af0646e 112 80091150 hl_psx::phys::packed_euler_rotation
+o 8bc8b25dbc412c79 111 80091310 hl_psx::autoaim::aim_at
+o cbd49139a2163be4 101 800914cc hl_psx::barnacle::tongue
+o 9cba14727aeaeb11 39 80091660 <psx_font::BitmapFont>::text_width
+o 8274eb7a39a3591d 110 800916fc hl_psx::scientist_heal_tick
+o 08b272dc73166eb3 110 800918b4 psx_goldsrc::hltext::upload_gameplay_atlas
+o b13a9ee7422c33dc 109 80091a6c hl_psx::script_human_chord_clear
+o 7bb5bacc369bce41 108 80091c20 psx_goldsrc::fx::quad_textured_material::<hl_psx::overlay::OverlayTail> @hl_psx
+o 7f4bb5a534bc95e3 108 80091dd0 hl_psx::logic_apply_brush_train_command
+o 27a7d6efd0fb33bc 14 80091f80 hl_psx::platrot_world_yaw
+o 5590ff61ff1513ff 37 80091fb8 hl_psx::aabb_overlaps
+o 16e91d97f31d9174 108 8009204c hl_psx::apache::dying
+o 156bf54a4e1151a6 73 800921fc <hl_psx::map::Map>::render_tri
+o 24a7cbdce0566e4d 294 80092320 hl_psx::project_beam_segment
+o ddf92445389b838f 12 800927b8 hl_psx::draw_next_loading_screen
+o f621b5445a43488b 211 800927e8 psx_goldsrc::render::lerp_cv_near
+o ced46a50dde8d1c2 98 80092b34 hl_psx::draw_muzzle_flash
+o ef939e372c2ae1c9 36 80092cbc hl_psx::feet_in_water
+o 8d8e9c1c3ecc4f5c 102 80092d4c hl_psx::script_root_motion
+o bc702a8b366179bf 36 80092ee4 psx_gpu::gpu::draw::<psx_gpu::prim::QuadFlat> @psx_gpu
+o d666532700af5198 102 80092f74 <psx_gte_core::math::Mat3I16>::transform
+o 35a4b182e398a359 98 8009310c hl_psx::momentary_apply_phase
+o aade3e4a72607da4 98 80093294 hl_psx::phys::visual_sphere_solid_from
+o 63926c09d3538313 98 8009341c <core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match
+o a3e671f0bf3268d4 98 800935a4 psx_cdstream::drain::take_sector
+o b0be4fa3d45d1441 97 8009372c hl_psx::nav_next_node
+o 85cf492a7629e20f 97 800938b0 hl_psx::tram_lookahead_q8
+o ac5e06b1bf3e11a3 19 80093a34 hl_psx::platrot_angles_q8
+o 9ba21bd67ca7eaee 135 80093a80 psx_goldsrc::render::guard_clip
+o 30ff623ed69643d6 97 80093c9c hl_psx::tram_path_track_use
+o 45e2d7508de98e29 14 80093e20 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#0}> @hl_psx
+o 9e4b4f1da1b42104 67 80093e58 hl_psx::sfx::load_dialogue_pack
+o f1675c40e0cc4ea1 15 80093f64 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#1}> @hl_psx
+o e265ae432e13c8e4 31 80093fa0 __psx_rt_flush_i_cache
+o 3604752d41c813c1 31 8009401c hl_psx::push_tracer_styled
+o 7a4f656d3aa6eac2 97 80094098 hl_psx::depth_split_underlay
+o e24ba1b33d7c90af 85 8009421c hl_psx::draw_beam_textured::{closure#2} @hl_psx
+o 84203773abda631b 35 80094370 hl_psx::phys::trace_nodes
+o 18fa2e763bf73607 45 800943fc <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::select @hl_psx
+o 46c9e5468f51024f 31 800944b0 psx_goldsrc::driver::quad_flat
+o 56a06e8a4d87b50d 38 8009452c <hl_psx::map::Map>::plane_q5
+o ee32dc17e64938ad 14 800945c4 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#2}> @hl_psx
+o 06b2b6d27db485a7 21 800945fc hl_psx::blast_line_clear
+o c24891a1b4aaf566 15 80094650 <core::slice::iter::Iter<(i32, i32)> as core::iter::traits::iterator::Iterator>::all::<psx_goldsrc::render::residue_screen_coverage::{closure#3}> @hl_psx
+o 9b3e0b7a3e940722 31 8009468c hl_psx::autoaim::aim_at::{closure#0} @hl_psx
+o ff322419808507e0 31 80094708 psx_vram::packed_upload_word
+o c63476ab21f45cf6 51 80094784 hl_psx::blast_sees
+o 56c6fdba79085a08 124 80094850 hl_psx::emit_residue_children
+o fd7bb1122e0938d1 97 80094a40 <hl_psx::map::Map>::nav_route_next
+o fd04c94721548042 95 80094bc4 hl_psx::draw_pause_menu
+o 3ad7c4710903ed94 176 80094d40 hl_psx::refresh_prop_near_ents
+o 7cdfe1ae855cb78f 24 80095000 hl_psx::species::cue_or
+o a9c056aa38104dc0 97 80095060 hl_psx::menu::draw_segment_menu
+o 73126b30921589c4 96 800951e4 hl_psx::segment_box_frac
+o c1804b7d4c57930b 61 80095364 psx_goldsrc::pushable::clamp_velocity
+o 2a8cbb0d627b52e8 22 80095458 hl_psx::hev_hit
+o 7a795b2cb47890bb 22 800954b0 hl_psx::player_rules::compass_intensity
+o e0a92bdbb69320f1 96 80095508 hl_psx::env_sound_audio::bank_end
+o 4fc2de6f5607c7fb 96 80095688 hl_psx::tripmine::touches
+o 1b2bc01ea91df344 96 80095808 <psx_asset::hmd8::ModelFrame>::mouth_xform
+o d8129fe99db2cec3 95 80095988 hl_psx::proj_fx::egon_beam
+o 21e8edc71812c5cc 9 80095b04 psx_rt::dispatch::detach
+o 406d6541a7ba8c3f 19 80095b28 hl_psx::global_is_on
+o 7fc091ed76313e86 51 80095b74 hl_psx::prop_voice
+o e7dd657dd105864b 38 80095c40 <psx_engine::render::PrimitivePacketArena>::reuse_packet::<psx_gpu::prim::TriTexturedGouraud> @hl_psx
+o 325c4d9a44a6e80c 81 80095cd8 hl_psx::aim_rotation
+o 6c12fbf766e6ff80 17 80095e1c hl_psx::skill_hit
+o 5866dc66394089bd 83 80095e60 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_at_distance @hl_psx
+o 93744abacbc303ef 16 80095fac hl_psx::setpiece_sfx::play
+o 75362cf412c062f7 17 80095fec hl_psx::actor_nav_hull
+o 2e3833728c0c40d1 16 80096030 psx_goldsrc::driver::quad_textured_material
+o 810d7549ec0703d2 25 80096070 psx_io::gpu::write_commands_when_ready_slow
+o ae9a9297e4d0f58e 29 800960d4 psx_goldsrc::render::guard_clip::{closure#0} @psx_goldsrc
+o ed4ebc04d3037b16 93 80096148 hl_psx::skill_scaled_damage
+o d670d2db7e8e09df 93 800962bc <psx_mc::Card<psx_mc::hardware::HardwareCard>>::chain @hl_psx
+o db35700c584fc551 93 80096430 hl_psx::save::read_latest
+o 202cb2aab8130b6e 92 800965a4 hl_psx::proj_logic::segment_closest
+o 087a3fae6a58f201 44 80096714 <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::any::check<usize, hl_psx::brush_touches_actor::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
+o 7e20d0d89f0b909a 56 800967c4 hl_psx::hud::sprite::<1> @hl_psx
+o f856eef0d2840e42 12 800968a4 hl_psx::run_pause_menu::{closure#3} @hl_psx
+o 0175e0f34084b9b2 248 800968d4 psx_math_clip_lanes8_plane
+o 514ebe844d8e3c6a 92 80096cb4 <psx_loading::Style>::content_width
+o dd3f21f5fc4dd398 91 80096e24 hl_psx::shoot_buttons
+o 67b20c817b638b14 91 80096f90 <hl_psx::map::Map>::tri_rgb_words
+o d0966b81ebd5af52 91 800970fc psx_asset::hmd8::hma1_section_valid
+o 0d747334b775d98e 90 80097268 hl_psx::prop_spawn_floor_y_down
+o f16fe23b712aa42c 90 800973d0 <hl_psx::Arsenal>::give_all_debug
+o 46338ed3bd8c1d0a 90 80097538 hl_psx::tripmine::tick_placed
+o 57ca6aac59a0c079 89 800976a0 hl_psx::logic_shoot
+o efe729b9971c4161 61 80097804 hl_psx::phys::clip_velocity_over
+o 1b847c5c6e227836 240 800978f8 psx_goldsrc::render::lerp_sv
+o 450b768cb80c5812 89 80097cb8 psx_goldsrc::driver::tri_flat_blended::{closure#0} @psx_goldsrc
+o 31c0243c438e8df4 88 80097e1c hl_psx::menu::draw_scroll_bar
+o 924244206a53e48e 88 80097f7c <psx_io::cd::reader::SectorReader>::read_sector
+o 33b8ea8f4360f61b 87 800980dc hl_psx::hud::history_add
+o 585e731c6496466a 87 80098238 hl_psx::sprite::load_pack
+o d70047e8a27794cf 86 80098394 hl_psx::music::start
+o bdfb8734f7d218e8 86 800984ec hl_psx::apache::corner
+o d599ffb04078c810 33 80098644 hl_psx::spark_sound
+o 920702c1a90cce08 60 800986c8 hl_psx::phys::mover_local
+o a47ad1fd90c7c542 86 800987b8 hl_psx::mortar::controller
+o f8e343c83e0dad59 85 80098910 hl_psx::eject_casing
+o dd760e015d8e8a2a 85 80098a64 <hl_psx::species::LeechWorld as hl_psx::leech::World>::look
+o 428a25f311ab032b 84 80098bb8 hl_psx::proj_fx::gauss_beam
+o 8415a72055fb70df 84 80098d08 hl_psx::nihilanth::bind
+o 9a235bef52f7f234 83 80098e58 hl_psx::phys::actor_line_clear_movers
+o 36ca3a053b1d7e60 82 80098fa4 hl_psx::logic_activate_door
+o eef24867a543900d 81 800990ec hl_psx::tram_desired_yaw_q28
+o bd7c615ad9fe40ac 81 80099230 <hl_psx::Arsenal>::retire_spent
+o 7abef2ac180b7ce5 81 80099374 psx_io::cd::lba_to_bcd_msf
+o 8fb546bff793315c 81 800994b8 psx_rt::cache::wait_for_quiet::<psx_rt::cache::HwBus> @psx_rt
+o 6ee0c824cb189f08 60 800995fc hl_psx::skill_damage
+o e75aef467d902261 177 800996ec hl_psx::box_touches_pvs_node
+o 5df541ea31a0da24 80 800999b0 hl_psx::actor_chord_blocked
+o b88477eaeb3c4836 72 80099af0 hl_psx::phys::node_point_solid_from
+o d1fd24ced30a6b8c 97 80099c10 <psx_io::cd::xa::Engine>::poll::<psx_io::periph::Cd> @psx_io
+o 48a85d46d54a4b9e 80 80099d94 hl_psx::nav_route_available
+o 0da515a0605aeb41 80 80099ed4 hl_psx::menu::draw_credits_menu
+o 6f3171047cdcd9fa 79 8009a014 psx_cdstream::drain::on_cd_interrupt
+o 5e59753a4b0460fd 57 8009a150 hl_psx::tram_seat_to_world
+o 164aa910fce56544 621 8009a234 hl_psx::draw_beam_textured
+o c0c97c360ce2dfe8 79 8009abe8 <psx_display::label::Label>::toward
+o d40e5fd5b5e14255 25 8009ad24 hl_psx::loading_idle
+o d4f6502a927a4a4d 22 8009ad88 psx_math::sincos::sin_q12
+o 42d13088faf81907 79 8009ade0 <psx_pad::controllers::Slot>::settle::<psx_io::periph::ControllerPort> @psx_engine
+o 0a82d0066a998751 78 8009af1c psx_segments::validate::<u16, hl_psx::segments::Spawn, &hl_psx::save::Checkpoint> @hl_psx
+o 85cf92d667e17be7 78 8009b054 <psx_fx::particles::ParticlePool<64>>::spawn_burst @hl_psx
+o 77d73834fa2fcc83 78 8009b18c hl_psx::phys::movers_clear_at_hull
+o 5e32e824e9628db4 78 8009b2c4 core::slice::memchr::memchr_aligned::runtime
+o 685fb154a569c582 77 8009b3fc hl_psx::hit_group_damage
+o 768977e34cde2b42 44 8009b530 hl_psx::draw_sky_windows::{closure#1} @hl_psx
+o 239723ab20dba598 172 8009b5e0 hl_psx::try_emit_clipped_residue
+o 6f6e63f8b860fca3 68 8009b890 hl_psx::arm_map_progress
+o 31ae58aeb223bc5b 33 8009b9a0 <hl_psx::map::Map>::prop
+o 04288ddd2b130a03 77 8009ba24 <hl_psx::map::Map>::apply_dynamic_light
+o 0342de16237db0ae 77 8009bb58 psx_goldsrc::ladder_logic::goldsrc_velocity_q6
+o f056f60ebca1cf3b 77 8009bc8c hl_psx::phys::point_in_movers
+o abca5f779887274c 76 8009bdc0 hl_psx::water_tri_hidden
+o 082eaf9cd4d04ecf 76 8009bef0 hl_psx::sky_texel_d
+o 3b07172a053aabe5 76 8009c020 psx_asset::hmd8::compose_affine
+o b8c5c24763b09767 76 8009c150 <psx_engine::render::PrimitivePacketArena>::reserve_packet_words
+o 2758c55c0c5e688f 75 8009c280 hl_psx::monster_command_touch
+o 5c48d83713b07457 75 8009c3ac hl_psx::menu::split_menu
+o 8c75298082f873ab 75 8009c4d8 psx_asset::hma1::validated_layout
+o 937a39142a997580 74 8009c604 core::array::try_from_fn::<core::ops::try_trait::NeverShortCircuit<i32>, 3, core::ops::try_trait::Wrapped<i32, usize, hl_psx::blood_position::{closure#0}>> @hl_psx
+o d77b9890bb57a924 120 8009c72c hl_psx::phys::line_clear_movers
+o 5df7a87a981954e7 50 8009c90c hl_psx::spawn_debris
+o 413a529f23b4fbe5 32 8009c9d4 <psx_gpu::prim::Sprite>::with_material
+o 7e4cec2d29a2ee92 74 8009ca54 hl_psx::prop_use_reply
+o 923f9ceeb45ac585 74 8009cb7c hl_psx::proj_fx::push_tri
+o a0348bbfa45f7d05 73 8009cca4 hl_psx::try_emit_native_residue::{closure#1} @hl_psx
+o eb30cf292f4433f4 73 8009cdc8 hl_psx::prop_flinch_ticks
+o f0d54d35ecae15e2 73 8009ceec <hl_psx::map::Map>::tex_anim_chain
+o 8a480a2722e268ee 73 8009d010 <hl_psx::map::Map>::entity
+o f42bf69fe8aebe10 73 8009d134 hl_format::pvs_pair::validate_room::{closure#1} @hl_format
+o f0beb168d1d650b2 73 8009d258 <psx_gpu::prim::TriTextured>::with_material
+o f8a7c6d543b17362 72 8009d37c hl_psx::phys::rot_axis
+o 33b2adce81ea74e4 72 8009d49c hl_psx::music::position
+o 86f3a3c1685ae703 71 8009d5bc <hl_psx::map::Map>::dynamic_corner
+o 1cb85d5f44d61309 71 8009d6d8 hl_psx::phys::mover_turn_delta
+o 41000297872d9530 70 8009d7f4 hl_psx::talk_hurt_by_player
+o 8b6971644135ec9e 70 8009d90c hl_psx::draw_dark_text_panel
+o d820672a2d3f0fa9 8 8009da24 hl_psx::retry_streamed_chunk
+o 1393124f8f12903a 362 8009da44 hl_psx::pick_target
+o fe1ad8d7fa4c8560 127 8009dfec hl_psx::prop_occlusion_visible
+o bef91c8b3cb3e601 70 8009e1e8 hl_psx::sfx::init_from_pack
+o d92f339e7eb570da 69 8009e300 hl_psx::shade_world_rgb
+o 9ffef2123accfdce 69 8009e414 hl_psx::merge_vis
+o d8d3ad3dff52f5c4 40 8009e528 hl_psx::tram_seat_to_local
+o feb7969e422a317a 66 8009e5c8 hl_psx::project_beam_segment::{closure#0} @hl_psx
+o acd4b3850d8e0037 74 8009e6d0 hl_psx::sprite::slot_for
+o 0dd66ce3e570f7fb 69 8009e7f8 hl_psx::menu::draw_vol_bar
+o 108eb6e6fd97562e 69 8009e90c hl_psx::phys::mover_clear_at_hull
+o 80cb8497a16106fc 69 8009ea20 hl_psx::tank::ray_hits_player
+o c105e863a4b52311 69 8009eb34 psx_rt::entry::spu_entry_state
+o 18b7a8cb06178d59 68 8009ec48 hl_psx::detonate_satchels
+o 1ec5d5d9796ffaaa 68 8009ed58 <hl_psx::phys::Player>::set_carried_position
+o 597749eb24d5eeac 68 8009ee68 hl_psx::scientist_logic::scientist_use_score
+o c109adfe2d4c02b9 67 8009ef78 <psx_mc::fs::DataCursor>::next_byte::<psx_mc::hardware::HardwareCard> @hl_psx
+o a79415c71a35afd9 33 8009f084 <hl_psx::scientist_logic::HealClock>::start
+o 21a6f2536e63360c 67 8009f108 hl_psx::senses::relation
+o c91fed9cce03187c 316 8009f214 hl_psx::logic_fire_targets
+o 8cc8d9b9e90d5f5f 67 8009f704 hl_psx::camera_use
+o 55f153f48e96501b 67 8009f810 hl_psx::consume_weapon_pickup
+o 143fe3c98e420000 29 8009f91c hl_psx::project_vert_fixed
+o 7a152496a3c17e9f 24 8009f990 hl_psx::project_beam_segment::{closure#2} @hl_psx
+o 1f516038757771fc 66 8009f9f0 hl_psx::platrot_local_to_world
+o 4bff8fa0d9454871 66 8009faf8 hl_psx::scientist_logic::precise_yaw_from_vec
+o 64447cc73bf31649 66 8009fc00 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::exchange_card @hl_psx
+o a3c28f3c04ec7e93 13 8009fd08 hl_psx::platrot_yaw
+o 035a8496d5343e5b 147 8009fd3c hl_psx::logic_kill_targets
+o d45195d27b255297 19 8009ff88 hl_psx::apache::at
+o b53b059d888369e4 352 8009ffd4 hl_psx::draw_beam
+o cb57fd10d052334f 65 800a0554 hl_psx::prop_can_gib
+o b73527f394d364cd 12 800a0658 psx_io::cd::ack_all_and_reset_parameters
+o 834bdc47573c698a 978 800a0688 <psx_asset::hma1::Model>::decode_with
+o f814792e057c7a1b 65 800a15d0 hl_psx::depth_split_row
+o f58f2a9738737188 65 800a16d4 hl_psx::logic_breakable_touch
+o cc5326e8871e8a87 65 800a17d8 psx_goldsrc::emit::words::platrot_world_to_local
+o c580dc7acdddea02 65 800a18dc psx_io::gpu::kick_draw_done_list
+o cd2a1e84df2ca436 64 800a19e0 psx_pack::visibility::decode::<false, false> @hl_psx
+o 8889f4abd360da11 64 800a1ae0 hl_psx::save::read_settings
+o 36f81c795a312ce7 32 800a1be0 hl_psx::player_tram_audio_start
+o 0c27b1ea9f566d44 39 800a1c60 hl_psx::sprite::def
+o 60227e90a25e5500 63 800a1cfc psx_goldsrc::driver::sprite_material::{closure#0} @psx_goldsrc
+o bf8309cd61d68c08 63 800a1df8 psx_gpu::gpu::write_draw_target
+o 3947d30c77a7e5e4 62 800a1ef4 <hl_psx::hev::Suit>::request
+o d046561d08b7a13c 62 800a1fec hl_psx::tank::vectors
+o 7362af7769e70566 60 800a20e4 hl_psx::revert_saved_tick
+o 256dc5633ba4e008 60 800a21d4 hl_psx::boss_walker_damage
+o dfd17ad054b7aa00 60 800a22c4 hl_psx::pushable_detect_support
+o 31e602db87b1bfb4 60 800a23b4 <psx_mc::Card<psx_mc::hardware::HardwareCard>>::free_blocks_in @hl_psx
+o 5cbc8221e402173c 60 800a24a4 hl_psx::mapsnap::capture_here
+o b7b3da9bcc3e1c66 24 800a2594 hl_psx::proj_logic::integrate_q4
+o f14eb348cabc380a 192 800a25f4 psx_pad::poll_selected::<psx_io::periph::ControllerPort> @psx_engine
+o dfafc3e48548afd7 60 800a28f4 psx_io::cd::pause::pause_until_stopped::<psx_io::cd::reader::ReaderPause> @psx_io
+o 28e18e60177c2566 60 800a29e4 psx_rt::interrupts::pace_direct_flip
+o 88c4053d82c8e017 59 800a2ad4 hl_psx::prop_touch_triggers
+o 6922661e9d0da661 59 800a2bc0 hl_psx::prop_is_enemy_target
+o b7729dc6f11223a8 59 800a2cac hl_psx::tram_next
+o bb9e7e38294c61ba 59 800a2d98 <hl_psx::map::Map>::signed_plane
+o 8e8dd522089701f7 59 800a2e84 hl_psx::phys::mat_local
+o 8125b98829ba7d67 59 800a2f70 hl_psx::phys::mat_world
+o 7a1589e7f2cadc9a 59 800a305c hl_psx::tank::barrel
+o 33d68fc261963f4e 59 800a3148 psx_rt::interrupts::install_vblank_counter
+o c398c25fc3cabe35 58 800a3234 hl_psx::logic_infodecal
+o 98147d6df4e0a417 58 800a331c hl_psx::fire_gauss_charge
+o 6cb9eced03375c2f 58 800a3404 hl_psx::music_stop_for_menu
+o 62eaf52e33d26093 58 800a34ec <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::stream_pump @hl_psx
+o 9557a205ae2d71fa 95 800a35d4 psx_goldsrc::render::perspective_screen_midpoint
+o 8256450abe8e7f9e 58 800a3750 <psx_asset::hmd8::Model>::vertex_unchecked
+o 36b367c23da587e4 58 800a3838 hl_psx::menu::draw_logo_tinted
+o 5f5e9be529d5b87e 58 800a3920 hl_psx::tank::tank_player_fire
+o b16a385a3c3f2243 58 800a3a08 <psx_io::cd::reader::SectorReader>::pop_sector
+o d1cfbe3dd3e7cee4 57 800a3af0 hl_psx::tram_seat_raw_local
+o 4fbebf85852be57b 57 800a3bd4 hl_psx::append_kv
+o 6aef23cfd62e3c93 34 800a3cb8 hl_psx::phys::trace
+o f02cf3da7b90de24 57 800a3d40 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_voice_authored @hl_psx
+o 71dba42099371395 57 800a3e24 psx_io::cd::wait_ack_then_complete
+o 4f528fc2431c33a2 56 800a3f08 <hl_psx::Arsenal>::finish_reload
+o 94508cfbbbbe586b 56 800a3fe8 hl_psx::apache::norm
+o de9f73e2083e39dd 55 800a40c8 <psx_mc::fs::DataWriter>::flush_frame::<psx_mc::hardware::HardwareCard> @hl_psx
+o 5865d6d47786ce91 55 800a41a4 psx_goldsrc::fx::quad_flat::<hl_psx::overlay::OverlayTail> @hl_psx
+o 31b90b24b332f031 55 800a4280 hl_psx::grenade_blast_origin
+o d11b1892a8c09ab2 25 800a435c hl_psx::prop_set_pos
+o 5b68959481e6df07 260 800a43c0 hl_psx::prop_push_vector
+o 0079410427f34e98 172 800a47d0 <psx_asset::hmd8::Model>::tracks
+o eb5c230513132e6b 60 800a4a80 hl_psx::logic_sub_use_targets
+o 892d119c38dc22bf 55 800a4b70 <hl_psx::senses::Sounds>::insert
+o ff5df359a403ba79 55 800a4c4c hl_psx::proj_logic::segment_hits_cylinder
+o cdd96fff2b030013 8 800a4d28 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::ticks
+o 2bcc801ce64031cc 61 800a4d48 hl_psx::try_emit_clipped_residue::{closure#1} @hl_psx
+o a189ec438ae4d2ec 55 800a4e3c hl_psx::save::settings_encode
+o a21b7bf0537319b5 211 800a4f18 hl_psx::phys::trace_all
+o d0fbd157d3bccfa8 25 800a5264 hl_psx::pushable_apply_settle
+o 8d9f94d3c0faa8cc 678 800a52c8 hl_psx::emit_affine_quad_children
+o f1e1b9c8d563361d 8 800a5d60 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::yaw_of
+o f4ee6a6cd07dafbb 97 800a5d80 hl_psx::tram_path_pos
+o 4dae17d056732d5f 102 800a5f04 hl_psx::project_world_point
+o 5ebe5291f9eb16b9 55 800a609c hl_psx::mapsnap::pending
+o fee0c5e8cfe0d9e9 55 800a6178 hl_psx::settings::persist_if_changed
+o dcc35ba658e32e32 55 800a6254 psx_goldsrc::emit::words::tri_fits_gpu
+o 0cf3137c7f1dc0bd 54 800a6330 psx_mc::hardware::write_transaction::<psx_io::periph::ControllerPort> @hl_psx
+o 0a2fa8dc173ffa48 54 800a6408 <psx_fx::particles::Particle>::rect
+o eadccf5eddf01ad6 54 800a64e0 hl_psx::save::write
+o 374dcc84c24d63eb 54 800a65b8 hl_psx::osprey::osprey_corner
+o 01b2368f8007680a 54 800a6690 psx_cdstream::drain::poll::{closure#0} @psx_cdstream
+o cfacba49aa747a79 54 800a6768 <psx_io::cd::xa::Engine>::setup::<psx_io::periph::Cd> @psx_io
+o 9dc8466172d275f9 54 800a6840 psx_rt::interrupts::wait_vblank
+o 25ae032998f3357a 53 800a6918 psx_goldsrc::ladder_logic::mount_target
+o f180164ba8a824df 53 800a69ec hl_psx::air_navigation::distance2
+o a2b3f281bc99e52a 53 800a6ac0 hl_psx::menu::draw_chapter_menu
+o 744b6a8028adfb93 53 800a6b94 hl_psx::tank::tick_tanks
+o 463133d275218fea 53 800a6c68 psx_pack::decompress_hlzc_in_place
+o 6663f48c60f2efa2 52 800a6d3c hl_psx::vm_restore_live_tail
+o 56b377c1c42404b5 52 800a6e0c hl_psx::script_authored_hold_ticks
+o a3ed2c6ad84f72e5 52 800a6edc <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::set_map_loop_volume @hl_psx
+o 84da480edf0fc51c 45 800a6fac psx_gpu::gpu::draw::<psx_gpu::prim::TriTextured> @psx_goldsrc
+o 8028e7d43cfaa13c 54 800a7060 psx_goldsrc::render::quad_fits_gpu_xy
+o 4ea7d343e07b79df 94 800a7138 psx_pad::pad_exchange::<psx_io::periph::ControllerPort> @psx_pad
+o 85c0fe860c663937 15 800a72b0 psx_vram::texture_window_units
+o 65ac3dde24d016a8 22 800a72ec psx_math::int32::isqrt_u32
+o 31e1c308a6f2530d 27 800a7344 psx_asset::hma1::seg
+o 97d541433e73d7e3 43 800a73b0 hl_psx::logic_spark_use
+o 3ef7083f55c107c0 120 800a745c hl_psx::push_affine_quad_gt4
+o cc9c657cc28c15ad 51 800a763c hl_psx::spawn_debris_fixed
+o d64444107ff825ff 45 800a7708 psx_loading::ring_cell
+o f167aa93cd24957e 16 800a77bc <hl_psx::map::Map>::leaf_liquid
+o 78f042497c90e7f1 51 800a77fc hl_psx::music_suspend_for_stream
+o 9d897d26c38bc6ad 51 800a78c8 hl_psx::seg_len
+o 358a7342583ebd84 26 800a7994 <psx_gpu::display::DisplayConfig>::vertical_range_command
+o 464894f272e8e8b5 151 800a79fc hl_psx::script_tick_studio_events
+o ac2df203c84568ff 42 800a7c58 hl_psx::draw_look
+o cf6010b933ad40cd 69 800a7d00 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::level_authored_loop @hl_psx
+o 0258ecabbbe9aa90 16 800a7e14 <hl_psx::save::Writer>::u32
+o e2ead3fbd83f66de 191 800a7e54 hl_psx::water_touch
+o 3d39f091282af493 139 800a8150 <psx_asset::hmd8::Model>::pose
+o 5a9cb96460c3019c 484 800a837c hl_psx::phys::recurse
+o dbf843f8d92b1ca0 51 800a8b0c <psx_mc::Card<psx_mc::hardware::HardwareCard>>::read_dir @hl_psx
+o 475816b207552e0c 8 800a8bd8 psx_rt::cache::flush_instruction_cache
+o a783cc87fb833d83 104 800a8bf8 hl_psx::hud::number_3::<1> @hl_psx
+o b253edd49808861f 51 800a8d98 hl_psx::save::latest_sequence
+o 84f7e34b5038807a 51 800a8e64 <psx_io::periph::SpuDma>::write_counted
+o 40d9920d490ae416 51 800a8f30 <psx_io::cd::reader::SectorReader>::start_read
+o 488dd9894eb97048 50 800a8ffc hl_psx::vm_evict_selected
+o 358665c9e111d8e2 50 800a90c4 hl_psx::interpolated_tram_pose
+o c044c389e12986d0 27 800a918c hl_psx::nihilanth::bind::{closure#0} @hl_psx
+o 9a72130f3f9809ba 39 800a91f8 <psx_engine::render::PrimitivePacketArena as psx_engine::render::PrimitiveSink<psx_gpu::prim::QuadTexturedGouraud>>::push_unchecked @hl_psx
+o 8740d37750664e6b 50 800a9294 hl_psx::player_rules::bunny_cap
+o a8fe2f6297d5ab08 75 800a935c <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::authored_gain @hl_psx
+o d147cc5b14e6dab3 50 800a9488 hl_psx::menu::draw_list_row
+o fd5445fe70814c5e 1132 800a9550 hl_psx::phys::slide_move
+o 5812f7eee01fb28f 50 800aa700 hl_psx::osprey::osprey_init
+o 2d7abaad1689beaf 50 800aa7c8 <psx_io::cd::xa::Engine>::launch::<psx_io::periph::Cd> @psx_io
+o 4c275a56c4dd795f 50 800aa890 <psx_io::cd::reader::SectorReader>::ack_unexpected
+o 7fb5165f1f5286a5 50 800aa958 <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::wait_completion
+o f084d6b9c5f47346 50 800aaa20 psx_mc::fs::entry_name_eq
+o 9f4f553d76737993 49 800aaae8 hl_psx::proj_submodel_vert
+o 0abfac8ae88e8227 49 800aabac hl_psx::phys::mover_world_vector
+o c40d3b260b5f19c9 49 800aac70 <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::any::check<usize, hl_psx::global_is_on::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
+o dd7685ac17a1aecb 49 800aad34 <hl_psx::leech::Swim>::think::<hl_psx::species::LeechWorld>::{closure#0} @hl_psx
+o 2c096b9f194c6426 49 800aadf8 <psx_asset::hmd8::Model>::clip_frame
+o bc242a4ca512e314 15 800aaebc __psx_rt_dispatch_update
+o 4f0cc4c9dc14f4cb 53 800aaef8 psx_rt::present::wait_slot_empty_on::<psx_rt::present::Hardware> @psx_rt
+o 52b8a36a6f059d73 49 800aafcc <psx_loading::Gp0 as psx_loading::Sink>::packet
+o cd7b094cc02e86d2 49 800ab090 psx_rt::present::count_signal
+o 563d7dd63c9545af 48 800ab154 <psx_engine::render::PrimitivePacketArena>::push_packet::<hl_psx::BeamTri> @hl_psx
+o 3434c381ab065c03 48 800ab214 <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_gpu::prim::TriTexturedGouraud> @hl_psx
+o e8584d93baf902fb 48 800ab2d4 <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_gpu::prim::TriFlat> @hl_psx
+o aa51bf151ede69fe 48 800ab394 hl_psx::momentary_owner
+o a44096d42f999207 48 800ab454 hl_psx::fall_damage_player
+o 7b6b6ef1b6ad4060 48 800ab514 hl_psx::sfx::locate_bank_region
+o 7e5c2aed2a61310d 48 800ab5d4 hl_psx::tank::pose
+o 28417a70a1adb0bb 48 800ab694 hl_psx::sprite::reset
+o 1c66f4c22d279d6f 48 800ab754 <psx_io::cd::xa::Engine>::begin_read_at::<psx_io::periph::Cd> @psx_io
+o 8050d051586c1ac7 47 800ab814 <psx_engine::render::PrimitivePacketArena>::fence
+o 56a7870a1f92a273 33 800ab8d0 <[u8]>::eq_ignore_ascii_case_simple
+o 6131ccc51aeaefad 8 800ab954 hl_psx::phys::trace_line
+o bef08ce548370534 47 800ab974 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_voice @hl_psx
+o 7c1c5b80f46f391a 44 800aba30 hl_psx::sentry_schedule_wake
+o 6818fa1c22bc2538 35 800abae0 psx_goldsrc::ground_logic::ground_contact_q6
+o f10a855986659c45 47 800abb6c hl_psx::project_beam_segment::{closure#1} @hl_psx
+o 91d8188e000cdf95 47 800abc28 hl_psx::rot_door_pose
+o 9b4aa65e37fd54aa 47 800abce4 hl_psx::blood_position
+o d66caa9f6c9d206f 47 800abda0 hl_psx::brush_train_sound_pos
+o 70d918166ab5f718 47 800abe5c <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::map_loop_world_gain @hl_psx
+o ca00417f65799c54 47 800abf18 hl_psx::save::write_settings
+o d3817d22941931be 200 800abfd4 hl_psx::live_entity_pvs_bounds
+o ba2f4310ddee7fc5 251 800ac2f4 hl_psx::try_emit_native_affine_quad
+o 778692d854ac917c 47 800ac6e0 hl_psx::save::read
+o c4be85f36df32705 47 800ac79c psx_goldsrc::driver::gp0_words
+o cf73abec28c40541 47 800ac858 psx_gpu::gpu::set_draw_mode
+o 6f61a4173170c54c 45 800ac914 psx_pack::cd::load_header_sector
+o 1edb67a01892fa2c 44 800ac9c8 hl_psx::logic_state::rotating_goldsrc_full_speed_samples
+o 5670b689e7dbf068 44 800aca78 psx_spu::begin_dma_write
+o c8a31e43e1bfed0c 43 800acb28 hl_psx::pushable_touch_triggers
+o 42ee106841fe4799 38 800acbd4 hl_psx::menu::draw_bonnie_tinted
+o 17bc04690299a3a2 68 800acc6c <psx_gpu::prim::QuadTexturedGouraud>::with_packet_material_packed_uv_words
+o ea7771ad736bc770 55 800acd7c __psx_rt_present_kick
+o 54641d0c6a624cf1 63 800ace58 psx_pad::poll_once::<psx_io::periph::ControllerPort> @psx_engine
+o fd159ccfb85e7386 128 800acf54 psx_goldsrc::fx::submit_list
+o 37702332a972c0c5 43 800ad154 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_loop_with_volume @hl_psx
+o 158ffd7ff6fbe2d5 43 800ad200 hl_psx::tripmine::beam_end
+o a84f6a0dfa379965 35 800ad2ac <psx_mc::Card<psx_mc::hardware::HardwareCard>>::is_formatted @hl_psx
+o 7a4976da72975b42 86 800ad338 hl_psx::nudge_outward
+o 6a6e983415c763f4 45 800ad490 psx_goldsrc::hsfx::clamped_distance_squared
+o a266bf2a56587ca3 272 800ad544 hl_psx::push_actors_from_mover
+o d8617e9f000dc1cf 343 800ad984 <psx_asset::hmd8::Model>::timed_clip_phase
+o e4ed79dac44f81ed 43 800adee0 <psx_loading::Style>::content_height
+o 818883023bc1d670 42 800adf8c <hl_psx::leech::Swim>::switch_state::<hl_psx::species::LeechWorld> @hl_psx
+o a7f2cfb95f288fbd 23 800ae034 hl_psx::platrot_phase_from_offset
+o e414411ab00bc85f 181 800ae090 hl_psx::phys::sound_contents
+o 1aa056a118ef76a3 40 800ae364 <psx_asset::hmd8::Model>::clip_hold_ticks
+o 3a6e03efd51427dd 67 800ae404 <psx_rt::present::Presenter>::write_preamble
+o 78fae4aa7692db27 21 800ae510 psx_goldsrc::fx::chain_submit
+o a9d1997b6090069b 42 800ae564 hl_psx::target_org
+o 049db57828607fad 42 800ae60c hl_psx::load_weapon_bank
+o 798ec25e41780c9e 34 800ae6b4 hl_psx::load_streamed_chunk
+o bbdadec54bae3b1f 293 800ae73c hl_psx::rebuild_pvs_cache
+o 94eee4fc73c5af69 42 800aebd0 <psx_asset::hmd8::Model>::vertex_gte_words_unchecked
+o a2440476ad2ce2dd 42 800aec78 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::sound
+o 03ffca3a16ad3d92 42 800aed20 <psx_rt::cache::HwBus as psx_rt::cache::Bus>::dma_busy
+o ac3116f6e9d1ed30 41 800aedc8 psx_io::gpu::wait_ready_slow
+o f3d74450c0a5d6f1 41 800aee6c hl_psx::turret_deploy
+o e019b422440d6a09 41 800aef10 hl_psx::spawn_impact_particles
+o 00575b1e6dba7d4e 41 800aefb4 <hl_psx::phys::Player>::try_set_planar_position
+o f65ae34cd7bf3773 41 800af058 hl_psx::menu::draw_controls_menu
+o c7db53991b016009 41 800af0fc <psx_io::cd::xa::Engine>::stop_without_waiting::<psx_io::periph::Cd> @psx_io
+o fabac3510a7f400e 40 800af1a0 hl_psx::monster_voice::step
+o 3eb26c976b716de6 40 800af240 hl_psx::autoaim::steer
+o 81f3319decec3e89 40 800af2e0 hl_psx::species::launch_mortar
+o b93675d815e803ed 35 800af380 <core::str::iter::SplitInternal<char>>::next @hl_psx
+o 1733dbee8e965a2a 193 800af40c hl_psx::phys::line_clear_movers_visual
+o 6870abd858dcf9e7 40 800af710 psx_cdstream::drain::with_drain::<psx_cdstream::drain::DrainState, psx_cdstream::drain::poll::{closure#0}> @psx_cdstream
+o df54a9d1a74786a9 40 800af7b0 <psx_io::cd::reader::SectorReader>::stop
+o 5e729c0dd9018c9f 40 800af850 psx_rt::entry::settle_channel
+o fb6185c4a0c352c5 40 800af8f0 psx_vram::upload_16bpp
+o 55c16b4008b9775a 39 800af990 hl_psx::surface_lift
+o 0cf6685eeb8377b2 39 800afa2c hl_psx::depth_split_project
+o 40e06b64e63448fb 39 800afac8 hl_psx::map_catalog::diagnostic_has_weapon
+o 422cd8996e513389 39 800afb64 hl_psx::menu::draw_centered
+o da40f3cb90c6fa89 38 800afc00 hl_psx::proj_fx::mine_beam
+o 36064cbe433d936d 38 800afc98 psx_cdstream::drain::pop_sector
+o 1af24ce80412a0b0 38 800afd30 psx_pack::parse_entry_at
+o f0eed8101285fa03 37 800afdc8 hl_psx::hud::flat::<1> @hl_psx
+o 9328ef4c42701891 30 800afe5c hl_psx::try_emit_native_residue::{closure#2} @hl_psx
+o 8aeb90fd1e9fe396 47 800afed4 <psx_engine::render::PrimitivePacketArena>::push_packet::<psx_goldsrc::fx::Packet> @hl_psx
+o 2ae834b142bf0bd8 72 800aff90 psx_goldsrc::fx::chain_push::<hl_psx::overlay::OverlayTail> @hl_psx
+o 30a64aec035618f6 175 800b00b0 psx_pad::poll_state::<psx_io::periph::ControllerPort> @psx_engine
+o b531668ad8a50167 37 800b036c <core::ops::range::Range<usize> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::all::check<usize, hl_psx::monsterjump::touches::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<()>> @hl_psx
+o 03c3e690d628d9a7 37 800b0400 hl_psx::prop_ramp_step
+o f8e470c4df881e2e 37 800b0494 hl_psx::prop_script_clear
+o d779b4214e52b4db 37 800b0528 hl_psx::nav_actor_distance
+o 99de45c7a1964d70 37 800b05bc <psx_asset::hmd8::Model>::clip_rec
+o d820672a2d3f0fa9 8 800b0650 psx_pad::pad_begin::<psx_io::periph::ControllerPort> @psx_pad
+o e5bec867b84dd09b 37 800b0670 <hl_psx::Arsenal>::can_deploy
+o 8f9995b5b689c1d4 37 800b0704 psx_goldsrc::ground_logic::actor_candidate_overlaps_player
+o c17779fa5b2d4a63 37 800b0798 hl_psx::garg::player_frac
+o b8c204dbdc767205 37 800b082c <psx_io::periph::Cd>::try_set_target_lba
+o ecc0a57135b78739 36 800b08c0 hl_psx::script_clip_hold_ticks
+o 674993b687c894f8 36 800b0950 hl_psx::script_human_chord_clear_actors
+o 2b80c242a11d0fe7 36 800b09e0 hl_psx::vram::upload_tex_chunk_append_raw
+o 8bcf85b00effee74 36 800b0a70 core::unicode::unicode_data::white_space::lookup
+o dfecd0af5c3ba8dd 36 800b0b00 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::finish_begin @hl_psx
+o 740eb19941fa43aa 36 800b0b90 psx_rt::cache::run_when_dma_idle::<psx_rt::cache::HwBus, (), psx_rt::cache::with_dma_quiesced<(), psx_rt::cache::flush_instruction_cache::{closure#0}>::{closure#0}> @psx_rt
+o 4b7235c423ce9b33 35 800b0c20 hl_psx::osprey::osprey_has_dead
+o 0ab93ef481c6c476 35 800b0cac core::slice::index::into_slice_range
+o 0ab93ef481c6c476 35 800b0d38 core::slice::index::into_slice_range.1118
+o fa5d5e3b6c9d4a26 35 800b0dc4 <psx_segments::Provenance>::is_valid
+o 9bbf5d02752d50bd 34 800b0e50 hl_psx::fire_weapon::{closure#0} @hl_psx
+o 0eeffeb9eb7e2306 34 800b0ed8 hl_psx::emit_affine_quad_child::{closure#2} @hl_psx
+o 3b8a35505e8e51ab 34 800b0f60 hl_psx::prop_start_health
+o bc7198bdcf11a532 34 800b0fe8 <hl_psx::trigger_rules::DeadGlobals<32>>::kill @hl_psx
+o 2945139d67f95754 34 800b1070 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_world @hl_psx
+o 852521744a8a7f37 33 800b10f8 hl_psx::hud::has_ammo
+o 8f3dd8f780f45443 33 800b117c hl_psx::throwable::satchel_velocity
+o ecb5b0d9d7027dab 48 800b1200 <psx_pad::RawPoll>::to_state
+o 718fb579c9ae9561 27 800b12c0 hl_psx::tram_next_open
+o c5b5c714ff9261e3 19 800b132c psx_goldsrc::pads::poll
+o 49513964ef9c5c60 33 800b1378 psx_gpu::gpu::draw::<psx_gpu::prim::Sprite> @psx_gpu
+o 87011266d9d9d53d 33 800b13fc <psx_gpu::display::DoubleBuffer>::swap
+o 98c52fe037af17f0 32 800b1480 hl_psx::script_prime_idle_actor
+o 3304bcf73070ef19 32 800b1500 hl_psx::settings::value
+o 03227a0544fc1104 32 800b1580 <psx_goldsrc::hsfx::MapLoops>::claim
+o 413a529f23b4fbe5 32 800b1600 <psx_gpu::prim::Sprite>::with_material.934
+o c820d1dc7e621c33 32 800b1680 <psx_io::cd::xa::Engine>::start::<psx_io::periph::Cd> @psx_io
+o cb12f056740bcbe8 31 800b1700 hl_psx::damage_target
+o a43e2f6dcca08831 31 800b177c hl_psx::spawn_impact_fx
+o 80e9387c663ee365 31 800b17f8 hl_psx::revert_saved_use
+o a54d4d801d1a86db 31 800b1874 hl_psx::stream_menu_assets
+o 9f6649e161da31c7 31 800b18f0 <hl_psx::mapsnap::Port>::b
+o a7e2762daab7a3a7 29 800b196c hl_psx::nav_land_node
+o 997a771284987c7f 66 800b19e0 hl_psx::phys::trace_line_skip
+o 97a59c7b56287193 22 800b1ae8 <hl_psx::map::Map>::leaf
+o 4e6a5b7a78426123 39 800b1b40 psx_asset::hma1::layout
+o c227ca4283f8f2ba 257 800b1bdc hl_psx::hud::draw_history::<1> @hl_psx
+o e55aaa2aff1142a4 134 800b1fe0 hl_psx::hud::draw_damage_icons::<1> @hl_psx
+o 0d324a43c2e75bb1 60 800b21f8 psx_goldsrc::scratchpad::call_on_projection_stack::<172, hl_psx::project_hmd7_model::{closure#0}> @hl_psx
+o 1f697f798bceaf85 31 800b22e8 hl_psx::setpiece_sfx::bind
+o e54b0a3c350dd393 59 800b2364 hl_psx::try_emit_native_affine_quad::{closure#0} @hl_psx
+o 337e9dbce2574830 34 800b2450 <psx_gpu::display::DoubleBuffer>::draw_target_words
+o 8f9bdab36a375285 10 800b24d8 psx_rt::present::wait_idle_on::<psx_rt::present::Hardware> @psx_rt
+o e01572176ae0c921 11 800b2500 psx_io::gpu::handoff::run_armed_guard
+o 5ec57a12bc412c37 31 800b252c hl_psx::scientist_logic::aabb_in_search_radius
+o 2368f7b7d20b0eba 31 800b25a8 hl_psx::tank::tank_use
+o cdf7a52052302764 31 800b2624 <[u8]>::copy_within::<core::ops::range::Range<usize>> @psx_asset
+o 91f2df0447369c30 31 800b26a0 <psx_goldsrc::hsfx::AuthoredLoops>::remove
+o 63106362d1d2140d 31 800b271c psx_goldsrc::hltext::text_width_scaled
+o b6ff94f2405fee45 31 800b2798 psx_goldsrc::hltext::text_width_gameplay_scaled
+o cdf7a52052302764 31 800b2814 <[u8]>::copy_within::<core::ops::range::Range<usize>> @psx_pack
+o 8693cca18c5a0424 30 800b2890 hl_psx::anim_event
+o e09fca7141bc480a 30 800b2908 hl_psx::spawn_impact_mark
+o 08ff7da6845b1775 30 800b2980 hl_psx::rpg_reload_blocked
+o 05ce52c9e037785a 30 800b29f8 hl_psx::brush_train_audio_start
+o 738c34774b9745d0 30 800b2a70 <hl_psx::map::Map>::nav_node
+o 514ea0f6a24ad407 30 800b2ae8 <hl_psx::mapsnap::Port>::w
+o d374e5115da5f175 30 800b2b60 <hl_psx::Arsenal>::give_weapon
+o 727db029ceba65bd 30 800b2bd8 <core::str::iter::CharIndices as core::iter::traits::iterator::Iterator>::next
+o afbe2608ec212b93 30 800b2c50 <psx_gpu::gpu::Gpu>::set_display_start
+o 4919e301be7b6984 30 800b2cc8 <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::wait_seek_end
+o a040fd60e4a593db 29 800b2d40 hl_psx::gib_prop
+o f1b463407ebba65e 29 800b2db4 <psx_mc::Card<psx_mc::hardware::HardwareCard>>::write_dir @hl_psx
+o 97254134df9ea155 29 800b2e28 hl_psx::setpiece_sfx::keep_loop
+o cfca26e339793cdc 29 800b2e9c hl_psx::scientist_logic::nearest_aabb_delta
+o 51a8fe262f0e1f46 92 800b2f10 psx_goldsrc::visibility_logic::translated_padded_bounds
+o b722d75b66eabe57 29 800b3080 hl_psx::hev::unload
+o b2957dec99408cab 29 800b30f4 hl_psx::nihilanth::zen_sound
+o 06190132559442fa 29 800b3168 <psx_vram::VramRect>::new.881
+o bc939411520a7ebb 29 800b31dc psx_io::cd::pause::settle_drive::<psx_io::cd::reader::ReaderPause> @psx_io
+o a67d409ba7ad4d97 29 800b3250 psx_io::gpu::handoff::write_commands_slow
+o 356ec40db6d985c8 29 800b32c4 psx_io::gpu::settle_busy_gpu_channel
+o 8f3c7c21c2c4088e 29 800b3338 psx_loading::rect
+o d354e2a3117301d9 29 800b33ac psx_math::fmt::i32_dec
+o 86bb7f3bccc9745e 29 800b3420 <psx_rt::present::Presenter>::new
+o 56f05587b8ede754 28 800b3494 hl_psx::prop_studio_hit_fraction
+o fb0d0e8d68d0f555 28 800b3504 <hl_psx::map::Map>::group_plane
+o 0a08bec8417d367c 28 800b3574 hl_psx::tank::round_damage
+o 3225b1bbabd0fbab 28 800b35e4 core::slice::memchr::memchr
+o 0558e509b36ad30f 22 800b3654 hl_psx::script_lay_corpse
+o 739357ecbb45bbed 610 800b36ac hl_psx::tick_shooter
+o 75abbc95ee7e6f8c 28 800b4034 psx_io::cd::finish_failed_polled_command
+o 12ca50a276e6c675 28 800b40a4 <psx_font::BitmapFont>::glyph_advance.1081
+o f6014c0172dfff7e 27 800b4114 <psx_goldsrc::chunk_stream::CachedStreamer<psx_io::cd::reader::SectorReader, hl_psx::cdstream::target::Arena, 32>>::stream_abort @hl_psx
+o 5a50db5c521dd2dc 27 800b4180 psx_goldsrc::driver::sprite_material
+o 269ab9f55247d6e7 27 800b41ec <psx_io::periph::Cd as psx_io::cd::xa::Drive>::look_pause
+o 92d2510df2301c0d 27 800b4258 <psx_io::cd::reader::SectorReader>::set_location
+o cee0ce3b285b9152 27 800b42c4 psx_rt::cache::spin_until_idle::<psx_rt::cache::HwBus> @psx_rt
+o dd3393862cd0cc46 26 800b4330 hl_psx::pause_restore
+o cf9467c18fbf3a46 26 800b4398 hl_psx::prop_studio_touch
+o 6a7d81f90cd6b548 26 800b4400 hl_psx::nav_actor_vertical
+o 1dfba2b2f1f2887a 26 800b4468 hl_psx::player_tram_audio_stop
+o ff119453e64b8a4c 26 800b44d0 hl_psx::sky_draw
+o 1f01367550053e7f 26 800b4538 <core::str::iter::SplitInternal<char>>::get_end @hl_psx
+o c1ba18f70bff83bf 26 800b45a0 hl_psx::garg::along
+o fd08dc927072df2a 23 800b4608 hl_psx::garg::forward
+o 8360eb748065e1c4 65 800b4664 psx_goldsrc::fx::tri_flat_blended::<hl_psx::overlay::OverlayTail> @hl_psx
+o ceb0e0dc5a86615c 26 800b4768 hl_psx::mapsnap::apply_props
+o 1d04101d99854c7b 26 800b47d0 hl_psx::settings::apply_audio
+o 8e03ed653cfdb9d4 26 800b4838 <core::str::iter::Chars as core::iter::traits::iterator::Iterator>::count
+o 19d7d4f9b6a70127 25 800b48a0 <hl_psx::map::Map>::way_alt
+o 62b4517db4f3dc1f 25 800b4904 <hl_psx::map::Map>::way_next
+o 6ac5fa2f6e68fb60 25 800b4968 psx_gte::scene::load_rotation
+o 6b4eadfdf22e910b 25 800b49cc psx_goldsrc::driver::quad_half_black
+o 780726be2888a716 25 800b4a30 psx_io::cd::try_command_until_complete_inner
+o 4f8d3e2c7dfaac39 25 800b4a94 <psx_io::cd::reader::SectorReader>::fifo_timed_out
+o 7cce4521506216d5 24 800b4af8 hl_psx::tank::slot
+o 90d92a30773d8eab 24 800b4b58 <psx_io::cd::xa::Engine>::reach_end::<psx_io::periph::Cd> @psx_io
+o 850571a0b00c894b 24 800b4bb8 psx_math::fmt::u32_dec
+o 313d7cefb8a7d4df 24 800b4c18 psx_settings::checksum
+o 2e59c500fe1d81fe 23 800b4c78 hl_psx::menu::draw_select_bar
+o 1e6db25b926ab3a9 23 800b4cd4 hl_psx::apache::mad
+o 5927716ba934e018 23 800b4d30 hl_psx::autoaim::shot_ray_component
+o 037bbaa72e56a7d7 23 800b4d8c psx_asset::hmd8::move_within
+o 252ce49319e357f7 23 800b4de8 <psx_goldsrc::hsfx::AuthoredLoops>::index_of
+o 15a8231d9314a684 23 800b4e44 psx_goldsrc::driver::copy_vram
+o b33947731375459f 22 800b4ea0 hl_psx::monster_fire_ai_trigger
+o 41519a87b6091e55 22 800b4ef8 hl_psx::hev::request
+o cf556fc6b5c4104c 22 800b4f50 hl_psx::leech::flat_forward
+o 3672854100c76d15 22 800b4fa8 hl_psx::apache::sc
+o db3f709a15f2e256 22 800b5000 hl_psx::proj_fx::resident
+o ce7b69b0761f0f51 22 800b5058 psx_goldsrc::emit::words::brush_angles_q8
+o 1a01f668040b2739 21 800b50b0 hl_psx::vm_switch_retry_blocking
+o 38c52197bda15cf1 21 800b5104 hl_psx::scientist_logic::follow_move_speed
+o 347c53c134f62984 21 800b5158 hl_psx::phys::hull_blocked_fraction_movers
+o 06d54c2e35158e62 21 800b51ac <hl_psx::species::LeechWorld as hl_psx::leech::World>::free_frac
+o 5a5a0e37d6477315 21 800b5200 psx_goldsrc::driver::tri_flat_blended
+o e514bd6296c0152e 21 800b5254 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::begin_stop
+o d1b66e491e8eaa5b 20 800b52a8 <hl_psx::map::Map>::waypoint
+o 7a19d124b82e97ad 20 800b52f8 <hl_psx::Arsenal>::select
+o dc9f9b363e12c074 20 800b5348 hl_psx::garg::hurt_player
+o 4ffb71dcddbed7e7 20 800b5398 hl_psx::apache::dot
+o ea23be1cfcdf635e 20 800b53e8 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::rand
+o ea23be1cfcdf635e 20 800b5438 <hl_psx::species::LeechWorld as hl_psx::leech::World>::rand
+o 3c820e441c6f2cae 20 800b5488 psx_io::gpu::handoff::write_display_control_slow
+o 111886841b25a85c 20 800b54d8 <psx_pack::Fnv32>::update
+o c89b8254d1095c36 19 800b5528 hl_psx::apache::whole
+o 8995598790134b9d 19 800b5574 hl_psx::mapsnap::keep_now
+o dfc066a6b9837506 19 800b55c0 <hl_psx::species::LeechWorld as hl_psx::leech::World>::enemy
+o 9abcd5004eebd22f 19 800b560c psx_io::cd::pause::send_until_acknowledged::<psx_io::cd::reader::ReaderPause> @psx_io
+o dd4ac97a9daa7df4 19 800b5658 psx_rt::dispatch::attach
+o 0a69193f8f19ff90 18 800b56a4 hl_psx::sfx::play_map_loop_world
+o c7ea7b424f62abee 18 800b56ec hl_psx::save::card_write
+o c53b46c5b6df5f1d 201 800b5734 hl_psx::live_semantic_sample
+o dbfc71650866e362 107 800b5a58 <psx_pad::controllers::Controllers>::step::<psx_io::periph::ControllerPort> @psx_engine
+o 71982f41f9735b9b 49 800b5c04 core::str::validations::next_code_point::<core::slice::iter::Iter<u8>> @psx_goldsrc
+o b67d450388eb4b8d 18 800b5cc8 psx_rt_fatal_fault
+o f2294981890d6ab5 18 800b5d10 psx_spu::upload_adpcm_unguarded
+o 53207ce05d9a0a98 17 800b5d58 hl_psx::show_trigger_hint
+o b40ffe5cdc292d51 17 800b5d9c <hl_psx::save::Writer>::u16
+o bddd068348d46639 17 800b5de0 hl_psx::phys::clear_at
+o 36d42acd9e5399ce 17 800b5e24 <psx_gpu::material::TextureMaterial>::draw_mode_word.997
+o fe14467a7c295701 17 800b5e68 psx_io::cd::xa::set_mixer
+o f50ee3500736112f 47 800b5eac <hl_psx::map::Map>::sprite_prop
+o e7f816c43fa8cab1 16 800b5f68 <hl_psx::save::Reader>::u16
+o e437b49938ef9ea2 16 800b5fa8 <hl_psx::save::Reader>::u32
+o 6a3286a8958ea26f 16 800b5fe8 hl_psx::mapsnap::is_dead
+o 102bfcec8c21ffd1 16 800b6028 psx_goldsrc::driver::tri_textured_material
+o ef99681f7272a839 16 800b6068 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::end_stop
+o c60eec9dbb9cbff9 16 800b60a8 <psx_io::cd::xa::Engine>::stop::<psx_io::periph::Cd> @psx_io
+o fecadb3c5ebeb97e 15 800b60e8 hl_psx::axial_brush_rotation
+o 46bf80a142c8afb1 15 800b6124 hl_psx::cd_play
+o 93e13aa359e9f9ed 15 800b6160 <psx_spu::Spu>::upload_adpcm
+o 06a3c16fe2b88fa5 14 800b619c <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::set_map_loop_world @hl_psx
+o 5c78d3c91bb07364 14 800b61d4 <hl_psx::save::Writer>::u8
+o e6c32977fe4ff976 14 800b620c hl_psx::sfx::stop_dialogue
+o ef9bb3d8db4b6547 14 800b6244 hl_psx::save::checksum
+o 5a192089379724aa 14 800b627c <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::send_pause
+o b3729b8e6e2cb602 14 800b62b4 psx_io::gpu::handoff::display_control_guard_slow
+o 7e384b27ebf965f6 13 800b62ec hl_psx::pain_clip_ticks
+o 978df2bbb3f1a199 13 800b6320 <hl_psx::map::Map>::submodel
+o df038f76e80f8033 13 800b6354 <hl_psx::save::Reader>::u8
+o 79f87e08b8df0c76 13 800b6388 hl_psx::player_rules::longjump_velocity
+o 5c5363c84f5eacf4 13 800b63bc hl_psx::phys::trace_clear
+o df3b0c0afb50af1b 13 800b63f0 hl_psx::save::card_read
+o 0ed6623630b357be 13 800b6424 hl_psx::apache::sub
+o 435d0a7de682dc6b 13 800b6458 <hl_psx::species::TentacleWorld as hl_psx::tentacle::World>::hear
+o ae79983e3599af4c 13 800b648c psx_goldsrc::chunk_stream::decompress_in_place
+o c22ef34521df6082 13 800b64c0 psx_rt::present::wait_slot_empty
+o 42cd1d2b91dc7cfa 11 800b64f4 hl_psx::sfx::bank_stop
+o 1381c14fc53aaacc 11 800b6520 hl_psx::phys::inside_clip_hull
+o 9327dd70a2f6ac18 11 800b654c hl_psx::cdstream::target::load_chunk_decompressed
+o bd724363424228f9 11 800b6578 <hl_psx::species::LeechWorld as hl_psx::leech::World>::wet
+o 946f73f51625e06b 11 800b65a4 psx_goldsrc::hsfx::rd_u32
+o b43ca914ee60a48b 11 800b65d0 memmove
+o 39e5f7bfb6673715 27 800b65fc hl_psx::project_hmd7_model_stack_entry
+o 7414f9fd0fffff02 44 800b6668 hl_psx::senses::in_view_cone
+o 745ed677a7a631fe 23 800b6718 hl_psx::phys::line_clear_world
+o e306183dc040ccda 35 800b6774 psx_rt::present::wait_drawn_idle_on::<psx_rt::present::Hardware> @psx_rt
+o d780ca4b64bdcbb4 24 800b6800 hl_psx::prop_model_rotation
+o 5633c3dfc5b47087 139 800b6860 psx_goldsrc::hsfx::authored_gain_milli
+o e25fb24a4e0fee38 43 800b6a8c hl_psx::find_actor_target
+o df86c9d0869f6891 55 800b6b38 hl_psx::prop_hit_extent
+o 108d03ca263ede1c 64 800b6c14 hl_psx::retained_actor_target
+o dfba99aff4ad658b 23 800b6d14 hl_psx::prop_waits_for_trigger
+o 1a47d1ea5e28e15e 108 800b6d70 hl_psx::phys::point_contents
+o a95b7de19855b3ac 17 800b6f20 <i32>::rem_euclid
+o 3eda8d6addaf7c9e 2069 800b6f64 hl_psx::logic_use_entity
+o 05c000d2b07ea113 61 800b8fb8 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::begin_pad @psx_pad
+o 83fe71e1328af0b1 29 800b90ac <psx_pad::RawPoll>::negcon
+o 564ad8c933cfaf7b 136 800b9120 hl_psx::proj_fx::tick
+o 55ccfad22b501430 204 800b9340 hl_psx::proj_fx::sprite_quad
+o 0e60ba29b41a9c17 17 800b9670 hl_psx::turret_spin_down
+o b49654701abfa04f 512 800b96b4 hl_psx::maker_make
+o a1aaefd7726fa71c 12 800b9eb4 <psx_rt::scratchpad::ScratchpadStack<172, 1024>>::stack_entry::<(), hl_psx::project_hmd7_model::{closure#0}> @hl_psx
+o b6a23b1be04f21c5 37 800b9ee4 <hl_psx::hev::Suit>::tick
+o 9e68109a7d147e7d 30 800b9f78 psx_gpu::gpu::draw::<psx_gpu::prim::FillRect> @psx_gpu
+o e644112ea7f2afaf 38 800b9ff0 hl_psx::master_ok
+o 578f2a453b51a443 66 800ba088 hl_psx::target_aim_point
+o 08d296b7f448b592 49 800ba190 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::authored_volume @hl_psx
+o 5775366817912051 44 800ba254 hl_psx::nihilanth::clip
+o 2f522b97ce232636 67 800ba304 hl_psx::senses::within_cone
+o 2750284bc552d3b5 102 800ba410 hl_psx::proj_fx::cam
+o 3465f433608443c6 77 800ba5a8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_authored @hl_psx
+o 961c9e6a0729546f 74 800ba6dc hl_psx::prop_eye
+o d5622fafc31cfee4 76 800ba804 <hl_psx::map::Map>::retick_lightstyles
+o 6d977656b8813504 73 800ba934 hl_psx::prop_set_pos_exact
+o 8e799c59891b5831 47 800baa58 <psx_asset::hma1::Jaw>::open
+o 6765db5efdf9d9af 42 800bab14 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_world @hl_psx
+o 0f6b2a841305d743 36 800babbc hl_psx::logic_enqueue_event
+o ba0520f29ddc5f41 30 800bac4c <psx_sfx::OneShot>::configure
+o 6b50b3555fc3e3c5 23 800bacc4 <psx_gte_core::math::Mat3I16>::rotate_y
+o 7ecab68a4bcf0fa7 49 800bad20 hl_psx::entity_touches_pvs
+o ea04e2a669245c46 50 800bade4 <hl_psx::map::Map>::logic_name
+o 57812ccd87dfe0cc 416 800baeac hl_psx::nihilanth::tick_balls
+o 0279586da1e4c39b 40 800bb52c psx_io::cd::begin_polled_command
+o 563300696bb8fec9 93 800bb5cc psx_io::cd::run_command::<psx_io::cd::Mmio> @psx_io
+o d3ee0c40eadc56ab 62 800bb740 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::head_lba
+o c7ad8f7fb7706118 71 800bb838 psx_io::cd::wait_irq_flag::<psx_io::cd::irq_flag, <psx_io::cd::Mmio as psx_io::cd::CommandIo>::wait_irq::{closure#0}> @psx_io
+o 27761b6c52d960a3 44 800bb954 psx_io::cd::read_response_fifo
+o 34bbd5247ddfc4db 56 800bba04 <psx_spu::Voice>::configure_sample
+o c1aa78596fe38fc2 190 800bbae4 hl_format::pvs_pair::decode
+o 6bf83672efce0785 41 800bbddc hl_psx::sprite_set_visible
+o f7d98f3f3140e754 80 800bbe80 hl_psx::decompress_vis
+o c0b98f6cc9bfa31e 9 800bbfc0 hl_psx::prop_free_mover
+o 8b13950fe1622261 23 800bbfe4 psx_io::cd::drain_response_limited
+o f8f86359d65845ee 8 800bc040 hl_psx::prop_floor_y
+o 424a4e7145eed785 56 800bc060 <hl_psx::map::Map>::decode_paired_pvs
+o 1c187b830aa9f528 401 800bc140 <hl_psx::map::Map>::compile_visible_faces
+o 2b1df6cfe148b03f 51 800bc784 psx_math::int32::mul_div_i32
+o 17974c2216b17053 79 800bc850 hl_psx::prop_face_point
+o 2bdf88ae9e12928a 535 800bc98c hl_psx::prop_floor_y_down
+o d9ce1e671a3c6d23 56 800bd1e8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::key_map_loop @hl_psx
+o 6f75039fa0ea8bbd 73 800bd2c8 <psx_goldsrc::hsfx::Hsfx<90, 47, 48>>::play_map_vol @hl_psx
+o 9052edbcbddabebb 18 800bd3ec <psx_sfx::OneShot>::play
+o 5387e15c324cde84 48 800bd434 psx_math::sincos::atan2_q12
+o d01760874f088933 118 800bd4f4 hl_psx::logic_remove_entity
+o 30d6f4ab430c026b 288 800bd6cc hl_psx::nihilanth::next_activity
+o aa5814099da7cae6 45 800bdb4c <psx_goldsrc::hsfx::MapLoops>::candidate
+o c3dbcf1bd3aadbe6 17 800bdc00 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::cs_high_gap @psx_pad
+o a4e6b151faa5d5db 37 800bdc44 hl_psx::monster_voice::cue
+o 626b0681678a2cd0 20 800bdcd8 hl_psx::prop_nav_cache_invalidate
+o 4fb9a17f5eae3723 50 800bdd28 <psx_goldsrc::hsfx::MapLoops>::claim_if_louder
+o 475fba2b194a91f0 25 800bddf0 psx_pad::command_byte_failed::<psx_io::periph::ControllerPort> @psx_pad
+o a633cea320d2aaab 247 800bde54 __psx_rt_exception_handler
+o ef8a669c95ce42b0 1234 800be230 hl_psx::menu::run
