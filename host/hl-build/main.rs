@@ -2562,6 +2562,16 @@ fn compile_game(
     // The first link is in the linker's own order; with a shipped layout the
     // second repeats it in the order that layout gives this link's code.
     let mut ordered = false;
+    for stale in [
+        repository.join(LINK_ORDER),
+        placed_sidecar(&repository.join(LINK_ORDER)),
+    ] {
+        if let Err(error) = fs::remove_file(&stale) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!("remove {}: {error}", stale.display()).into());
+            }
+        }
+    }
     loop {
         run_compile(&mut command, "compile hl-psx for PlayStation")?;
         let exe = game.join("target/mipsel-sony-psx/release/hl-psx.exe");
@@ -2671,7 +2681,26 @@ fn layout_order(
         format!("{:x}", Sha256::digest(fs::read(&staging)?))
     ));
     fs::rename(&staging, &order)?;
+    // `place` writes the `.placed` sidecar (where the model put each placed
+    // function) beside the ordering file; it moves with it, and both are
+    // copied to the fixed LINK_ORDER path for `psoxide-pgo followed`.
+    fs::rename(placed_sidecar(&staging), placed_sidecar(&order))?;
+    let fixed = repository.join(LINK_ORDER);
+    fs::copy(&order, &fixed)?;
+    fs::copy(placed_sidecar(&order), placed_sidecar(&fixed))?;
     Ok(Some(order))
+}
+
+/// The ordering file the last ordered shipping link followed, with its
+/// `.placed` sidecar beside it. Removed at the start of every link, so it is
+/// present only when the link just made followed the shipped layout.
+const LINK_ORDER: &str = ".hlpsx/hl-psx.order";
+
+/// The sidecar `psoxide-pgo place` writes next to an ordering file.
+fn placed_sidecar(order: &Path) -> PathBuf {
+    let mut name = order.as_os_str().to_owned();
+    name.push(".placed");
+    PathBuf::from(name)
 }
 
 /// The ordinary build: the committed profile at exactly the threshold it shipped at.
