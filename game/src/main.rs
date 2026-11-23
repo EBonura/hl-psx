@@ -2019,11 +2019,22 @@ fn begin_loading(fb: &mut DoubleBuffer) {
         LOADING_TICK = 0;
         LOADING_VBLANK = interrupts::vblank_count();
     }
+    #[cfg(not(feature = "scene-core"))]
     psx_io::cd::reader::set_idle_hook(Some(loading_idle));
+    #[cfg(feature = "scene-core")]
+    cdstream::set_idle_hook(Some(loading_idle_core));
+}
+
+#[cfg(feature = "scene-core")]
+extern "C" fn loading_idle_core() {
+    loading_idle();
 }
 
 pub(crate) fn end_loading() {
+    #[cfg(not(feature = "scene-core"))]
     psx_io::cd::reader::set_idle_hook(None);
+    #[cfg(feature = "scene-core")]
+    cdstream::set_idle_hook(None);
     unsafe { LOADING_FB = core::ptr::null_mut() };
 }
 

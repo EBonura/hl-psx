@@ -19,6 +19,11 @@ default = []
 # Diagnostic build: every visible-face rebuild also runs the reference walk (pvs_compile.rs) and
 # panics on the first difference from the fast one. Needs HLPSX_RAM_FLOOR=0 (about 40 KB more RAM).
 pvs-check = []
+# Scene-core P2 measurement build: the CD reader, the pack-table reads, the boot lookup and the
+# loading hook go through the resident core's jump table (CORE-ABI.md section 3, slot symbols from
+# game/scene-core-abi.ld), and the studio plate is left to the core's boot scene. Links, never runs
+# until the core exists. Never in a shipping build.
+scene-core = ["dep:psx-cdstream"]
 # Console diagnostic pressings only: name the load stage the program has reached for the
 # stop panel (psx_io::diag, present only in the SDK diag branch). Never in a shipping build.
 console-diag = []
@@ -100,6 +105,7 @@ psx-vram = { path = "../.psoxide/sdk/crates/psx-vram" }
 psx-io   = { path = "../.psoxide/sdk/crates/psx-io" }
 psx-hw   = { path = "../.psoxide/crates/psx-hw" }
 psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
+psx-cdstream = { path = "../.psoxide/sdk/crates/psx-cdstream", optional = true }
 psx-spu  = { path = "../.psoxide/sdk/crates/psx-spu" }
 psx-asset = { path = "../.psoxide/sdk/crates/psx-asset" }
 psx-fmv  = { path = "../.psoxide/sdk/crates/psx-fmv" }

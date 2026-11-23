@@ -15,7 +15,9 @@ use hl_format::music as layout;
 use psx_io::cd::xa::{DriveSpeed, Event, File, Player};
 use psx_io::iso;
 use psx_io::periph::Cd;
-use psx_pack::cd::{SectorReader, SECTOR_WORDS};
+#[cfg(not(feature = "scene-core"))]
+use psx_pack::cd::SectorReader;
+use psx_pack::cd::SECTOR_WORDS;
 
 /// The drive's mixer level for the songs (`0x80` is unity).
 const DRIVE_VOLUME: u8 = 0x80;
@@ -66,13 +68,19 @@ pub fn booted_by_intro() -> bool {
 #[optimize(size)]
 #[inline(never)]
 pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
+    #[cfg(not(feature = "scene-core"))]
     let mut reader = SectorReader::new();
+    #[cfg(not(feature = "scene-core"))]
     if !reader.prepare() {
         return;
     }
     // The root directory of this disc is one sector (the music files, the game file and a
     // handful of others), so the first sector is all there is to scan.
-    if !iso::read_root_sector(sector, |lba, into| reader.read_at(lba, into)) {
+    #[cfg(not(feature = "scene-core"))]
+    let read = |lba, into: &mut [u32; SECTOR_WORDS]| reader.read_at(lba, into);
+    #[cfg(feature = "scene-core")]
+    let read = |lba, into: &mut [u32; SECTOR_WORDS]| crate::cdstream::core::read(lba, into);
+    if !iso::read_root_sector(sector, read) {
         return;
     }
     let directory = iso::as_bytes(sector);

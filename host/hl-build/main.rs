@@ -2132,11 +2132,14 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
 /// Features a shipping build may carry. Any other feature (telemetry, trace
 /// streams, debug boot and gallery hooks, diagnostic tints) makes a
 /// diagnostic build, which keeps core's panic messages.
-const SHIPPING_FEATURES: [&str; 1] = [
+const SHIPPING_FEATURES: [&str; 2] = [
     // Measurement only (psx-goldsrc reports soft-projected vertices to the
     // emulator's warp probe); with panic messages kept the image overflows
     // RAM by about 15 KB.
     "warp-probe",
+    // Measurement only (game/Cargo.toml): the image as it links on the resident
+    // scene core, compiled as the shipping build is so its RAM compares with it.
+    "scene-core",
 ];
 
 fn is_shipping_build(features: Option<&str>) -> bool {

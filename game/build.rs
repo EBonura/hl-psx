@@ -1864,6 +1864,12 @@ fn main() {
     if core_window != 0 {
         link_script.push_str(&format!("RAM_SIZE_OVERRIDE = {:#x};\n", 0x20_0000 - core_window));
     }
+    // The `scene-core` measurement build calls the core through its jump table's slot symbols.
+    if env::var_os("CARGO_FEATURE_SCENE_CORE").is_some() {
+        let abi = manifest.join("scene-core-abi.ld");
+        println!("cargo:rerun-if-changed={}", abi.display());
+        println!("cargo:rustc-link-arg=-T{}", abi.display());
+    }
     if !link_script.is_empty() {
         let stack_ld = out_dir.join("stack-reserve.ld");
         fs::write(&stack_ld, link_script).expect("write stack reserve script");
