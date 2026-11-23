@@ -1,0 +1,20 @@
+# c4a1a (room 85): the player is pinned 240 u from the first controller (the head ball window is 64..256); two ticks after the head ball leaves (tick 56) he is moved 80 u sideways; projectiles logged
+map c4a1a
+0 god 1
+0 projlog 1
+10 tpnear 11 -240 0 0
+10 pin 1
+12 aimat 11 0
+14 aimat 11 0
+18 aimat 11 0
+22 aimat 11 0
+26 aimat 11 0
+30 aimat 11 0
+34 aimat 11 0
+38 aimat 11 0
+42 aimat 11 0
+46 aimat 11 0
+50 aimat 11 0
+54 aimat 11 0
+58 tp 720 1392 884 1024 0 200
+58 pos

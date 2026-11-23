@@ -24131,8 +24131,8 @@ fn proj_params(kind: u8) -> (i32, u8, bool, i32, (u8, u8, u8), u16) {
         // Gonarch's mortar: the lob sets its velocity; it flies on its own gravity.
         PROJ_BMORTAR => (0, 200, false, 0, (150, 230, 90), 6),
         // The controller's head ball: 400 u/s for 3.8 s (renderamt 255 falls 5 a think
-        // to 64). The original homes on the enemy; this one flies straight at where
-        // he stood when it left.
+        // to 64), homing on the player (`steer_headball`). The original also
+        // bounces off walls (BounceTouch); this one ends there.
         PROJ_HEADBALL => (20, 76, false, 0, (225, 230, 255), 8),
         // The controller's ball: 800 u/s at Medium (650 and 1000 at Easy and Hard).
         PROJ_CBALL => (40, 60, false, 0, (130, 170, 255), 4),
@@ -25265,6 +25265,8 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
                 sfx::play_vol(sfx::HORNET_BUZZ, 3);
             }
             track_hornet(m, movers, i);
+        } else if kind == PROJ_HEADBALL && SIM_NOW & 1 == 0 {
+            steer_headball(i);
         }
         let old = PROJECTILES[i].pos;
         let rolling = PROJECTILES[i].aux <= 2;
@@ -25473,6 +25475,27 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             PROJECTILES[i].active = false;
         }
         i += 1;
+    }
+}
+
+/// CControllerHeadBall::MovetoTarget, once a think (0.1 s, two ticks): the
+/// ball's velocity, held to 400 u/s (20 units a tick), gains 100 u/s (5) toward
+/// the enemy's centre, so it homes and can overshoot and come round again.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn steer_headball(i: usize) {
+    let p = PROJECTILES[i];
+    let v = p.vel;
+    let speed = isqrt_i32(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    let k = if speed > 20 { (20 << 12) / speed } else { 4096 };
+    let to = dir_q12(
+        p.pos,
+        [LOGIC_PLAYER_POS[0], LOGIC_PLAYER_POS[1] + 18, LOGIC_PLAYER_POS[2]],
+    );
+    let mut a = 0;
+    while a < 3 {
+        PROJECTILES[i].vel[a] = ((v[a] * k + to[a] * 5) + 2048) >> 12;
+        a += 1;
     }
 }
 
