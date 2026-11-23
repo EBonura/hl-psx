@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Marines take cover when hurt. A hit on a marine that is not charging or kicking sends it, nine times in ten, to a spot the attacker cannot see (the original's lateral check, then the node graph), where it holds for about three seconds before fighting again; the tenth hit makes it flinch. Journey `tests/parity-c1a3a-grunt-cover.toml`: the west catwalk marine in c1a3a runs behind a pillar after one pistol hit and stays out of the player's sight.
 - Barnacles are drawn. The cook gave each actor the BSP leaf of its origin, and a barnacle's origin is inside the ceiling it hangs from (leaf 0, solid), so the renderer never drew 82 of the 86 barnacles: only the tongue showed. An actor whose origin is in solid now takes the open leaf nearest its origin inside its own hull (below it for a barnacle, either side for turrets and tripmines, above it for the rest), which also gives three ceiling turrets, the Gonarch brood and most Xen plants a real leaf. Journey `tests/parity-barnacle-bullets.toml`: the glock hurts the soda room barnacle by the north wall. Needs a recook.
 - A brush with a render mode and no renderamt is invisible, as in GoldSrc, where the amount defaults to 0. The cook took 255, so 25 such brushes on 7 maps were drawn: the yellow fill2 bar over c1a1d's hanging crates, light slivers in c1a1b and c1a1f, slime patches in c1a4f. Needs a recook.
 
