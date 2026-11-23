@@ -1,0 +1,7 @@
+# Bytes at the top of RAM reserved for the resident scene core, under the 256 B handoff
+# block at 0x801FFF00. The program links for RAM_SIZE_OVERRIDE = 2M - this, so STACK_INIT
+# is the window's base and the stack grows down from there. 10240 is the SDK lane's cap
+# (scene-system-1123/CORE-SIZE.md section 6): window 0x801FD700..0x801FFF00,
+# RAM_SIZE_OVERRIDE 0x1FD800. HLPSX_CORE_WINDOW overrides it for one build; 0 is the
+# whole 2 MiB.
+10240

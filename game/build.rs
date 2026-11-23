@@ -1833,9 +1833,40 @@ fn main() {
 
     // `-T` selects the linker script; `--oformat=binary` dumps a flat PSX-EXE
     // image (the script lays out the executable header) instead of an ELF.
+    // The resident scene core's window sits at the top of RAM, under the 256 B handoff block:
+    // `game/core-window` holds its size in bytes, and the program links for
+    // `RAM_SIZE_OVERRIDE = 2M - size`, which puts `STACK_INIT` (RAM_SIZE - 0x100) at the
+    // window's base, so the stack and everything under it stay below the window.
+    // `HLPSX_CORE_WINDOW` overrides it for one build (0 links for the whole 2 MiB).
+    println!("cargo:rerun-if-env-changed=HLPSX_CORE_WINDOW");
+    let core_file = manifest.join("core-window");
+    println!("cargo:rerun-if-changed={}", core_file.display());
+    let core_window: u32 = match env::var("HLPSX_CORE_WINDOW") {
+        Ok(bytes) if !bytes.is_empty() => bytes.trim().parse().expect("HLPSX_CORE_WINDOW: a byte count"),
+        _ => fs::read_to_string(&core_file)
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty() && !line.starts_with('#'))?
+                    .split_whitespace()
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or(0),
+    };
+    assert!(core_window % 256 == 0 && core_window < 0x10_0000, "core window {core_window} B: a multiple of 256 under 1 MiB");
+    let mut link_script = String::new();
     if let Some(reserve) = &stack_override {
+        link_script.push_str(&format!("STACK_RESERVE_OVERRIDE = {reserve};\n"));
+    }
+    if core_window != 0 {
+        link_script.push_str(&format!("RAM_SIZE_OVERRIDE = {:#x};\n", 0x20_0000 - core_window));
+    }
+    if !link_script.is_empty() {
         let stack_ld = out_dir.join("stack-reserve.ld");
-        fs::write(&stack_ld, format!("STACK_RESERVE_OVERRIDE = {reserve};\n")).expect("write stack reserve script");
+        fs::write(&stack_ld, link_script).expect("write stack reserve script");
         println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
     }
     println!("cargo:rustc-link-arg=-T{}", ld.display());
