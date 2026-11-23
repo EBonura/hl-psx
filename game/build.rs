@@ -1869,20 +1869,25 @@ fn main() {
         fs::write(&stack_ld, link_script).expect("write stack reserve script");
         println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
     }
-    // The `scene-core` build runs on the SDK's scene core and has boot-only memory: psoxide-core.ld
-    // stores psx-core's image after `.data` and makes `__core_boot` the entry, the slot symbols
-    // come from psx-core itself; psoxide-boot.ld (after it, before psoxide.ld) runs the splash from
-    // `.boot` above `.bss` and stores it after the core's image. Stored and run addresses differ,
-    // so the link writes an ELF and hl-build writes the EXE from its load addresses (psx-exe);
-    // ld.lld's --oformat=binary would place both at their run addresses.
+    // The `scene-core` build runs on the SDK's scene core: psoxide-core.ld (after the RAM size
+    // script, before psoxide.ld) stores psx-core's image after `.data` and makes `__core_boot` the
+    // entry; the slot symbols come from psx-core itself. This program carries no `.boot` (the
+    // splash lives in hl-intro, the disc's first program). Stored and run addresses of the core
+    // differ, so the link writes an ELF and hl-build writes the EXE from its load addresses
+    // (psx-exe); ld.lld's --oformat=binary would place it at its run address.
     let scene_core = env::var_os("CARGO_FEATURE_SCENE_CORE").is_some();
+    // Test builds only: the scene core overlay test (cdstream::core::overlay_test), with a test
+    // scene manifest from hl-build (HLPSX_SCENES_TEST).
+    println!("cargo::rustc-check-cfg=cfg(scene_overlay_test)");
+    println!("cargo:rerun-if-env-changed=HLPSX_SCENE_OVERLAY_TEST");
+    if scene_core && env::var_os("HLPSX_SCENE_OVERLAY_TEST").is_some() {
+        println!("cargo:rustc-cfg=scene_overlay_test");
+    }
     if scene_core {
         assert!(core_window == 0x2000, "the scene core links at the 8,192 B window (game/core-window)");
-        for script in ["psoxide-core.ld", "psoxide-boot.ld"] {
-            let script = ld.with_file_name(script);
-            println!("cargo:rerun-if-changed={}", script.display());
-            println!("cargo:rustc-link-arg=-T{}", script.display());
-        }
+        let core_ld = ld.with_file_name("psoxide-core.ld");
+        println!("cargo:rerun-if-changed={}", core_ld.display());
+        println!("cargo:rustc-link-arg=-T{}", core_ld.display());
     }
     println!("cargo:rustc-link-arg=-T{}", ld.display());
     // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to

@@ -34995,6 +34995,8 @@ fn main() {
     // The scene table copy, before any other read: the core reads it once, from LBA 22.
     #[cfg(feature = "scene-core")]
     cdstream::core::read_scene_table();
+    #[cfg(scene_overlay_test)]
+    cdstream::core::overlay_test();
     music::install(peripherals.cd);
     // A program started by a launcher inherits whatever mode the last one left, so the
     // first poll asks for analog and locks it, before anything reads the pad. The poll
@@ -35091,24 +35093,10 @@ fn main() {
         if !music::booted_by_intro() {
             menu::intro(&mut fb, assets, pad_notice);
         }
-        // On the scene core, a disc whose first program is this one (no intro stage) plays the
-        // SDK's splash from boot-only memory (psoxide-boot.ld's `.boot`, run above `.bss`): the
-        // disc's one splash, gone once it has run. With the intro, the intro played it.
+        // On the scene core the splash lives only in hl-intro's `.boot` (the disc's first
+        // program); this program carries no `.boot` and shows none.
         #[cfg(feature = "scene-core")]
-        {
-            let _ = (assets, pad_notice);
-            if !music::booted_by_intro() {
-                driver::with(|gpu| {
-                    psx_splash::show(
-                        gpu,
-                        &mut fb,
-                        "Built with PSoXide",
-                        psx_display::Brightness::DEFAULT,
-                        || pads::poll(Port::One).buttons,
-                    )
-                });
-            }
-        }
+        let _ = (assets, pad_notice);
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.

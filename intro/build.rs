@@ -59,6 +59,20 @@ fn main() {
     };
     let boot = psoxide.join("sdk/psoxide-boot.ld");
     let boot = boot.canonicalize().unwrap_or(boot);
+    // An SDK whose psx-rt carries `__boot_entry` (src/boot.rs) gives the mover; boot.rs keeps its
+    // own copy only for older pins. Such an SDK names the run and load addresses
+    // BOOT_VMA_OVERRIDE and BOOT_LMA_OVERRIDE.
+    let sdk_mover = psoxide.join("sdk/crates/psx-rt/src/boot.rs").exists();
+    println!("cargo::rustc-check-cfg=cfg(sdk_boot_entry)");
+    if sdk_mover {
+        println!("cargo:rustc-cfg=sdk_boot_entry");
+    }
+    let boot_script = fs::read_to_string(&boot).expect("read psoxide-boot.ld");
+    let (vma, lma) = if boot_script.contains("BOOT_LMA_OVERRIDE") {
+        ("BOOT_VMA_OVERRIDE", "BOOT_LMA_OVERRIDE")
+    } else {
+        ("BOOT_VMA", "BOOT_LMA")
+    };
     println!("cargo:rerun-if-changed={}", boot.display());
     println!("cargo:rustc-link-arg=-T{}", boot.display());
     println!("cargo:rustc-link-arg=-u__boot_entry");
@@ -67,8 +81,8 @@ fn main() {
     // ignoring the script's AT() (the first link of this program put `.boot` at __bss_end in
     // the file whatever BOOT_LMA said, and its mover then copied from the wrong place). The
     // file carries this program's `.bss` (180 B) as zeros in exchange; `_start` clears it.
-    println!("cargo:rustc-link-arg=--defsym=BOOT_VMA=__bss_end");
-    println!("cargo:rustc-link-arg=--defsym=BOOT_LMA=__bss_end");
+    println!("cargo:rustc-link-arg=--defsym={vma}=__bss_end");
+    println!("cargo:rustc-link-arg=--defsym={lma}=__bss_end");
     for script in &scripts {
         println!("cargo:rustc-link-arg=-T{}", script.display());
     }

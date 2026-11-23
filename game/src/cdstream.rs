@@ -104,7 +104,11 @@ pub mod core {
     }
 
     /// Words of the scene table copy: the header and four rows (two images, two scenes).
+    #[cfg(not(scene_overlay_test))]
     const TABLE_WORDS: usize = 16 + 8 * 4;
+    /// The overlay test's table: two scenes and four images.
+    #[cfg(scene_overlay_test)]
+    const TABLE_WORDS: usize = 16 + 8 * 6;
     static mut TABLE: [u32; TABLE_WORDS] = [0; TABLE_WORDS];
     /// What reading the table at boot returned: the words kept, or 0x8000_0000 | the core's code.
     #[no_mangle]
@@ -121,6 +125,26 @@ pub mod core {
         };
         // SAFETY: as above.
         unsafe { SCENE_TABLE_STATUS = status };
+    }
+
+    /// The overlay test (cfg `scene_overlay_test`, set by HLPSX_SCENE_OVERLAY_TEST at build time;
+    /// never shipped): after the table read, ask the core for image 2 (an Overlay owned by
+    /// HLGAME.EXE) and image 3 (one owned by PSX.EXE, the intro), and keep what it answered, with
+    /// the handoff block's loaded mask before and after:
+    /// `[status 2, status 3, mask before, mask after]`.
+    #[cfg(scene_overlay_test)]
+    #[no_mangle]
+    pub static mut OVERLAY_TEST: [u32; 4] = [0xffff_ffff; 4];
+
+    #[cfg(scene_overlay_test)]
+    pub fn overlay_test() {
+        let table = scene_table();
+        let before = psx_core::link::block_word(0x74);
+        let owned_by_game = psx_core::link::load_image(2, table);
+        let owned_by_intro = psx_core::link::load_image(3, table);
+        let after = psx_core::link::block_word(0x74);
+        // SAFETY: once, at boot, single-threaded.
+        unsafe { OVERLAY_TEST = [owned_by_game, owned_by_intro, before, after] };
     }
 
     /// The program's copy of the scene table (for switches and image loads).

@@ -7,6 +7,8 @@
 //! address (from the end backwards, the two ranges may overlap; nothing to do
 //! when they are the same, which is how build.rs links it), zeroes the
 //! boot-only `.bss` and goes on to `_start`, which clears `.bss`.
+//! (An SDK whose psx-rt defines `__boot_entry` supplies the mover instead; this copy is built
+//! only for older pins.)
 //! It uses no stack and leaves the loader's argument registers alone. Nothing
 //! in the boot range has run since the BIOS flushed the I-cache for this EXE,
 //! and `main` installs the VBlank counter (which flushes it again) before the
@@ -22,7 +24,7 @@ use psx_vram::{Clut, TextureDepth, TexturePage};
 
 use crate::Skip;
 
-#[cfg(target_arch = "mips")]
+#[cfg(all(target_arch = "mips", not(sdk_boot_entry)))]
 core::arch::global_asm!(
     r#"
     .section .text.__boot_entry,"ax",@progbits

@@ -41,7 +41,6 @@ dependencies = [
  "psx-segments",
  "psx-settings",
  "psx-sfx",
- "psx-splash",
  "psx-spu",
  "psx-telemetry",
  "psx-tick",

@@ -2785,12 +2785,20 @@ fn scene_manifest(repository: &Path, game_file: &Path) -> Result<PathBuf> {
     let directory = repository.join(".hlpsx/scenes");
     fs::create_dir_all(&directory)?;
     let manifest = directory.join("hl-psx.scenes");
+    // A test manifest in place of the one below (overlay tests): `@GAME@` stands for the game's
+    // file. Never set for a disc anyone plays.
+    if let Some(test) = env::var_os("HLPSX_SCENES_TEST") {
+        let text = fs::read_to_string(&test)?;
+        fs::write(&manifest, text.replace("@GAME@", &game_file.display().to_string()))?;
+        return Ok(manifest);
+    }
     fs::write(
         &manifest,
         format!(
-            "# Written by hl-build. Image 0 is the intro (PSX.EXE, the BIOS boots it); it hands\n\
-             # over to the game cold, so the core attaches with image 0's bit set.\n\
-             program PSX.EXE    -\n\
+            "# Written by hl-build. Image 0 is the intro (PSX.EXE, the BIOS boots it). It is not on\n\
+             # the core (core-hash=0: no stored copy, and a switch to it is refused); it chain-loads\n\
+             # the game, which attaches the core cold, with image 0's bit set.\n\
+             program PSX.EXE    -  core-hash=0\n\
              program HLGAME.EXE {}\n\
              scene   BOOT       PSX.EXE    start\n\
              scene   GAME       HLGAME.EXE start\n",
