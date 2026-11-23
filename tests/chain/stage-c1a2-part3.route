@@ -46,29 +46,32 @@ map c1a2 next x
   @align s60 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-668 hi=-645 timeout=80
   @checkpoint e655
   @probe
+  # The scripted crab runs south-east past the crates to about (-194,-949); when the run before nudged
+  # crate *5 differently it stops behind the wall at (-475,-677), 231 units from the corridor, and a
+  # round that engages it never ends. The corridor rounds engage within 220, as the first one does.
   @hold f127 until y>=-580 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-520 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-470 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @align s60 sym=LOGIC_PLAYER_POS offset=0 size=4 signed=true lo=-630 hi=-600 timeout=80
   @checkpoint e612
   @probe
   @hold f127 until y>=-430 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-380 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-330 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-280 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-230 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-180 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @hold f127 until y>=-130 timeout=60
-  @fight near=260 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
+  @fight near=220 kind=2 below=100 above=40 aimup=6 for=60 sleep=3 stance=0,0,250 until="i32(LOGIC_PLAYER_POS[2]) != 0"
   @checkpoint n130
   @probe
   @hold f127 until y>=-95 timeout=60

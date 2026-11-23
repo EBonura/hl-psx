@@ -5807,7 +5807,7 @@ lstick = [128, 58]
 rstick = [128, 128]
 press = []
 sync = "poll"
-hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=934 }
+hold_until = { kind="ram", sym="LOGIC_PLAYER_POS", size=4, signed=true, offset=0, op="ge", value=940 }
 timeout = 240
 
 [[step]]
