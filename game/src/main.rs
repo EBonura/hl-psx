@@ -35073,9 +35073,13 @@ fn main() {
         // A disc with the intro stage opened with this splash already (the intro
         // program plays it before the movie, pad notice included); showing it again
         // here would put the logo after the movie.
+        // Under the scene core the boot scene shows the splash (CORE-ABI.md section 4.3).
+        #[cfg(not(feature = "scene-core"))]
         if !music::booted_by_intro() {
             menu::intro(&mut fb, assets, pad_notice);
         }
+        #[cfg(feature = "scene-core")]
+        let _ = (assets, pad_notice);
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
