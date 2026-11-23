@@ -1864,16 +1864,22 @@ fn main() {
     if core_window != 0 {
         link_script.push_str(&format!("RAM_SIZE_OVERRIDE = {:#x};\n", 0x20_0000 - core_window));
     }
-    // The `scene-core` measurement build calls the core through its jump table's slot symbols.
-    if env::var_os("CARGO_FEATURE_SCENE_CORE").is_some() {
-        let abi = manifest.join("scene-core-abi.ld");
-        println!("cargo:rerun-if-changed={}", abi.display());
-        println!("cargo:rustc-link-arg=-T{}", abi.display());
-    }
     if !link_script.is_empty() {
         let stack_ld = out_dir.join("stack-reserve.ld");
         fs::write(&stack_ld, link_script).expect("write stack reserve script");
         println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
+    }
+    // The `scene-core` build runs on the SDK's scene core: psoxide-core.ld (after the RAM size
+    // script, before psoxide.ld) stores psx-core's image after `.data` and makes `__core_boot` the
+    // entry; the slot symbols come from psx-core itself. The stored image and `.bss` overlap on
+    // purpose, so the link takes --no-check-sections (ld.lld's binary output places sections at
+    // their VMA either way).
+    if env::var_os("CARGO_FEATURE_SCENE_CORE").is_some() {
+        assert!(core_window == 0x2000, "the scene core links at the 8,192 B window (game/core-window)");
+        let core_ld = ld.with_file_name("psoxide-core.ld");
+        println!("cargo:rerun-if-changed={}", core_ld.display());
+        println!("cargo:rustc-link-arg=-T{}", core_ld.display());
+        println!("cargo:rustc-link-arg=--no-check-sections");
     }
     println!("cargo:rustc-link-arg=-T{}", ld.display());
     // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to

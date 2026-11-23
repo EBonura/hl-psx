@@ -26,6 +26,9 @@
 #![allow(deprecated)]
 
 extern crate psx_rt;
+// The scene core's program side: its image, `__core_boot` and the slot symbols cdstream.rs calls.
+#[cfg(feature = "scene-core")]
+extern crate psx_core;
 
 mod air_navigation;
 mod beverage;

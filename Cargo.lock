@@ -20,6 +20,7 @@ dependencies = [
  "lz4_flex",
  "psx-asset",
  "psx-cdstream",
+ "psx-core",
  "psx-display",
  "psx-engine",
  "psx-fmv",
@@ -69,6 +70,13 @@ dependencies = [
  "psx-hw",
  "psx-io",
  "psx-rt",
+]
+
+[[package]]
+name = "psx-core"
+version = "0.1.0"
+dependencies = [
+ "psx-scene-abi",
 ]
 
 [[package]]
@@ -260,6 +268,10 @@ dependencies = [
  "psx-math",
  "psx-tick",
 ]
+
+[[package]]
+name = "psx-scene-abi"
+version = "0.1.0"
 
 [[package]]
 name = "psx-segments"

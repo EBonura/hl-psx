@@ -3,9 +3,10 @@
 //! The SDK's linker script puts every program at 0x80010000, which is where
 //! the game's image loads, so an intro linked there would be overwritten by
 //! the very read that loads the game. The intro links at `HL_INTRO_LOAD_ADDR`
-//! instead (hl-build sets it from the game's own image end), with the SDK's
-//! script otherwise unchanged: a derivative is written to OUT_DIR so the
-//! pinned SDK stays pristine and a layout change upstream fails loudly.
+//! instead (hl-build sets it from the game's own image end): through the
+//! script's LOAD_ADDR_OVERRIDE where the SDK has it, else with a derivative of
+//! the script written to OUT_DIR, so the pinned SDK stays pristine and a
+//! layout change upstream fails loudly.
 //!
 //! The splash and the movie player are boot-only memory, through the SDK's
 //! psoxide-boot.ld (read first, as its header says), run from the end of
@@ -32,21 +33,30 @@ fn main() {
 
     let base = env::var("HL_INTRO_LOAD_ADDR").unwrap_or_else(|_| "0x801E0000".to_string());
     let sdk = fs::read_to_string(&ld).expect("read PSoXide linker script");
-    for pattern in [SDK_LOAD, SDK_LENGTH] {
-        assert_eq!(
-            sdk.matches(pattern).count(),
-            1,
-            "the SDK linker script changed: {pattern:?}"
-        );
-    }
-    let script = sdk
-        .replace(SDK_LOAD, &format!("LOAD_ADDR   = {base};"))
-        .replace(
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    // An SDK whose script takes LOAD_ADDR_OVERRIDE is linked as it is, after a one-line script
+    // that sets it; an older one gets the patched derivative.
+    let scripts = if sdk.contains("LOAD_ADDR_OVERRIDE") {
+        let load = out_dir.join("hl-intro-load.ld");
+        fs::write(&load, format!("LOAD_ADDR_OVERRIDE = {base};\n"))
+            .expect("write the intro's load address script");
+        vec![load, ld.clone()]
+    } else {
+        for pattern in [SDK_LOAD, SDK_LENGTH] {
+            assert_eq!(
+                sdk.matches(pattern).count(),
+                1,
+                "the SDK linker script changed: {pattern:?}"
+            );
+        }
+        let script = sdk.replace(SDK_LOAD, &format!("LOAD_ADDR   = {base};")).replace(
             SDK_LENGTH,
             "LENGTH = EXE_HEAD_BYTES + RAM_BASE + RAM_SIZE - LOAD_ADDR - STACK_RESERVE",
         );
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("hl-intro.ld");
-    fs::write(&out, script).expect("write the intro linker script");
+        let out = out_dir.join("hl-intro.ld");
+        fs::write(&out, script).expect("write the intro linker script");
+        vec![out]
+    };
     let boot = psoxide.join("sdk/psoxide-boot.ld");
     let boot = boot.canonicalize().unwrap_or(boot);
     println!("cargo:rerun-if-changed={}", boot.display());
@@ -59,7 +69,9 @@ fn main() {
     // file carries this program's `.bss` (180 B) as zeros in exchange; `_start` clears it.
     println!("cargo:rustc-link-arg=--defsym=BOOT_VMA=__bss_end");
     println!("cargo:rustc-link-arg=--defsym=BOOT_LMA=__bss_end");
-    println!("cargo:rustc-link-arg=-T{}", out.display());
+    for script in &scripts {
+        println!("cargo:rustc-link-arg=-T{}", script.display());
+    }
     println!("cargo:rustc-link-arg=--oformat=binary");
     if let Ok(map) = env::var("HLPSX_LINK_MAP") {
         if !map.is_empty() {
