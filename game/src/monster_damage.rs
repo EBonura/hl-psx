@@ -9,8 +9,10 @@
 //! bit 4 heavy. The damage kinds stay with the hit (`DMG_ACID`, `DMG_BLAST`,
 //! ... in main.rs).
 //!
-//! Today one thing reads it: a heavy hit starts the small flinch, which holds
-//! the species' own think until the flinch clip has run. The flinch lives in
+//! Today one thing reads it: a hit (light damage) can start the small flinch,
+//! which holds the species' own think until the flinch clip has run; whether
+//! this hit may flinch is the caller's (`prop_flinch_ticks`, GetSchedule's
+//! rule). The flinch lives in
 //! the actor's hit flash (`PROP_HIT_FLASH`): plain values are the 4-tick pain
 //! pose every hit shows, [`FLINCH`] marks a flinch and its low bits count its
 //! ticks. The record is not kept per actor; the schedule engine that will
@@ -38,12 +40,12 @@ pub const fn conditions(dmg: u8, group: u8) -> u8 {
 }
 
 /// The hit flash after a hit with `cond`: a flinch of `flinch_ticks` (0 when
-/// the actor cannot flinch now) on heavy damage, else the plain `flash`. A
-/// running flinch is not restarted.
+/// the actor does not flinch from this hit) on light damage, else the plain
+/// `flash`. A running flinch is not restarted.
 pub const fn flash_after_hit(current: u8, cond: u8, flinch_ticks: u8, flash: u8) -> u8 {
     if current & FLINCH != 0 {
         current
-    } else if cond & HEAVY != 0 && flinch_ticks > 0 {
+    } else if cond & LIGHT != 0 && flinch_ticks > 0 {
         FLINCH | if flinch_ticks > 127 { 127 } else { flinch_ticks }
     } else {
         flash
@@ -72,12 +74,14 @@ mod tests {
     }
 
     #[test]
-    fn a_heavy_hit_flinches_for_the_clip_and_a_light_one_flashes() {
+    fn a_hit_that_may_flinch_plays_the_clip_and_any_other_flashes() {
         assert_eq!(flash_after_hit(0, conditions(40, 1), 13, 4), FLINCH | 13);
-        assert_eq!(flash_after_hit(0, conditions(10, 1), 13, 4), 4);
-        // No flinch clip, or held by a script: the plain flash.
+        assert_eq!(flash_after_hit(0, conditions(8, 1), 13, 4), FLINCH | 13);
+        assert_eq!(flash_after_hit(0, conditions(0, 1), 13, 4), 4);
+        // No flinch from this hit (the rule says no, a script holds it):
+        // the plain flash.
         assert_eq!(flash_after_hit(0, conditions(40, 1), 0, 4), 4);
-        // A second heavy hit does not restart a running flinch.
+        // A second hit does not restart a running flinch.
         assert_eq!(flash_after_hit(FLINCH | 3, conditions(40, 0), 13, 4), FLINCH | 3);
         // The flinch counts down to nothing, as the plain flash does.
         let mut f = FLINCH | 13;

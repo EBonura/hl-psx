@@ -3982,10 +3982,25 @@ static mut NEXT_HIT_GROUP: u8 = 0;
 /// Actor types whose cooked pain clip is their small flinch (ACT_SMALL_FLINCH):
 /// scientists, Barney, headcrabs, zombies, houndeye, bullsquid, HECU,
 /// vortigaunt, alien grunt, controller, ichthyosaur.
-const FLINCH_TYPES: Mask64 = Mask64::EMPTY;
+const FLINCH_TYPES: Mask64 = Mask64::bit(0)
+    .or(Mask64::bit(1))
+    .or(Mask64::bit(2))
+    .or(Mask64::bit(5))
+    .or(Mask64::bit(6))
+    .or(Mask64::bit(7))
+    .or(Mask64::bit(8))
+    .or(Mask64::bit(9))
+    .or(Mask64::bit(10))
+    .or(Mask64::bit(11))
+    .or(Mask64::bit(19))
+    .or(Mask64::bit(54))
+    .or(Mask64::bit(55))
+    .or(Mask64::bit(59));
 // Sim tick each prop died on -> the death clip plays forward from there, then
 // holds. Authored corpses are seeded far in the past so they spawn on the final
-// death frame instead of re-playing the fall.
+// death frame instead of re-playing the fall. While a flinching monster lives,
+// nonzero is its flinch memory (`prop_flinch_ticks`); talk monsters and
+// sentries keep their own timers here.
 static mut PROP_DEATH_START: [u16; LIVE_PROPS] = [0; LIVE_PROPS];
 const PROP_OCC_VISIBLE: u8 = 1;
 // Reuse an otherwise-free bit in the render-occlusion byte for the AI target's
@@ -12157,6 +12172,7 @@ unsafe fn maker_make(
                 && SIM_NOW.wrapping_sub(PROP_DEATH_START[pi]) > 100
             {
                 PROP_HEALTH[pi] = prop_start_health(PROP_KIND[pi]);
+                PROP_DEATH_START[pi] = 0; // alive: no flinch remembered yet
                 PROP_STATE[pi] = PROP_STATE_IDLE;
                 PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
                 PROP_AI_TIMER[pi] = 0;
@@ -17998,24 +18014,61 @@ fn pain_clip_ticks(md: &Model) -> u8 {
     md.clip_hold_ticks(PROP_CLIP_PAIN).min(127) as u8
 }
 
-/// How long actor `pi` would flinch now (its pain clip), or 0 when its type
-/// has no flinch, a script holds it or it is in the air.
+/// How long actor `pi` flinches from this hit (its pain clip), or 0 when it
+/// does not: its type has no flinch, a script holds it or it is in the air,
+/// or CBaseMonster::GetSchedule's rule says no. In combat a monster flinches
+/// on the first hit of its life only (bits_MEMORY_FLINCHED, which every
+/// flinch sets); out of combat it flinches unless it already faces the
+/// attacker, which takes cover instead. The memory is the living actor's
+/// death tick, unused until it dies; talk monsters keep that word for their
+/// conversation turns, so they take the out-of-combat rule.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn prop_flinch_ticks(pi: usize) -> u8 {
+unsafe fn prop_flinch_ticks(pi: usize, player_inflicted: bool) -> u8 {
     let ty = PROP_KIND[pi];
     let slot = TYPE_TO_SLOT[(ty as usize).min(N_MODEL_TYPES - 1)];
-    if ty < 64
-        && FLINCH_TYPES.test(ty as usize)
-        && slot != MODEL_SLOT_NONE
-        && PROP_SCRIPT_MODE[pi] == 0
-        && PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE == 0
-        && !PROP_JUMP[pi].active
+    // A killing hit plays the death, not a flinch.
+    if PROP_HEALTH[pi] == 0
+        || ty >= 64
+        || !FLINCH_TYPES.test(ty as usize)
+        || slot == MODEL_SLOT_NONE
+        || PROP_SCRIPT_MODE[pi] != 0
+        || PROP_DORMANT[pi] & PROP_RUNTIME_AIRBORNE != 0
+        || PROP_JUMP[pi].active
     {
-        pain_clip_ticks(loaded_model(slot as usize))
-    } else {
-        0
+        return 0;
     }
+    if PROP_AI_TARGET[pi] != PROP_TARGET_NONE && !prop_is_human(ty) {
+        // In combat: the first hit of its life only (bits_MEMORY_FLINCHED).
+        if PROP_DEATH_START[pi] != 0 {
+            return 0;
+        }
+    } else if player_inflicted {
+        // Out of combat: a monster already facing the attacker, within
+        // (1 - fov) x 60 degrees, takes cover from it rather than flinching.
+        // cos((1 - fov) x 60 degrees) for the flinching types' view cones.
+        let cos = match ty {
+            2 | 5 | 6 | 55 | 59 => 3547, // fov 0.5: 30 degrees
+            7 | 8 | 10 => 2741,          // 0.2: 48
+            11 => -2048,                 // all around: 120
+            _ => -852,                   // -0.7 (talk monsters, vortigaunt, ichthyosaur): 102
+        };
+        let yaw = prop_yaw_value(PROP_YAW[pi]);
+        let p = PROP_POS[pi];
+        if senses::within_cone(
+            cos,
+            sincos::sin_q12(yaw),
+            sincos::sin_q12((yaw + 1024) & 0x0fff),
+            LOGIC_PLAYER_POS[0] - p[0],
+            LOGIC_PLAYER_POS[2] - p[2],
+        ) {
+            return 0;
+        }
+    }
+    if !prop_is_human(ty) {
+        PROP_DEATH_START[pi] = 1;
+    }
+    pain_clip_ticks(loaded_model(slot as usize))
 }
 
 #[optimize(size)]
@@ -18112,7 +18165,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     PROP_HIT_FLASH[pi] = monster_damage::flash_after_hit(
         PROP_HIT_FLASH[pi],
         monster_damage::conditions(dmg, NEXT_HIT_GROUP),
-        prop_flinch_ticks(pi),
+        prop_flinch_ticks(pi, player_inflicted),
         PROP_HIT_FLASH_TICKS,
     );
     NEXT_HIT_GROUP = 0;

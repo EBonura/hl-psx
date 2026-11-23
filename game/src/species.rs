@@ -1290,6 +1290,7 @@ unsafe fn lay_baby(m: &Map, parent: usize, at: [i32; 3]) -> bool {
     }
     prop_nav_cache_invalidate(q);
     PROP_HEALTH[q] = prop_start_health(59);
+    PROP_DEATH_START[q] = 0; // alive: no flinch remembered yet
     PROP_STATE[q] = PROP_STATE_IDLE;
     PROP_AI_TIMER[q] = 0;
     PROP_SCRIPT_MODE[q] = 0;
