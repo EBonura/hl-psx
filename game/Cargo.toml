@@ -24,7 +24,7 @@ pvs-check = []
 # The CD reader, the pack-table reads, the boot lookup and the loading hook go through the core's
 # jump table (CORE-ABI.md section 3), and the studio plate is left to the disc's boot splash. Needs an
 # SDK tree with psx-core (`--psoxide`); the 6bfe pin has none.
-scene-core = ["dep:psx-cdstream", "dep:psx-core"]
+scene-core = ["dep:psx-cdstream", "dep:psx-core", "dep:psx-splash"]
 # Console diagnostic pressings only: name the load stage the program has reached for the
 # stop panel (psx_io::diag, present only in the SDK diag branch). Never in a shipping build.
 console-diag = []
@@ -108,6 +108,7 @@ psx-hw   = { path = "../.psoxide/crates/psx-hw" }
 psx-pack = { path = "../.psoxide/sdk/crates/psx-pack" }
 psx-cdstream = { path = "../.psoxide/sdk/crates/psx-cdstream", optional = true }
 psx-core = { path = "../.psoxide/sdk/crates/psx-core", features = ["link"], optional = true }
+psx-splash = { path = "../.psoxide/sdk/crates/psx-splash", optional = true }
 psx-spu  = { path = "../.psoxide/sdk/crates/psx-spu" }
 psx-asset = { path = "../.psoxide/sdk/crates/psx-asset" }
 psx-fmv  = { path = "../.psoxide/sdk/crates/psx-fmv" }

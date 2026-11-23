@@ -1869,24 +1869,27 @@ fn main() {
         fs::write(&stack_ld, link_script).expect("write stack reserve script");
         println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
     }
-    // The `scene-core` build runs on the SDK's scene core: psoxide-core.ld (after the RAM size
-    // script, before psoxide.ld) stores psx-core's image after `.data` and makes `__core_boot` the
-    // entry; the slot symbols come from psx-core itself. The stored image and `.bss` overlap on
-    // purpose, so the link takes --no-check-sections (ld.lld's binary output places sections at
-    // their VMA either way).
-    if env::var_os("CARGO_FEATURE_SCENE_CORE").is_some() {
+    // The `scene-core` build runs on the SDK's scene core and has boot-only memory: psoxide-core.ld
+    // stores psx-core's image after `.data` and makes `__core_boot` the entry, the slot symbols
+    // come from psx-core itself; psoxide-boot.ld (after it, before psoxide.ld) runs the splash from
+    // `.boot` above `.bss` and stores it after the core's image. Stored and run addresses differ,
+    // so the link writes an ELF and hl-build writes the EXE from its load addresses (psx-exe);
+    // ld.lld's --oformat=binary would place both at their run addresses.
+    let scene_core = env::var_os("CARGO_FEATURE_SCENE_CORE").is_some();
+    if scene_core {
         assert!(core_window == 0x2000, "the scene core links at the 8,192 B window (game/core-window)");
-        let core_ld = ld.with_file_name("psoxide-core.ld");
-        println!("cargo:rerun-if-changed={}", core_ld.display());
-        println!("cargo:rustc-link-arg=-T{}", core_ld.display());
-        println!("cargo:rustc-link-arg=--no-check-sections");
+        for script in ["psoxide-core.ld", "psoxide-boot.ld"] {
+            let script = ld.with_file_name(script);
+            println!("cargo:rerun-if-changed={}", script.display());
+            println!("cargo:rustc-link-arg=-T{}", script.display());
+        }
     }
     println!("cargo:rustc-link-arg=-T{}", ld.display());
     // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to
     // symbolize emulator PC profiles. Same code at the same addresses; it
     // does not boot.
     println!("cargo:rerun-if-env-changed=HLPSX_LINK_ELF");
-    if env::var_os("HLPSX_LINK_ELF").is_none() {
+    if env::var_os("HLPSX_LINK_ELF").is_none() && !scene_core {
         println!("cargo:rustc-link-arg=--oformat=binary");
     }
     println!("cargo:rerun-if-changed={}", ld.display());

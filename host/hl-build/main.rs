@@ -2428,6 +2428,10 @@ fn compile_game(
     profile: GuestProfile<'_>,
 ) -> Result<PathBuf> {
     DIAG_BUILD.store(!is_shipping_build(features), Ordering::Relaxed);
+    SCENE_CORE_BUILD.store(
+        features.is_some_and(|list| list.split(',').any(|f| f.trim() == "scene-core")),
+        Ordering::Relaxed,
+    );
     let game = repository.join("game");
     let mut command = Command::new(cargo());
     command.current_dir(&game).args(["build", "--release"]);
@@ -2584,6 +2588,16 @@ fn compile_game(
             // An ELF for the symbolizer or the stack analysis, not an
             // executable: nothing to patch.
             return Ok(exe);
+        }
+        if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
+            // The scene-core link is an ELF (game/build.rs): write the EXE from its load
+            // addresses, keeping the ELF beside it.
+            let elf = exe.with_extension("elf");
+            fs::rename(&exe, &elf)?;
+            run(
+                hazard_tool(psoxide, "psx-exe").arg(&elf).arg(&exe),
+                "write hl-psx.exe from the scene-core link's ELF (psx-exe)",
+            )?;
         }
         // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
         // behind (loads in delay slots consumed one instruction later, including
@@ -2761,6 +2775,31 @@ static INTRO_ENABLED: AtomicBool = AtomicBool::new(false);
 /// marks the image a development disc (the journeys' probe discs and the profile collection builds).
 static DIAG_BUILD: AtomicBool = AtomicBool::new(false);
 
+/// Whether the executable `compile_game` linked last runs on the scene core: its disc then
+/// carries SCENES.TBL (the intro as image 0, the game as the program the intro hands over to),
+/// which the game reads into its own copy at boot.
+static SCENE_CORE_BUILD: AtomicBool = AtomicBool::new(false);
+
+/// The scene manifest of a scene-core disc with the intro stage (mkisopsx `--scenes`).
+fn scene_manifest(repository: &Path, game_file: &Path) -> Result<PathBuf> {
+    let directory = repository.join(".hlpsx/scenes");
+    fs::create_dir_all(&directory)?;
+    let manifest = directory.join("hl-psx.scenes");
+    fs::write(
+        &manifest,
+        format!(
+            "# Written by hl-build. Image 0 is the intro (PSX.EXE, the BIOS boots it); it hands\n\
+             # over to the game cold, so the core attaches with image 0's bit set.\n\
+             program PSX.EXE    -\n\
+             program HLGAME.EXE {}\n\
+             scene   BOOT       PSX.EXE    start\n\
+             scene   GAME       HLGAME.EXE start\n",
+            game_file.display()
+        ),
+    )?;
+    Ok(manifest)
+}
+
 fn pack_disc(repository: &Path, psoxide: &Path, exe: &Path) -> Result<PathBuf> {
     pack_disc_into(
         repository,
@@ -2842,7 +2881,16 @@ fn pack_disc_into(
         .arg("--world-pack-order-file")
         .arg(pack_order::write_order_file(repository, &staged_pack)?);
     if let Some(game_file) = &game_file {
-        command.arg("--file").arg(game_file);
+        if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
+            // The program row puts HLGAME.EXE in the root, as `--file` does.
+            command
+                .arg("--scenes")
+                .arg(scene_manifest(repository, game_file)?)
+                .arg("--core-image")
+                .arg(psoxide.join("sdk/crates/psx-core/prebuilt/psx-core.bin"));
+        } else {
+            command.arg("--file").arg(game_file);
+        }
     }
     if let Some(movie) = &movie {
         command.arg("--xa-file").arg(movie.join("INTRO.STR"));

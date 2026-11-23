@@ -34992,6 +34992,9 @@ fn main() {
     // GP0(1Fh) with, and every draw and flip below goes through it.
     driver::install(Gpu::new(peripherals.gpu_dma, settings::DISPLAY));
     let mut fb = DoubleBuffer::new(Resolution::R320X240);
+    // The scene table copy, before any other read: the core reads it once, from LBA 22.
+    #[cfg(feature = "scene-core")]
+    cdstream::core::read_scene_table();
     music::install(peripherals.cd);
     // A program started by a launcher inherits whatever mode the last one left, so the
     // first poll asks for analog and locks it, before anything reads the pad. The poll
@@ -35084,13 +35087,28 @@ fn main() {
         // A disc with the intro stage opened with this splash already (the intro
         // program plays it before the movie, pad notice included); showing it again
         // here would put the logo after the movie.
-        // Under the scene core the boot scene shows the splash (CORE-ABI.md section 4.3).
         #[cfg(not(feature = "scene-core"))]
         if !music::booted_by_intro() {
             menu::intro(&mut fb, assets, pad_notice);
         }
+        // On the scene core, a disc whose first program is this one (no intro stage) plays the
+        // SDK's splash from boot-only memory (psoxide-boot.ld's `.boot`, run above `.bss`): the
+        // disc's one splash, gone once it has run. With the intro, the intro played it.
         #[cfg(feature = "scene-core")]
-        let _ = (assets, pad_notice);
+        {
+            let _ = (assets, pad_notice);
+            if !music::booted_by_intro() {
+                driver::with(|gpu| {
+                    psx_splash::show(
+                        gpu,
+                        &mut fb,
+                        "Built with PSoXide",
+                        psx_display::Brightness::DEFAULT,
+                        || pads::poll(Port::One).buttons,
+                    )
+                });
+            }
+        }
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.

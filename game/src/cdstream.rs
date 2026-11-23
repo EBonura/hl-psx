@@ -74,8 +74,8 @@ mod target {
 pub use target::*;
 
 /// The resident scene core's CD calls (CORE-ABI.md section 3, P2-STREAM-CLIENT.md), for the
-/// `scene-core` measurement build. The slot addresses come from game/scene-core-abi.ld; no core
-/// is in the window yet, so this build links and is measured but must not run.
+/// `scene-core` build. The slot symbols come from psx-core (feature `link`), which puts the core
+/// in the window at boot.
 #[cfg(all(target_arch = "mips", feature = "scene-core"))]
 pub mod core {
     use psx_goldsrc::chunk_stream::{ChunkReader, DrainPoll};
@@ -101,6 +101,33 @@ pub mod core {
     pub fn read(lba: u32, dst: &mut [u32; SECTOR_WORDS]) -> bool {
         // SAFETY: the core owns the drive; `dst` is one whole sector, borrowed for the call.
         unsafe { psx_core_read(lba, 1, dst.as_mut_ptr(), None) == 0 }
+    }
+
+    /// Words of the scene table copy: the header and four rows (two images, two scenes).
+    const TABLE_WORDS: usize = 16 + 8 * 4;
+    static mut TABLE: [u32; TABLE_WORDS] = [0; TABLE_WORDS];
+    /// What reading the table at boot returned: the words kept, or 0x8000_0000 | the core's code.
+    #[no_mangle]
+    pub static mut SCENE_TABLE_STATUS: u32 = 0;
+
+    /// Read this disc's scene table into the program's copy, once at boot (psx-core's
+    /// `read_table`, through the core's read slot), for every later switch and image load.
+    pub fn read_scene_table() {
+        // SAFETY: once, at boot, single-threaded.
+        let table = unsafe { &mut *core::ptr::addr_of_mut!(TABLE) };
+        let status = match psx_core::link::read_table(table) {
+            Ok(words) => words as u32,
+            Err(code) => 0x8000_0000 | code,
+        };
+        // SAFETY: as above.
+        unsafe { SCENE_TABLE_STATUS = status };
+    }
+
+    /// The program's copy of the scene table (for switches and image loads).
+    #[allow(dead_code)]
+    pub fn scene_table() -> &'static [u32] {
+        // SAFETY: written once at boot, read afterwards.
+        unsafe { &*core::ptr::addr_of!(TABLE) }
     }
 
     pub fn set_idle_hook(hook: Option<extern "C" fn()>) {
