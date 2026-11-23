@@ -9,3 +9,4 @@ threshold  free_B  fits  geomean  worst
 chosen threshold 300
 450 (the rung shipped before the tentacle) links but leaves -52 B; the profile is carried across unchanged
 2026-11-22 at 962c97e, no layout: 300 2,748 B / 200 3,884 B / 150 4,540 B free; 150 chosen (c4a3 +0.22% before layout search)
+2026-11-23 at 01a9a3e, no layout: 60 5,068 B free; 60 chosen to fund the marine cover search (Manny's ask)
