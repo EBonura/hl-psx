@@ -12210,6 +12210,18 @@ unsafe fn maker_make(
         }
         qi += 1;
     }
+    if PROP_KIND[pi] == 58 {
+        // monster_snark is CSqueakGrenade, the creature the snark weapon
+        // throws: made with no owner and no speed, it bounces where it falls,
+        // hunts after its first touch and pops after 15 s. It runs as a
+        // thrown snark does (`tick_snark`); the stock copy stays parked for
+        // the maker's next one.
+        let slot =
+            spawn_projectile_dir(PROJ_SNARK, skill_hit(Sk::SnarkPop), rec.origin, [0; 3], true);
+        PROJECTILES[slot].vel = [0; 3];
+        maker_counted(m, nlogic, nents, li, rec, now, depth);
+        return;
+    }
     prop_nav_cache_invalidate(pi);
     PROP_DORMANT[pi] = 0;
     PROP_JUMP[pi] = monsterjump::State::EMPTY;
@@ -12249,6 +12261,19 @@ unsafe fn maker_make(
         };
         prop_set_pos_exact(m, pi, [p[0], y, p[2]]);
     }
+    maker_counted(m, nlogic, nents, li, rec, now, depth);
+}
+
+/// A maker's child is made: count it down and fire the target.
+unsafe fn maker_counted(
+    m: &Map,
+    nlogic: usize,
+    nents: usize,
+    li: usize,
+    rec: map::LogicEnt,
+    now: u16,
+    depth: u8,
+) {
     let left = LOGIC_COUNTER[li];
     if left > 0 {
         LOGIC_COUNTER[li] = left - 1;
@@ -24853,7 +24878,7 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
         PROJECTILES[i].active = false;
         sfx::play_world(sfx::SQK_BLAST, p.pos);
         DMG_BLAST = true;
-        radius_damage(m, p.pos, p.damage, blast_radius(p.damage), true);
+        radius_damage(m, p.pos, p.damage, blast_radius(p.damage), !p.from_enemy);
         DMG_BLAST = false;
         let mut k = 0;
         while k < 4 {
@@ -24949,8 +24974,10 @@ unsafe fn tick_snark(m: &Map, movers: &[phys::Mover], i: usize) {
                     hev::pend(hev::Kind::Slash);
                     note_damage_direction(p.pos);
                 } else {
-                    damage_prop(best, skill_hit(Sk::SnarkBite), true);
-                    PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
+                    damage_prop(best, skill_hit(Sk::SnarkBite), !p.from_enemy);
+                    if !p.from_enemy {
+                        PROP_AI_TARGET[best] = PROP_TARGET_PLAYER;
+                    }
                 }
                 p.damage = p.damage.saturating_add(skill_hit(Sk::SnarkPop));
                 p.dir[0] = 10; // half a second between bites

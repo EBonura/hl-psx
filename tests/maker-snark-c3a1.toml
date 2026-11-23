@@ -1,10 +1,12 @@
 # c3a1 `snarkegg1spawn` is five monstermakers of monster_snark (type 58). The cook used to drop them. The map's own triggers fire the eggs (the stock is awake by tick 90), so the journey checks the awake snarks and the bite, not the fire.
+# Since 2026-11-23 a made snark is a PROJ_SNARK projectile slot (tick_snark), not an actor: kind is byte 30 of the
+# 40-byte Projectile and active byte 37 (rustc layout, read from a tick log; recheck if the struct changes).
 name = "maker-snark-c3a1"
-title = "Half-Life: c3a1 monstermaker makes snarks that bite"
+title = "Half-Life: c3a1 monstermaker makes snarks that bite and pop"
 disc = "build/probe/hl-psx.cue"
 symbols = ["build/probe/hl-psx.map", "build/probe/symbols.txt"]
 pad = "dualshock"
-max_ticks = 8000
+max_ticks = 20000
 
 [[step]]
 label = "a probe disc boots the map the held buttons name: L1 with the room id in the low byte of the pad"
@@ -21,23 +23,38 @@ timeout = 3000
 [[step]]
 checkpoint = "before"
 golden = false
+
 [[step.assert]]
 kind = "expr"
 expr = "u8(PROP_KIND[40]) == 58"
 
 [[step]]
-label = "the maker wakes snarks"
-wait_until = { kind = "expr", expr = "(u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])) >= 3" }
+label = "the maker makes snarks: CSqueakGrenade, run as a thrown snark is (a live PROJ_SNARK slot), the stock stays parked"
+wait_until = { kind = "expr", expr = "count(i in 0..12: u8(PROJECTILES[40 * i + 30]) == 4 && u8(PROJECTILES[40 * i + 37]) != 0) >= 1" }
 timeout = 900
 
 [[step]]
-label = "a snark runs to the player and bites"
+label = "a snark hunts the player and bites"
 wait_until = { kind = "expr", expr = "i16(LOGIC_PLAYER_HEALTH) < 100" }
 timeout = 3000
 
 [[step]]
 checkpoint = "bitten"
 golden = false
+
 [[step.assert]]
 kind = "expr"
-expr = "(u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])) >= 3"
+expr = "(u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])) == 0"
+
+[[step]]
+label = "every snark pops (SQUEEK_DETONATE_DELAY, 15 s after it was made: 300 polls, about 3,000 gate ticks on the slow probe disc)"
+wait_until = { kind = "expr", expr = "count(i in 0..12: u8(PROJECTILES[40 * i + 30]) == 4 && u8(PROJECTILES[40 * i + 37]) != 0) == 0" }
+timeout = 9000
+
+[[step]]
+checkpoint = "popped"
+golden = false
+
+[[step.assert]]
+kind = "expr"
+expr = "(u8(PROP_ACTIVE[40])+u8(PROP_ACTIVE[41])+u8(PROP_ACTIVE[42])+u8(PROP_ACTIVE[43])+u8(PROP_ACTIVE[44])) == 0"

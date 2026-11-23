@@ -52,17 +52,20 @@ map c4a2b
 31 view 90 0
 100 fire babies on
 
-# monstermaker snarks (tests/maker-snark-c2a5f.toml, maker-snark-c3a1.toml). The player is mortal
-# and stands a hundred units from the first maker; the snarks must wake and bite. A snark is small and
-# at the player's feet when it bites, so the journeys judge by RAM.
+# monstermaker snarks (tests/maker-snark-c2a5f.toml, maker-snark-c3a1.toml). The player stands a
+# hundred units from the first maker; the snarks must be made, bite and pop. A snark is small and
+# at the player's feet when it bites, so the journeys judge by RAM. Made snarks hunt as thrown ones
+# do and several bite at once, so the player is kept alive (god 1 heals below 50) until they pop.
 # c2a5f (room 70): `snark_spawner` is at HL (-1530, 1370, -1360).
 map c2a5f
+0 god 1
 30 tp -1430 1370 -1388 180 0 3000
 31 view 180 0
 100 fire snark_spawner on
 
 # c3a1 (room 74): `snarkegg1spawn` is five makers around HL (-1060, -615, 504).
 map c3a1
+0 god 1
 30 tp -960 -615 476 180 0 3000
 31 view 180 0
 100 fire snarkegg1spawn on
