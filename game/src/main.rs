@@ -3982,20 +3982,7 @@ static mut NEXT_HIT_GROUP: u8 = 0;
 /// Actor types whose cooked pain clip is their small flinch (ACT_SMALL_FLINCH):
 /// scientists, Barney, headcrabs, zombies, houndeye, bullsquid, HECU,
 /// vortigaunt, alien grunt, controller, ichthyosaur.
-const FLINCH_TYPES: Mask64 = Mask64::bit(0)
-    .or(Mask64::bit(1))
-    .or(Mask64::bit(2))
-    .or(Mask64::bit(5))
-    .or(Mask64::bit(6))
-    .or(Mask64::bit(7))
-    .or(Mask64::bit(8))
-    .or(Mask64::bit(9))
-    .or(Mask64::bit(10))
-    .or(Mask64::bit(11))
-    .or(Mask64::bit(19))
-    .or(Mask64::bit(54))
-    .or(Mask64::bit(55))
-    .or(Mask64::bit(59));
+const FLINCH_TYPES: Mask64 = Mask64::EMPTY;
 // Sim tick each prop died on -> the death clip plays forward from there, then
 // holds. Authored corpses are seeded far in the past so they spawn on the final
 // death frame instead of re-playing the fall.
