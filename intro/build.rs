@@ -6,6 +6,12 @@
 //! instead (hl-build sets it from the game's own image end), with the SDK's
 //! script otherwise unchanged: a derivative is written to OUT_DIR so the
 //! pinned SDK stays pristine and a layout change upstream fails loudly.
+//!
+//! The splash and the movie player are boot-only memory, through the SDK's
+//! psoxide-boot.ld (read first, as its header says), run from the end of
+//! `.bss`. The address is the link's own `__bss_end`,
+//! given as a `--defsym` expression, so one link places it (hl-build checks
+//! the map: the section must end below the stack reserve).
 
 use std::{env, fs, path::PathBuf};
 
@@ -41,6 +47,18 @@ fn main() {
         );
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("hl-intro.ld");
     fs::write(&out, script).expect("write the intro linker script");
+    let boot = psoxide.join("sdk/psoxide-boot.ld");
+    let boot = boot.canonicalize().unwrap_or(boot);
+    println!("cargo:rerun-if-changed={}", boot.display());
+    println!("cargo:rustc-link-arg=-T{}", boot.display());
+    println!("cargo:rustc-link-arg=-u__boot_entry");
+    // Stored where it runs (BOOT_LMA = BOOT_VMA = __bss_end), not after `.data`: ld.lld's
+    // `--oformat=binary` writes no program headers and so places every section at its VMA,
+    // ignoring the script's AT() (the first link of this program put `.boot` at __bss_end in
+    // the file whatever BOOT_LMA said, and its mover then copied from the wrong place). The
+    // file carries this program's `.bss` (180 B) as zeros in exchange; `_start` clears it.
+    println!("cargo:rustc-link-arg=--defsym=BOOT_VMA=__bss_end");
+    println!("cargo:rustc-link-arg=--defsym=BOOT_LMA=__bss_end");
     println!("cargo:rustc-link-arg=-T{}", out.display());
     println!("cargo:rustc-link-arg=--oformat=binary");
     if let Ok(map) = env::var("HLPSX_LINK_MAP") {

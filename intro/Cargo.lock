@@ -13,6 +13,7 @@ name = "hl-intro"
 version = "0.2.0"
 dependencies = [
  "psx-chainloader",
+ "psx-display",
  "psx-fmv",
  "psx-font",
  "psx-gpu",
@@ -20,6 +21,7 @@ dependencies = [
  "psx-loading",
  "psx-pad",
  "psx-rt",
+ "psx-splash",
  "psx-spu",
  "psx-vram",
 ]
@@ -33,6 +35,14 @@ dependencies = [
  "psx-io",
  "psx-pack",
  "psx-rt",
+]
+
+[[package]]
+name = "psx-display"
+version = "0.1.0"
+dependencies = [
+ "psx-gpu",
+ "psx-hw",
 ]
 
 [[package]]
@@ -123,6 +133,18 @@ dependencies = [
  "psx-io",
  "psx-math",
  "psx-tick",
+]
+
+[[package]]
+name = "psx-splash"
+version = "0.1.0"
+dependencies = [
+ "psx-display",
+ "psx-font",
+ "psx-gpu",
+ "psx-pad",
+ "psx-rt",
+ "psx-vram",
 ]
 
 [[package]]

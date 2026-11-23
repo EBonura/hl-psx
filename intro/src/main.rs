@@ -1,5 +1,5 @@
-//! The boot program of the hl-psx disc: the studio splash, Half-Life's startup
-//! movie, then the game.
+//! The boot program of the hl-psx disc: the SDK's boot splash, Half-Life's
+//! startup movie, then the game.
 //!
 //! The game's image has almost no RAM to spare, so the movie cannot live in
 //! it. The BIOS boots this small program instead (`PSX.EXE`, linked high in
@@ -14,8 +14,15 @@
 //! The movie is the one Half-Life plays at startup, cooked by
 //! host/hl-intro-cook from the player's own install. A disc built without it
 //! has no intro stage and boots the game directly.
+//!
+//! The splash (`psx_splash`) and the movie player (`psx_fmv`) are boot-only
+//! memory (the SDK's psoxide-boot.ld, see build.rs and boot.rs): the EXE
+//! stores them after `.data`, and they run above `.bss`. Nothing after the
+//! movie calls them, and the game's image takes that RAM once it is loaded.
 #![no_std]
 #![no_main]
+// The boot-only mover is MIPS assembly (boot.rs).
+#![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
 
 extern crate psx_rt;
 
@@ -23,7 +30,7 @@ use psx_chainloader::paint;
 use psx_chainloader::runtime::{self, Presentation};
 use psx_fmv::player::{self, Config, Depth, Movie, Stop};
 use psx_font::fonts::BASIC_8X16;
-use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
+use psx_gpu::display::{DisplayConfig, DoubleBuffer, Resolution, VideoMode};
 use psx_gpu::Gpu;
 use psx_io::periph::ControllerPort;
 use psx_loading::{Gp0, Indicator, Rgb, Style, Tail};
@@ -31,7 +38,7 @@ use psx_pad::{button, Port};
 use psx_rt::{interrupts, tty, Peripherals};
 use psx_spu::{self as spu, Spu, Volume};
 
-mod splash;
+mod boot;
 
 mod cooked {
     include!("../../.hlpsx/intro/movie.rs");
@@ -283,23 +290,34 @@ fn main() {
         held: true,
         last_vblank: interrupts::vblank_count(),
     };
-    // The splash counts its fade in frames, one flip per VBlank: keep the display rate here
-    // (the SDK caps every program at 30 fps unless it says otherwise).
+    // The intro counts its waits in frames, one flip per VBlank, as it did before the splash
+    // moved to the SDK (which lifts the cap for itself and puts back what it found).
     psx_rt::present::set_cap(psx_rt::present::PresentCap::UNCAPPED);
-    // The first poll of a pad asks it for analog mode, so a pad that cannot be seen shows on the
-    // splash, before the movie, instead of after it. The game polls with its own Controllers and
-    // asks again.
+    // The first poll of a pad asks it for analog mode, so a pad that cannot be seen is told
+    // before the movie, not after it. The game polls with its own Controllers and asks again.
     skip.pads.poll(&mut skip.port, Port::One);
     let notice = match skip.pads.analog(Port::One) {
-        psx_pad::AnalogRequirement::Analog => ["", ""],
+        psx_pad::AnalogRequirement::Analog => None,
         psx_pad::AnalogRequirement::DigitalOnly => {
-            ["Digital pad detected", "Half-Life needs a DualShock"]
+            Some(["Digital pad detected", "Half-Life needs a DualShock"])
         }
         psx_pad::AnalogRequirement::Absent => {
-            ["No controller found", "Plug a DualShock into port 1"]
+            Some(["No controller found", "Plug a DualShock into port 1"])
         }
     };
-    splash::play(&mut gpu, &mut skip, notice);
+    let mut fb = DoubleBuffer::new(Resolution::R320X240);
+    // The disc's one splash. The intro reads no memory card, so the brightness is the default.
+    psx_splash::show(
+        &mut gpu,
+        &mut fb,
+        "Built with PSoXide",
+        psx_display::Brightness::DEFAULT,
+        || skip.buttons(),
+    );
+    if let Some(lines) = notice {
+        boot::pad_notice(&mut gpu, &mut fb, &mut skip, lines);
+    }
+    boot::black(&mut gpu, &mut fb);
     play_movie(&mut skip, image_start());
 
     let Some((lba, _)) = player::find_root_file(GAME_FILE) else {
