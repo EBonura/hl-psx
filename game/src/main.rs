@@ -34926,13 +34926,14 @@ fn main() {
     // guest state. Shipping boots mirror the Celeste collection's PSoXide
     // splash before entering the original-style Half-Life menu.
     if !DBG_PAD_BOOT {
-        let assets = unsafe { stream_menu_assets() };
+        // The SDK splash carries its own mark, so the menu chunk is not read for it here: the menu
+        // streams it when it opens.
         end_loading();
         // A disc with the intro stage opened with this splash already (the intro
         // program plays it before the movie, pad notice included); showing it again
         // here would put the logo after the movie.
         if !music::booted_by_intro() {
-            menu::intro(&mut fb, assets, pad_notice);
+            menu::intro(&mut fb, pad_notice);
         }
     }
 

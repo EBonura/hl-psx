@@ -165,7 +165,6 @@ const LOGO_VRAM_X: u16 = 640; // clear of framebuffers (X<320) and the font atla
 const BG_VRAM_X: u16 = 512;
 const BG_CLUT_X: u16 = 512;
 const BG_CLUT_Y: u16 = 257;
-const BONNIE_VRAM_X: u16 = 768;
 // The 8x16 font occupies the 4bpp page at X=320. GoldSrc's 640x100
 // `media/logo.avi` is cooked to its native 320x50 menu geometry and uploaded
 // at X=384. It spans two 4bpp pages: pixels 0..255 at X=384 and 256..319 at
@@ -178,7 +177,7 @@ const LOGO_ANIM_RIGHT_VRAM_X: u16 = 448;
 const MENU_SECTIONS: usize = 4;
 const SECTION_BG: usize = 0;
 const SECTION_LOGO: usize = 1;
-const SECTION_BONNIE: usize = 2;
+// Section 2 is the old splash plate (the Bonnie mark), still packed by hl-content, no longer drawn.
 const SECTION_LOGO_ANIM: usize = 3;
 
 /// Split the streamed menu chunk into its `.tex` sections. A short or failed
@@ -258,8 +257,7 @@ fn draw_bg(mat: TextureMaterial) {
     );
 }
 
-// Ignore input briefly so a button still held from boot does not consume the
-// studio splash.
+// Ignore input briefly so the press that ended the splash does not end the pad notice.
 const TITLE_SKIP_GRACE: i32 = 8;
 
 const LOGO_ANIM_HEADER: usize = 8 + 32;
@@ -376,105 +374,42 @@ fn draw_logo_tinted(mat: TextureMaterial, w: u16, h: u16, y0: i16, tint: (u8, u8
     );
 }
 
-/// Shipping boot splash, matched to the Celeste Classic Collection cadence:
-/// fade the project logo and "Built with PSoXide" treatment in, hold, then
-/// fade out. A fresh face-button/Start press skips after the opening frames.
+/// The boot splash of a disc without the intro stage (an intro disc plays the same one in the
+/// intro program, before the movie): the SDK's animated splash, the picture and timing every
+/// PSoXide game opens with. A pad that did not settle in analog mode gets its two-line notice
+/// on a short screen after it.
 #[inline(never)]
 #[optimize(size)]
-pub fn intro(fb: &mut DoubleBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
-    let sections = split_menu(menu_blob);
-    let (bonnie, bw, bh) = upload_tex(sections[SECTION_BONNIE], BONNIE_VRAM_X);
+pub fn intro(fb: &mut DoubleBuffer, pad_notice: [&str; 2]) {
+    // Half-Life's brightness is its own light curve, applied to the world and the models, not
+    // the SDK's overlay step, so the splash draws at the SDK default.
+    if pad_notice[0].is_empty() {
+        return;
+    }
+    const NOTICE: i32 = 150;
+    const NOTICE_FADE: i32 = 24;
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
-
-    const FADE_IN: i32 = 32;
-    const HOLD: i32 = 74;
-    const TOTAL: i32 = 150;
-    const FADE_OUT: i32 = TOTAL - FADE_IN - HOLD;
-    const TAG: &str = "Built with PSoXide";
-
-    let any = |bits: u16| bits & (button::CROSS | button::CIRCLE | button::START) != 0;
     let mut frame = 0i32;
-    while frame < TOTAL {
-        // Held, not edge-triggered, past a short grace: holding Start from
-        // boot should walk out of the splash.
-        if frame > TITLE_SKIP_GRACE && any(pads::poll(Port::One).buttons.bits()) {
+    while frame < NOTICE {
+        if frame > TITLE_SKIP_GRACE
+            && pads::poll(Port::One)
+                .buttons
+                .is_held(button::CROSS | button::CIRCLE | button::START)
+        {
             break;
         }
-
-        let level = if frame < FADE_IN {
-            frame * 128 / FADE_IN
-        } else if frame < FADE_IN + HOLD {
-            128
-        } else {
-            (TOTAL - frame) * 128 / FADE_OUT
-        }
-        .clamp(0, 128);
-
+        let tint = ((frame.min(NOTICE - frame) * 128 / NOTICE_FADE).clamp(0, 128) / 2) as u8;
         driver::with(|gpu| fb.clear(gpu, (0, 0, 0)));
-        let logo_level = level as u8;
-        draw_bonnie_tinted(
-            bonnie,
-            bw,
-            bh,
-            112,
-            34,
-            (logo_level, logo_level, logo_level),
-        );
-        draw_sheen(
-            &font,
-            160 - font.text_width(TAG) as i16 / 2,
-            150,
-            TAG,
-            frame,
-            level,
-        );
-        // Only set when the pad did not settle in analog mode.
-        let mut y = 190;
+        let mut y = 104;
         for line in pad_notice {
             let x = 160 - font.text_width(line) as i16 / 2;
-            let tint = level as u8 / 2;
             font.draw_text(x, y, line, (tint + tint / 2, tint, tint / 2));
             y += 18;
         }
-
         driver::with(|gpu| gpu.wait_idle());
         driver::with(|gpu| psx_goldsrc::present::title_flip(fb, gpu));
         frame += 1;
     }
-}
-
-#[inline(never)]
-#[optimize(size)]
-fn draw_sheen(font: &FontAtlas, mut x: i16, y: i16, text: &str, frame: i32, brightness: i32) {
-    let span = text.chars().count() as i32 + 18;
-    let head = (frame / 2).rem_euclid(span);
-    for (index, ch) in text.char_indices() {
-        let glyph = &text[index..index + ch.len_utf8()];
-        let amount = (18 - (index as i32 - head).abs() * 6).max(0);
-        let channel = |base: i32| {
-            let dim = base * brightness / 128;
-            (dim + (brightness - dim) * amount / 18) as u8
-        };
-        font.draw_text(x, y, glyph, (channel(76), channel(108), channel(128)));
-        x += font.text_width(glyph) as i16;
-    }
-}
-
-/// Celeste Collection boot geometry: the 128px source logo is centered as a
-/// 96x96 mark above the PSoXide line.
-#[inline(never)]
-#[optimize(size)]
-fn draw_bonnie_tinted(mat: TextureMaterial, w: u16, h: u16, x: i16, y: i16, tint: (u8, u8, u8)) {
-    if w == 0 || h == 0 {
-        return;
-    }
-    const SIZE: i16 = 96;
-    let (uw, uh) = ((w - 1) as u8, (h - 1) as u8);
-    driver::quad_textured_material(
-        [(x, y), (x + SIZE, y), (x, y + SIZE), (x + SIZE, y + SIZE)],
-        [(0, 0), (uw, 0), (0, uh), (uw, uh)],
-        mat.with_tint(tint),
-    );
 }
 
 // ---------------------------------------------------------------------------
