@@ -35103,20 +35103,24 @@ fn main() {
     // their route timing and performance counters begin at exactly the same
     // guest state. Shipping boots mirror the Celeste collection's PSoXide
     // splash before entering the original-style Half-Life menu.
+    #[cfg(not(feature = "scene-core"))]
     if !DBG_PAD_BOOT {
         let assets = unsafe { stream_menu_assets() };
         end_loading();
         // A disc with the intro stage opened with this splash already (the intro
         // program plays it before the movie, pad notice included); showing it again
         // here would put the logo after the movie.
-        #[cfg(not(feature = "scene-core"))]
         if !music::booted_by_intro() {
             menu::intro(&mut fb, assets, pad_notice);
         }
-        // On the scene core the splash lives only in hl-intro's `.boot` (the disc's first
-        // program); this program carries no `.boot` and shows none.
-        #[cfg(feature = "scene-core")]
-        let _ = (assets, pad_notice);
+    }
+    // On the scene core the splash lives only in hl-intro's `.boot` (the disc's first
+    // program); this program carries no `.boot`, shows none, and so reads no menu art for
+    // it: the title menu below reads its art once.
+    #[cfg(feature = "scene-core")]
+    if !DBG_PAD_BOOT {
+        end_loading();
+        let _ = pad_notice;
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
