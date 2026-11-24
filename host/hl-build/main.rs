@@ -2592,7 +2592,6 @@ fn compile_game(
         if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
             // The scene-core link is an ELF (game/build.rs): write the EXE from its load
             // addresses, keeping the ELF beside it.
-            check_scene_core_sections(&link_map)?;
             let elf = exe.with_extension("elf");
             fs::rename(&exe, &elf)?;
             run(
@@ -2826,73 +2825,6 @@ fn write_menu_overlay(psoxide: &Path, elf: &Path) -> Result<()> {
         )?;
     }
     fs::write(overlay.with_extension("ovl.load"), load)?;
-    Ok(())
-}
-
-/// One output section of a link map: name, run address, load address, size.
-type MapSection<'a> = (&'a str, u32, u32, u32);
-
-/// The scene-core link runs without ld.lld's section overlap checks (game/build.rs: the title
-/// menu overlay runs inside the world arena, a `.bss` static, which ld.lld refuses). This makes
-/// them from the link map: no two allocated output sections may overlap in run or load address,
-/// except an overlay (`.overlay.N`) with `.bss` or another overlay, and only while the overlay
-/// lies inside `hl_psx::WORLD_ARENA`.
-fn check_scene_core_sections(map: &Path) -> Result<()> {
-    let text = fs::read_to_string(map)?;
-    let hex = |field: &str| u32::from_str_radix(field, 16).ok();
-    let mut sections: Vec<MapSection> = Vec::new();
-    let mut arena = None;
-    for line in text.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        let [vma, lma, size, _, name] = fields[..] else {
-            continue;
-        };
-        let (Some(vma), Some(lma), Some(size)) = (hex(vma), hex(lma), hex(size)) else {
-            continue;
-        };
-        if name == "hl_psx::WORLD_ARENA" {
-            arena = Some((vma, size));
-        }
-        // An output section's name starts in the map's Out column (byte 33); input sections and
-        // symbols are indented further. Address 0: not allocated (symbol tables, DWARF).
-        if line.as_bytes().get(33) != Some(&b' ') && name.starts_with('.') && vma != 0 && size != 0
-        {
-            sections.push((name, vma, lma, size));
-        }
-    }
-    let (arena_start, arena_size) =
-        arena.ok_or_else(|| format!("no hl_psx::WORLD_ARENA in {}", map.display()))?;
-    let overlaps = |a: u32, a_size: u32, b: u32, b_size: u32| {
-        u64::from(a) < u64::from(b) + u64::from(b_size)
-            && u64::from(b) < u64::from(a) + u64::from(a_size)
-    };
-    let in_arena = |section: &MapSection| {
-        section.0.starts_with(".overlay.")
-            && section.1 >= arena_start
-            && u64::from(section.1) + u64::from(section.3)
-                <= u64::from(arena_start) + u64::from(arena_size)
-    };
-    for (index, a) in sections.iter().enumerate() {
-        for b in &sections[index + 1..] {
-            let allowed =
-                (in_arena(a) && (b.0 == ".bss" || in_arena(b))) || (in_arena(b) && a.0 == ".bss");
-            if overlaps(a.1, a.3, b.1, b.3) && !allowed {
-                return Err(format!(
-                    "sections {} and {} overlap in run address ({:#x}+{:#x}, {:#x}+{:#x})",
-                    a.0, b.0, a.1, a.3, b.1, b.3
-                )
-                .into());
-            }
-            // `.bss` has no bytes to load.
-            if a.0 != ".bss" && b.0 != ".bss" && overlaps(a.2, a.3, b.2, b.3) {
-                return Err(format!(
-                    "sections {} and {} overlap in load address ({:#x}+{:#x}, {:#x}+{:#x})",
-                    a.0, b.0, a.2, a.3, b.2, b.3
-                )
-                .into());
-            }
-        }
-    }
     Ok(())
 }
 

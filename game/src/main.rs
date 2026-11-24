@@ -238,15 +238,15 @@ const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 // from the arena's end stop where the blocks start (`FACE_USED_WORDS`).
 const FACE_REGION_WORDS: usize = hl_format::room_budget::FACE_REGION_WORDS;
 const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS + FACE_REGION_WORDS;
+#[cfg_attr(feature = "scene-core", link_section = ".bss.overlay_host")]
 static mut WORLD_ARENA: [u32; ARENA_WORDS] = [0; ARENA_WORDS];
-// The arena's address under a plain name for the scene-core link, which runs the title menu
-// overlay at the arena's start (game/build.rs, `OVERLAY_VMA`). An alias: no bytes.
-#[cfg(feature = "scene-core")]
-core::arch::global_asm!(
-    ".globl hl_world_arena_base",
-    ".set hl_world_arena_base, {arena}",
-    arena = sym WORLD_ARENA,
-);
+// On the scene core the arena is the title menu overlay's host (psoxide-overlay.ld): MENU.OVL
+// runs at its start (`__overlay_vma`), which no map holds while a menu runs, and the link allows
+// that overlap and no other. The host starts where the stored bytes the program still needs end
+// (after .data, over the stored core image, dead once the core is in its window); .bss follows.
+// `_start` zeroes it with .bss. Same size and contents as on every other build: only its address
+// moves. The menu art streams in after MENU_OVERLAY_BYTES (`stream_menu_assets`), over MENU.OVL's
+// tail of pack header sectors, which is read before (cdstream.rs, `core::TAIL`).
 #[cfg(feature = "scene-core")]
 include!(concat!(env!("OUT_DIR"), "/menu_overlay.rs"));
 /// Words of the arena's top taken by the resident models' face blocks.

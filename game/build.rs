@@ -1887,14 +1887,13 @@ fn main() {
         // The pre-play title menu (menu.rs, `.text.overlay.1.*`) is a fixed-address overlay
         // (psoxide-overlay.ld) at the world arena's first MENU_OVERLAY_BYTES, which no map
         // holds while a menu runs; the menu art streams in after it. hl-build writes it as
-        // MENU.OVL, a volatile overlay the core reads again before every menu entry.
-        // `hl_world_arena_base` is the arena's address (main.rs, global_asm).
+        // MENU.OVL, a volatile overlay the core reads again before every menu entry. The arena
+        // is the overlay's host (`.bss.overlay_host`, main.rs), so it runs at `__overlay_vma`.
         let menu_ld = out_dir.join("menu-overlay.ld");
         fs::write(
             &menu_ld,
             format!(
-                "OVERLAY_VMA = hl_world_arena_base;\n\
-                 ASSERT(((__overlay_end - OVERLAY_VMA + 0x7FF) & ~0x7FF) <= {MENU_OVERLAY_BYTES:#x}, \
+                "ASSERT(((__overlay_1_bytes + 0x7FF) & ~0x7FF) <= {MENU_OVERLAY_BYTES:#x}, \
                  \"the title menu overlay, padded to sectors, outgrew MENU_OVERLAY_BYTES (game/build.rs)\")\n"
             ),
         )
@@ -1903,12 +1902,6 @@ fn main() {
         let overlay_ld = ld.with_file_name("psoxide-overlay.ld");
         println!("cargo:rerun-if-changed={}", overlay_ld.display());
         println!("cargo:rustc-link-arg=-T{}", overlay_ld.display());
-        // ld.lld refuses an overlay whose run range overlaps `.bss` ("section .bss virtual
-        // address range overlaps with .overlay.1"), and the arena is a `.bss` static. Until the
-        // SDK places an overlay over a program's own buffer, the link skips its section overlap
-        // checks and hl-build makes them itself, allowing only the overlay inside the arena
-        // (`check_scene_core_sections`).
-        println!("cargo:rustc-link-arg=--no-check-sections");
     }
     fs::write(
         out_dir.join("menu_overlay.rs"),
