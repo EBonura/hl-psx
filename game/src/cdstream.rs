@@ -112,23 +112,27 @@ pub mod core {
     static mut TABLE: [u32; TABLE_WORDS] = [0; TABLE_WORDS];
 
     /// The overlay test (cfg `scene_overlay_test`, set by HLPSX_SCENE_OVERLAY_TEST at build time;
-    /// never shipped): at boot, ask the core for image 2 (an Overlay owned by
-    /// HLGAME.EXE) and image 3 (one owned by PSX.EXE, the intro), and keep what it answered, with
-    /// the handoff block's loaded mask before and after:
-    /// `[status 2, status 3, mask before, mask after]`.
+    /// never shipped), at boot: load image 2 (an Overlay owned by HLGAME.EXE), write over the first
+    /// word of its range as gameplay would (the world arena), and ask for it again; then ask for
+    /// image 3 (owned by PSX.EXE, the intro). Kept:
+    /// `[status 2, status 2 again, its first word after the second load, status 3]`.
     #[cfg(scene_overlay_test)]
     #[no_mangle]
     pub static mut OVERLAY_TEST: [u32; 4] = [0xffff_ffff; 4];
 
     #[cfg(scene_overlay_test)]
     pub fn overlay_test() {
+        const RANGE: *mut u32 = 0x8010_0000 as *mut u32;
         let table = scene_table();
-        let before = psx_core::link::block_word(0x74);
-        let owned_by_game = psx_core::link::load_image(2, table);
+        let first = psx_core::link::load_image(2, table);
+        // SAFETY: image 2's load range (the test manifest), in the world arena, unused at boot.
+        unsafe { core::ptr::write_volatile(RANGE, 0xdead_beef) };
+        let again = psx_core::link::load_image(2, table);
+        // SAFETY: as above.
+        let word = unsafe { core::ptr::read_volatile(RANGE) };
         let owned_by_intro = psx_core::link::load_image(3, table);
-        let after = psx_core::link::block_word(0x74);
         // SAFETY: once, at boot, single-threaded.
-        unsafe { OVERLAY_TEST = [owned_by_game, owned_by_intro, before, after] };
+        unsafe { OVERLAY_TEST = [first, again, word, owned_by_intro] };
     }
 
     /// The program's copy of the scene table, for switches and image loads: psx-core reads
