@@ -25,6 +25,8 @@
 /// real numbers.
 #[path = "../../../game/src/combat_defs.rs"]
 pub mod combat_defs;
+#[path = "../../../game/src/glow_blur.rs"]
+pub mod glow_blur;
 #[path = "../../../game/src/decal_light.rs"]
 pub mod decal_light;
 pub use combat_defs::{N_AMMO, N_WEAPONS};

@@ -123,7 +123,8 @@ pub mod core {
         // Link-time symbol: only its address is taken (it is MENU.OVL's size).
         let own = core::ptr::addr_of!(__overlay_1_bytes) as u32;
         // SAFETY: single-threaded; the read just ended, so the tail's words are this load's.
-        unsafe { *core::ptr::addr_of_mut!(TAIL) = psx_core::link::image_tail(MENU_IMAGE, own, scene_table()) };
+        let tail = psx_core::link::image_tail(MENU_IMAGE, own, scene_table());
+        unsafe { *core::ptr::addr_of_mut!(TAIL) = tail };
     }
 
     extern "C" {

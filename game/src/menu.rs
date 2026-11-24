@@ -573,7 +573,7 @@ fn upload_glow_atlas() {
     });
 
     let mut alpha = [0u8; GLOW_CELL_W * GLOW_CELL_H];
-    let mut blurred = [0u8; GLOW_CELL_W * GLOW_CELL_H];
+    let mut rows = [0u16; crate::glow_blur::scratch_len(GLOW_CELL_W, GLOW_CELL_H)];
     let mut packed = [0u8; GLOW_CELL_W * GLOW_CELL_H / 2];
     for index in 0..GLOW_CHAR_COUNT {
         // The loading widget, if one is up, keeps turning through this CPU-bound setup.
@@ -590,33 +590,8 @@ fn upload_glow_atlas() {
                 }
             }
         }
-        for row in 0..font.glyph_h as usize {
-            let bits = font.bitmap[glyph * font.glyph_h as usize + row];
-            for column in 0..font.glyph_w as usize {
-                if bits & (0x80 >> column) != 0 {
-                    alpha[(row + GLOW_PAD_Y as usize) * GLOW_CELL_W
-                        + column
-                        + GLOW_PAD_X as usize] = 15;
-                }
-            }
-        }
         for _ in 0..GLOW_BLUR_PASSES {
-            blurred.copy_from_slice(&alpha);
-            for y in 0..GLOW_CELL_H {
-                for x in 0..GLOW_CELL_W {
-                    let mut sum = 0u32;
-                    for dy in 0..3 {
-                        for dx in 0..3 {
-                            let sy = (y + dy).wrapping_sub(1);
-                            let sx = (x + dx).wrapping_sub(1);
-                            if sy < GLOW_CELL_H && sx < GLOW_CELL_W {
-                                sum += blurred[sy * GLOW_CELL_W + sx] as u32;
-                            }
-                        }
-                    }
-                    alpha[y * GLOW_CELL_W + x] = (sum / 9) as u8;
-                }
-            }
+            crate::glow_blur::box3_pass(&mut alpha, &mut rows, GLOW_CELL_W, GLOW_CELL_H);
         }
         for level in alpha.iter_mut() {
             *level = ((*level as u32 * GLOW_GAIN).min(15)) as u8;

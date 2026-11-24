@@ -37,6 +37,7 @@ mod cdstream;
 mod combat_defs;
 mod decal_light;
 mod door_transition;
+mod glow_blur;
 mod overlay;
 use overlay::{fx_quad_flat, fx_quad_textured_material, fx_tri_flat_blended, OverlayTail};
 use psx_goldsrc::driver;
