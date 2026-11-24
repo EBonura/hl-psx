@@ -38,8 +38,7 @@ use psx_fmv::player::{self, Config, Depth, Movie, Stop};
 use psx_font::fonts::BASIC_8X16;
 use psx_gpu::display::{DisplayConfig, DoubleBuffer, Resolution, VideoMode};
 use psx_gpu::Gpu;
-use psx_io::cd::reader::{SectorReader, SECTOR_WORDS};
-use psx_io::periph::{Cd, ControllerPort};
+use psx_io::periph::ControllerPort;
 use psx_loading::{Gp0, Indicator, Rgb, Style, Tail};
 use psx_pad::{button, Port};
 use psx_rt::{interrupts, tty, Peripherals};
@@ -160,24 +159,10 @@ fn play_movie(skip: &mut Skip, limit: u32) {
     report(&outcome);
 }
 
-/// The game's executable in the root directory (boot-only, like [`play_movie`]). It looks with
-/// a reader of its own, not the film player's: with the player's READER as the only argument
-/// psx-io's resident `SectorReader::start_read` ever gets, LTO folds the static's address into
-/// it, and the SDK's boot script refuses that reference into `.boot_inner`.
-#[inline(never)]
-#[link_section = ".text.boot_only.find_game"]
+/// The game's executable in the root directory, through the film player's lookup (a disc
+/// without the scene core chain-loads it).
 fn find_game() -> Option<u32> {
-    // SAFETY: the player has returned and released the drive; nothing else uses it.
-    let mut reader = SectorReader::with_cd(unsafe { Cd::steal() });
-    if !reader.prepare() {
-        return None;
-    }
-    let mut sector = [0u32; SECTOR_WORDS];
-    let found = reader
-        .find(&mut sector, None, &[GAME_FILE])
-        .map(|(lba, _)| lba);
-    let _ = reader.release();
-    found
+    player::find_root_file(GAME_FILE).map(|(lba, _)| lba)
 }
 
 /// The movie's outcome, published for tests that wait on game state (the cross-emulator smoke):

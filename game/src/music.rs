@@ -119,12 +119,6 @@ pub unsafe fn start(track: u8, from_sector: u32) -> Start {
     )
     .song(channel);
     player.set_volume(DRIVE_VOLUME, DRIVE_VOLUME);
-    // The core ends a read on an acknowledged Pause and proves the stop before its next command;
-    // the player drives the drive itself, so its first command goes through the core's op 0 (a
-    // GetStat), which settles any Pause still owed.
-    #[cfg(feature = "scene-core")]
-    // SAFETY: op 0 with no parameters and no response buffer.
-    let _ = psx_core::link::cd(0, 0, 0x01 << 8, core::ptr::null_mut());
     if player.play(song, false).is_ok() {
         STARTED_AT = from;
         Start::Playing

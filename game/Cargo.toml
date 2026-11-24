@@ -22,9 +22,10 @@ pvs-check = []
 # Scene-core P2 build: the program runs on the SDK's scene core (psx-core, feature `link`: the
 # embedded core image, `__core_boot` and the jump-table slot symbols, linked with psoxide-core.ld).
 # The CD reader, the pack-table reads, the boot lookup and the loading hook go through the core's
-# jump table (CORE-ABI.md section 3), and the studio plate is left to the disc's boot splash. Needs an
+# jump table (CORE-ABI.md section 3), the XA player sends its waited commands through the core's CD
+# slot (psx-io `core-cd`), and the studio plate is left to the disc's boot splash. Needs an
 # SDK tree with psx-core (`--psoxide`); the 6bfe pin has none.
-scene-core = ["dep:psx-cdstream", "dep:psx-core"]
+scene-core = ["dep:psx-cdstream", "dep:psx-core", "psx-io/core-cd"]
 # Console diagnostic pressings only: name the load stage the program has reached for the
 # stop panel (psx_io::diag, present only in the SDK diag branch). Never in a shipping build.
 console-diag = []
