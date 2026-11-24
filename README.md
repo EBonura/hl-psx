@@ -109,8 +109,13 @@ Nothing is copied elsewhere unless you explicitly use `install` with
 The disc opens with Half-Life's own startup movie (the one named in your
 install's `media/StartupVids.txt`), skippable with Start or Cross. The game
 image has no RAM to spare for a video player, so a small boot program plays the
-movie and then loads the game's executable, which sits on the disc as the file
-`HLGAME.EXE`.
+movie and then enters the game's executable, which sits on the disc as the file
+`HLGAME.EXE`. Every program on the disc runs on the SDK's resident scene core
+(8 KiB at the top of RAM, `psx-core`): the intro enters the game with a core
+program switch, the game reads the CD through the core, and the pre-play title
+menu is a volatile overlay (`MENU.OVL`) the core reads into the world arena
+before every menu entry. A disc without the intro boots the game as `PSX.EXE`
+on the same core.
 
 The movie is cooked from your install at build time, from the `valve.webm` the
 install names, by the SDK's own movie encoder (`psx-str-cook`, used as a
@@ -300,7 +305,7 @@ the final authority for timing, audio, controller, and CD-loading behaviour.
 | `host/hl-build/` | End-to-end build orchestration (`cargo hl-build`), its own workspace |
 | `host/hl-content/` | Menu, audio, sprite, and manifest compiler |
 | `host/hl-bsp/` | GoldSrc BSP and studio-model cooker |
-| `intro/` | The disc's boot program: startup movie, then loads the game (own workspace) |
+| `intro/` | The disc's boot program: SDK splash, startup movie, then the game through the scene core (own workspace) |
 | `host/hl-intro-cook/` | Encodes the install's startup movie for `intro/` |
 | `host/hl-logic-tests/` | Host-side gameplay and entity tests |
 | `shared/hl-format/` | Formats shared by host tools and the game |

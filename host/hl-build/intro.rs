@@ -3,9 +3,9 @@
 //!
 //! The game's image has almost no RAM to spare, so the movie player cannot be
 //! part of it. A disc with an intro boots `intro/` (linked high in RAM; the
-//! BIOS runs it as `PSX.EXE`), which streams `INTRO.STR` and then loads the
-//! game's own executable, an ordinary root file called `HLGAME.EXE`, over the
-//! RAM it was using (the SDK's chain loader, the one the demo disc uses).
+//! BIOS runs it as `PSX.EXE`), which streams `INTRO.STR` and then enters the
+//! game's own executable, `HLGAME.EXE`, with a program switch through the
+//! SDK's resident scene core, which loads it over the RAM the intro was using.
 //! Everything else about the disc is where it always was: the fixed boot
 //! area still ends at `WORLD.PAK`, so no pack LBA moves.
 //!
@@ -87,14 +87,14 @@ pub fn cook_record(repository: &Path) -> Result<Option<serde_json::Value>> {
     Ok(Some(record))
 }
 
-/// 32-bit FNV-1a, the chain loader's payload checksum.
+/// 32-bit FNV-1a of the game's payload (printed with the intro stage).
 pub fn fnv1a(bytes: &[u8]) -> u32 {
     bytes.iter().fold(0x811C_9DC5u32, |hash, byte| {
         (hash ^ u32::from(*byte)).wrapping_mul(0x0100_0193)
     })
 }
 
-/// A PS-X EXE ready to be a root file the chain loader reads.
+/// A PS-X EXE ready to be the game's program row on the disc.
 pub struct GameImage {
     /// Header and payload, padded to the payload size the header declares.
     pub bytes: Vec<u8>,
@@ -224,9 +224,9 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Compile the intro for this game image: the chain loader checks the
-/// game's payload checksum, so the build carries it.
-pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<PathBuf> {
+/// Compile the intro (the scene core checks the game's image against its row in SCENES.TBL, so
+/// the intro carries nothing of the game's).
+pub fn compile(repository: &Path, psoxide: &Path) -> Result<PathBuf> {
     let (intro, staged_sdk) = stage_intro(repository, psoxide)?;
     let map = dir(repository).join("hl-intro.map");
     let mut command = Command::new(cargo());
@@ -235,27 +235,19 @@ pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<Pa
         .args(["build", "--release"])
         .env("PSOXIDE", &staged_sdk)
         .env("HL_INTRO_LOAD_ADDR", format!("{LOAD_ADDR:#x}"))
-        .env("HL_INTRO_GAME_FNV", format!("{:x}", game.fnv))
         .env("HLPSX_LINK_MAP", &map);
-    // A scene-core disc: the intro runs on the core too and enters the game with a core switch.
-    let scene_core = crate::SCENE_CORE_BUILD.load(std::sync::atomic::Ordering::Relaxed);
-    if scene_core {
-        command.args(["--features", "scene-core"]);
-    }
     run_compile(&mut command, "compile the hl-psx intro for PlayStation")?;
     let exe = intro.join("target/mipsel-sony-psx/release/hl-intro.exe");
     if !exe.is_file() {
         return Err(format!("the intro build did not produce {}", exe.display()).into());
     }
-    if scene_core {
-        // An ELF on the core (intro/build.rs): write the EXE from its load addresses.
-        let elf = exe.with_extension("elf");
-        fs::rename(&exe, &elf)?;
-        run(
-            hazard_tool(psoxide, "psx-exe").arg(&elf).arg(&exe),
-            "write hl-intro.exe from its ELF (psx-exe)",
-        )?;
-    }
+    // An ELF on the core (intro/build.rs): write the EXE from its load addresses.
+    let elf = exe.with_extension("elf");
+    fs::rename(&exe, &elf)?;
+    run(
+        hazard_tool(psoxide, "psx-exe").arg(&elf).arg(&exe),
+        "write hl-intro.exe from its ELF (psx-exe)",
+    )?;
     // LLVM's delay-slot filler leaves a load in a slot here and there; the
     // SDK's patcher reroutes those branches through psx-rt's trampolines, and
     // the scanner then proves the image clean (as it does for the game).
@@ -273,21 +265,14 @@ pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<Pa
             .arg(&map),
         "prove hl-intro.exe free of load-delay hazards",
     )?;
-    let stack_bottom = if scene_core {
-        INTRO_CORE_STACK_BOTTOM
-    } else {
-        INTRO_STACK_BOTTOM
-    };
-    check_boot_only(&fs::read_to_string(&map)?, stack_bottom)?;
+    check_boot_only(&fs::read_to_string(&map)?, INTRO_STACK_BOTTOM)?;
     crate::stamp_receipt(psoxide, &repository.join("intro"), &exe, None)?;
     Ok(exe)
 }
 
-/// The top of the intro's boot-only memory may not reach its stack: the stack starts 100h
-/// below the top of the 2 MiB it links for, with the SDK's default 32 KiB reserve.
-const INTRO_STACK_BOTTOM: u32 = 0x8020_0000 - 0x100 - 0x8000;
-/// The same on the scene core: the stack starts at the core's window, 0x801F_DF00.
-const INTRO_CORE_STACK_BOTTOM: u32 = 0x801F_DF00 - 0x8000;
+/// The top of the intro's boot-only memory may not reach its stack: on the scene core the stack
+/// starts at the core's window, 0x801F_DF00, with the SDK's default 32 KiB reserve.
+const INTRO_STACK_BOTTOM: u32 = 0x801F_DF00 - 0x8000;
 
 /// The end of `.boot` and `.boot_bss` (psoxide-boot.ld) from the intro's map: the splash and
 /// the movie player run there, above `.bss`, and the script gives them no memory region, so
@@ -390,7 +375,7 @@ mod tests {
         };
         assert!(check_boot_only(&map(INTRO_STACK_BOTTOM), INTRO_STACK_BOTTOM).is_ok());
         assert!(check_boot_only(&map(INTRO_STACK_BOTTOM + 4), INTRO_STACK_BOTTOM).is_err());
-        assert!(check_boot_only("801e0000 801e0000 100 4 .text\n").is_err());
+        assert!(check_boot_only("801e0000 801e0000 100 4 .text\n", INTRO_STACK_BOTTOM).is_err());
     }
 
     #[test]

@@ -23,13 +23,7 @@ mod target {
     const _: () = assert!(
         core::mem::size_of::<crate::RenderPacketScratch>() >= Arena::CAPACITY * CACHE_ENTRY_BYTES
     );
-    #[cfg(not(feature = "scene-core"))]
-    type Owner = CachedStreamer<psx_pack::cd::SectorReader, Arena, 32>;
-    #[cfg(not(feature = "scene-core"))]
-    static mut OWNER: Owner = unsafe { Owner::new(psx_pack::cd::SectorReader::new()) };
-    #[cfg(feature = "scene-core")]
     type Owner = CachedStreamer<super::core::CoreReader, Arena, 32>;
-    #[cfg(feature = "scene-core")]
     static mut OWNER: Owner = unsafe { Owner::new(super::core::CoreReader) };
     #[inline(always)]
     unsafe fn owner() -> &'static mut Owner {
@@ -73,10 +67,9 @@ mod target {
 #[cfg(target_arch = "mips")]
 pub use target::*;
 
-/// The resident scene core's CD calls (CORE-ABI.md section 3, P2-STREAM-CLIENT.md), for the
-/// `scene-core` build. The slot symbols come from psx-core (feature `link`), which puts the core
-/// in the window at boot.
-#[cfg(all(target_arch = "mips", feature = "scene-core"))]
+/// The resident scene core's CD calls (CORE-ABI.md section 3, P2-STREAM-CLIENT.md). The slot
+/// symbols come from psx-core (feature `link`), which puts the core in the window at boot.
+#[cfg(target_arch = "mips")]
 pub mod core {
     use psx_goldsrc::chunk_stream::{ChunkReader, DrainPoll, PACK_LBA};
     use psx_pack::cd::SECTOR_WORDS;
@@ -107,23 +100,29 @@ pub mod core {
     const TABLE_WORDS: usize = 16 + 8 * 5;
     static mut TABLE: [u32; TABLE_WORDS] = [0; TABLE_WORDS];
 
-    /// The title menu overlay's image in the scene table: hl-build's manifest lists PSX.EXE,
-    /// HLGAME.EXE, then MENU.OVL.
-    const MENU_IMAGE: u32 = 2;
+    /// The title menu overlay's image in the scene table. hl-build's manifest lists MENU.OVL right
+    /// after the game's program and gives the game's scene the id of its program's image: on a
+    /// disc with the intro PSX.EXE (scene BOOT 0), HLGAME.EXE (scene GAME 1), MENU.OVL 2; on a
+    /// test disc without it PSX.EXE is the game (scene GAME 0) and MENU.OVL is 1. The core keeps
+    /// the running scene's id in the handoff block (a cold boot's is 0).
+    fn menu_image() -> u32 {
+        (psx_core::link::block_word(psx_core::abi::block::OFF_SCENES) & 0xffff) + 1
+    }
 
     /// Read the pre-play title menu's code (MENU.OVL, menu.rs's `.text.overlay.1.*`) into the
     /// world arena's start before a call into it. A volatile overlay: the core reads it on every
     /// call, since a map overwrites that memory. The menu cannot run without it: a refusal or a
     /// failed read is the core's fatal screen with its code.
     pub fn load_menu() {
-        let status = psx_core::link::load_image(MENU_IMAGE, scene_table());
+        let image = menu_image();
+        let status = psx_core::link::load_image(image, scene_table());
         if status != 0 {
             psx_core::link::fatal(status);
         }
         // Link-time symbol: only its address is taken (it is MENU.OVL's size).
         let own = core::ptr::addr_of!(__overlay_1_bytes) as u32;
         // SAFETY: single-threaded; the read just ended, so the tail's words are this load's.
-        let tail = psx_core::link::image_tail(MENU_IMAGE, own, scene_table());
+        let tail = psx_core::link::image_tail(image, own, scene_table());
         unsafe { *core::ptr::addr_of_mut!(TAIL) = tail };
     }
 
@@ -289,7 +288,7 @@ pub mod core {
         }
     }
 }
-#[cfg(all(target_arch = "mips", feature = "scene-core"))]
+#[cfg(target_arch = "mips")]
 pub use self::core::set_idle_hook;
 
 // Host logic tests have no disc transport; retain the original inert boundary.

@@ -444,14 +444,20 @@ mod tests {
 
     /// The overrides a `-T` script puts ahead of psoxide.ld, as the map prints them.
     fn with_overrides(lines: &str) -> String {
-        MAP.replacen("       0        0        0     1 RAM_BASE", &format!("{lines}       0        0        0     1 RAM_BASE"), 1)
+        MAP.replacen(
+            "       0        0        0     1 RAM_BASE",
+            &format!("{lines}       0        0        0     1 RAM_BASE"),
+            1,
+        )
     }
 
     #[test]
     fn free_follows_the_maps_stack_reserve() {
-        let decimal = with_overrides("       0        0        0     1 STACK_RESERVE_OVERRIDE = 25600\n");
+        let decimal =
+            with_overrides("       0        0        0     1 STACK_RESERVE_OVERRIDE = 25600\n");
         assert_eq!(parse(&decimal).stack_reserve, Some(25_600));
-        let map = with_overrides("       0        0        0     1 STACK_RESERVE_OVERRIDE = 0x4000\n");
+        let map =
+            with_overrides("       0        0        0     1 STACK_RESERVE_OVERRIDE = 0x4000\n");
         assert_eq!(parse(&map).stack_reserve, Some(0x4000));
         assert_eq!(parse(&map).free(), Some(0x801F_BF00 - 0x8001_0600));
     }

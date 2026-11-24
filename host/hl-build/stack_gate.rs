@@ -319,7 +319,10 @@ mod tests {
     fn parses_the_profile_row() {
         let text = "call,root_pc,return_pc,entry_sp,min_sp,depth_bytes,observations,completed\n0,0x80011064,0x800107fc,0x801ffe78,0x801fdd60,8480,1,1\n";
         assert_eq!(parse_profile(text), Some((0x801f_fe78, 8480)));
-        assert_eq!(watermark(0x8020_0000, 0x801f_fe78, 8480), 0x20_0000 - 0x1f_fe78 + 8480);
+        assert_eq!(
+            watermark(0x8020_0000, 0x801f_fe78, 8480),
+            0x20_0000 - 0x1f_fe78 + 8480
+        );
     }
 
     #[test]

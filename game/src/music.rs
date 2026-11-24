@@ -15,8 +15,6 @@ use hl_format::music as layout;
 use psx_io::cd::xa::{DriveSpeed, Event, File, Player};
 use psx_io::iso;
 use psx_io::periph::Cd;
-#[cfg(not(feature = "scene-core"))]
-use psx_pack::cd::SectorReader;
 use psx_pack::cd::SECTOR_WORDS;
 
 /// The drive's mixer level for the songs (`0x80` is unity).
@@ -54,31 +52,11 @@ pub fn install(cd: Cd) {
 ///
 /// # Safety
 /// Drives the CD controller: call it once at boot, before any other CD use.
-/// The game's own file on a disc with the intro stage: that stage boots first (it
-/// plays the studio splash and the movie, then loads this).
-const INTRO_GAME_FILE: &str = "HLGAME.EXE";
-static mut BOOTED_BY_INTRO: bool = false;
-
-/// Whether the disc's intro stage opened this boot. Known once `locate_files` ran.
-pub fn booted_by_intro() -> bool {
-    // SAFETY: written once at boot by `locate_files`, read afterwards.
-    unsafe { BOOTED_BY_INTRO }
-}
-
 #[optimize(size)]
 #[inline(never)]
 pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
-    #[cfg(not(feature = "scene-core"))]
-    let mut reader = SectorReader::new();
-    #[cfg(not(feature = "scene-core"))]
-    if !reader.prepare() {
-        return;
-    }
     // The root directory of this disc is one sector (the music files, the game file and a
     // handful of others), so the first sector is all there is to scan.
-    #[cfg(not(feature = "scene-core"))]
-    let read = |lba, into: &mut [u32; SECTOR_WORDS]| reader.read_at(lba, into);
-    #[cfg(feature = "scene-core")]
     let read = |lba, into: &mut [u32; SECTOR_WORDS]| crate::cdstream::core::read(lba, into);
     if !iso::read_root_sector(sector, read) {
         return;
@@ -88,9 +66,6 @@ pub unsafe fn locate_files(sector: &mut [u32; SECTOR_WORDS]) {
         if let Some((lba, bytes)) = iso::find_in_directory(directory, name) {
             DIRECTORY[file] = (lba, bytes / 2048);
         }
-    }
-    if iso::find_in_directory(directory, INTRO_GAME_FILE).is_some() {
-        BOOTED_BY_INTRO = true;
     }
 }
 

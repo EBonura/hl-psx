@@ -2132,14 +2132,11 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
 /// Features a shipping build may carry. Any other feature (telemetry, trace
 /// streams, debug boot and gallery hooks, diagnostic tints) makes a
 /// diagnostic build, which keeps core's panic messages.
-const SHIPPING_FEATURES: [&str; 2] = [
+const SHIPPING_FEATURES: [&str; 1] = [
     // Measurement only (psx-goldsrc reports soft-projected vertices to the
     // emulator's warp probe); with panic messages kept the image overflows
     // RAM by about 15 KB.
     "warp-probe",
-    // Measurement only (game/Cargo.toml): the image as it links on the resident
-    // scene core, compiled as the shipping build is so its RAM compares with it.
-    "scene-core",
 ];
 
 fn is_shipping_build(features: Option<&str>) -> bool {
@@ -2428,10 +2425,6 @@ fn compile_game(
     profile: GuestProfile<'_>,
 ) -> Result<PathBuf> {
     DIAG_BUILD.store(!is_shipping_build(features), Ordering::Relaxed);
-    SCENE_CORE_BUILD.store(
-        features.is_some_and(|list| list.split(',').any(|f| f.trim() == "scene-core")),
-        Ordering::Relaxed,
-    );
     let game = repository.join("game");
     let mut command = Command::new(cargo());
     command.current_dir(&game).args(["build", "--release"]);
@@ -2500,12 +2493,6 @@ fn compile_game(
         command
             .arg("--config")
             .arg(format!("target.mipsel-sony-psx.rustflags={flags:?}"));
-    }
-    if matches!(
-        profile,
-        GuestProfile::CollectElf(_) | GuestProfile::UseElf(..)
-    ) {
-        command.env("HLPSX_LINK_ELF", "1");
     }
     // Line tables and discriminators change inlining, and the collect build
     // has no profile to optimise with: it links several KB larger than the
@@ -2599,17 +2586,16 @@ fn compile_game(
             // executable: nothing to patch.
             return Ok(exe);
         }
-        if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
-            // The scene-core link is an ELF (game/build.rs): write the EXE from its load
-            // addresses, keeping the ELF beside it.
-            let elf = exe.with_extension("elf");
-            fs::rename(&exe, &elf)?;
-            run(
-                hazard_tool(psoxide, "psx-exe").arg(&elf).arg(&exe),
-                "write hl-psx.exe from the scene-core link's ELF (psx-exe)",
-            )?;
-            write_menu_overlay(psoxide, &elf)?;
-        }
+        // The link is an ELF (game/build.rs, the scene core's image is stored apart from where
+        // it runs): write the EXE from its load addresses, keeping the ELF beside it, and the
+        // title menu overlay from it.
+        let elf = exe.with_extension("elf");
+        fs::rename(&exe, &elf)?;
+        run(
+            hazard_tool(psoxide, "psx-exe").arg(&elf).arg(&exe),
+            "write hl-psx.exe from the link's ELF (psx-exe)",
+        )?;
+        write_menu_overlay(psoxide, &elf)?;
         // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
         // behind (loads in delay slots consumed one instruction later, including
         // the ones a `jr ra` or `jalr` slot hands to code the image cannot see)
@@ -2805,21 +2791,14 @@ static INTRO_ENABLED: AtomicBool = AtomicBool::new(false);
 /// marks the image a development disc (the journeys' probe discs and the profile collection builds).
 static DIAG_BUILD: AtomicBool = AtomicBool::new(false);
 
-/// Whether the executable `compile_game` linked last runs on the scene core: its disc then
-/// carries SCENES.TBL (the intro as image 0, the game as the program the intro switches to),
-/// which psx-core reads into each program's copy on its first switch or image load.
-pub(crate) static SCENE_CORE_BUILD: AtomicBool = AtomicBool::new(false);
-
-/// The title menu overlay of a scene-core link (game/build.rs, psoxide-overlay.ld): menu.rs's
+/// The title menu overlay of the link (game/build.rs, psoxide-overlay.ld): menu.rs's
 /// pre-play code runs at the world arena's start and is not in the EXE. `psx-exe --overlay`
 /// writes it beside the ELF as `menu.ovl`, and its manifest option (`load=0x...`) as
 /// `menu.ovl.load`. Its code never passes the EXE's hazard patcher, so it must scan clean as
 /// linked (`hazard-scan --raw`, `check-mfc0 --raw`).
 fn write_menu_overlay(psoxide: &Path, elf: &Path) -> Result<()> {
     let overlay = elf.with_file_name(MENU_OVERLAY_FILE);
-    println!(
-        "\n==> write the title menu overlay from the scene-core link's ELF (psx-exe --overlay)"
-    );
+    println!("\n==> write the title menu overlay from the link's ELF (psx-exe --overlay)");
     let output = hazard_tool(psoxide, "psx-exe")
         .args(["--overlay", ".overlay.1"])
         .arg(elf)
@@ -2857,7 +2836,7 @@ fn write_menu_overlay(psoxide: &Path, elf: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The title menu overlay's file beside the scene-core link's ELF and EXE.
+/// The title menu overlay's file beside the link's ELF and EXE.
 const MENU_OVERLAY_FILE: &str = "menu.ovl";
 
 /// WORLD.PAK's first sectors MENU.OVL's read carries on into (its `tail=`): the pack header the
@@ -2870,21 +2849,29 @@ const MENU_OVERLAY_FILE: &str = "menu.ovl";
 /// costs the same restart (measured 11-24).
 const MENU_TAIL_SECTORS: u32 = 9;
 
-/// The scene manifest of a scene-core disc with the intro stage (mkisopsx `--scenes`).
-/// `menu` is the title menu overlay and its `load=` option (`write_menu_overlay`); it is
-/// volatile because the world arena it runs in is overwritten by every map.
-fn scene_manifest(repository: &Path, game_file: &Path, menu: (&Path, &str)) -> Result<PathBuf> {
+/// The scene manifest of the disc (mkisopsx `--scenes`). `game_file` is the game's file on a
+/// disc with the intro stage (HLGAME.EXE; the intro is PSX.EXE, `--exe`); `None` makes a test
+/// disc without it, whose PSX.EXE is the game. `menu` is the title menu overlay and its `load=`
+/// option (`write_menu_overlay`); it is volatile because the world arena it runs in is
+/// overwritten by every map. MENU.OVL is the image right after the game's program and the
+/// game's scene id is that program's image (cdstream.rs, `core::menu_image`).
+fn scene_manifest(
+    repository: &Path,
+    game_file: Option<&Path>,
+    menu: (&Path, &str),
+) -> Result<PathBuf> {
     let directory = repository.join(".hlpsx/scenes");
     fs::create_dir_all(&directory)?;
     let manifest = directory.join("hl-psx.scenes");
     // A test manifest in place of the one below (overlay tests): `@GAME@` stands for the game's
     // file. Never set for a disc anyone plays.
     if let Some(test) = env::var_os("HLPSX_SCENES_TEST") {
+        let game = game_file.map_or("-".to_string(), |file| file.display().to_string());
         let text = fs::read_to_string(&test)?;
-        fs::write(&manifest, text.replace("@GAME@", &game_file.display().to_string()))?;
+        fs::write(&manifest, text.replace("@GAME@", &game))?;
         return Ok(manifest);
     }
-    // HLGAME's reserve is the RAM its overlays may load into: the menu's whole sectors at the
+    // The game's reserve is the RAM its overlays may load into: the menu's whole sectors at the
     // world arena's start (the core reads whole sectors, so the padding lands there too), then
     // its tail.
     let load = menu
@@ -2894,18 +2881,38 @@ fn scene_manifest(repository: &Path, game_file: &Path, menu: (&Path, &str)) -> R
         .ok_or_else(|| format!("bad title menu overlay option {:?}", menu.1))?;
     let sectors = fs::metadata(menu.0)?.len().div_ceil(2048) as u32 + MENU_TAIL_SECTORS;
     let reserve = format!("reserve={load:#010x}-{:#010x}", load + sectors * 2048);
+    let (head, game) = match game_file {
+        Some(file) => (
+            format!(
+                "# Image 0 is the intro (PSX.EXE, the BIOS boots it): it runs on the core and\n\
+                 # enters the game with a core switch to GAME.\n\
+                 program PSX.EXE    -\n\
+                 program HLGAME.EXE {} {reserve}\n",
+                file.display()
+            ),
+            "HLGAME.EXE",
+        ),
+        None => (
+            format!(
+                "# A test disc without the intro: the BIOS boots the game (PSX.EXE) itself.\n\
+                 program PSX.EXE    - {reserve}\n"
+            ),
+            "PSX.EXE",
+        ),
+    };
+    let boot_scene = if game_file.is_some() {
+        "scene   BOOT       PSX.EXE    start\n"
+    } else {
+        ""
+    };
     fs::write(
         &manifest,
         format!(
-            "# Written by hl-build. Image 0 is the intro (PSX.EXE, the BIOS boots it): it runs on\n\
-             # the core and enters the game with a core switch to GAME.\n\
-             # MENU.OVL is image 2 (cdstream::core::MENU_IMAGE).\n\
-             program PSX.EXE    -\n\
-             program HLGAME.EXE {} {reserve}\n\
-             overlay MENU.OVL   {} owner=HLGAME.EXE {} class=volatile place=before-world tail={MENU_TAIL_SECTORS}\n\
-             scene   BOOT       PSX.EXE    start\n\
-             scene   GAME       HLGAME.EXE start\n",
-            game_file.display(),
+            "# Written by hl-build. MENU.OVL follows the game's program (cdstream::core::menu_image).\n\
+             {head}\
+             overlay MENU.OVL   {} owner={game} {} class=volatile place=before-world tail={MENU_TAIL_SECTORS}\n\
+             {boot_scene}\
+             scene   GAME       {game} start\n",
             menu.0.display(),
             menu.1
         ),
@@ -2954,7 +2961,7 @@ fn pack_disc_into(
     if let Some(movie) = &movie {
         let game = intro::game_image(&fs::read(exe)?)?;
         intro::check_fit(&game)?;
-        boot = intro::compile(repository, psoxide, &game)?;
+        boot = intro::compile(repository, psoxide)?;
         game_file = Some(intro::stage_game(repository, &game)?);
         println!(
             "intro stage: game payload {:#x}..{:#x} (FNV {:08x}), intro at {:#x}, movie {}",
@@ -2993,25 +3000,24 @@ fn pack_disc_into(
     command
         .arg("--world-pack-order-file")
         .arg(pack_order::write_order_file(repository, &staged_pack)?);
-    if let Some(game_file) = &game_file {
-        if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
-            // The program row puts HLGAME.EXE in the root, as `--file` does.
-            let menu = exe.with_file_name(MENU_OVERLAY_FILE);
-            let load = fs::read_to_string(menu.with_extension("ovl.load")).map_err(|error| {
-                format!(
-                    "no title menu overlay beside {} ({error}): compile it first",
-                    exe.display()
-                )
-            })?;
-            command
-                .arg("--scenes")
-                .arg(scene_manifest(repository, game_file, (&menu, load.trim()))?)
-                .arg("--core-image")
-                .arg(psoxide.join("sdk/crates/psx-core/prebuilt/psx-core.bin"));
-        } else {
-            command.arg("--file").arg(game_file);
-        }
-    }
+    // Every disc runs on the scene core: SCENES.TBL from the manifest, the game's program row
+    // (with the intro, it puts HLGAME.EXE in the root, as `--file` did) and MENU.OVL.
+    let menu = exe.with_file_name(MENU_OVERLAY_FILE);
+    let load = fs::read_to_string(menu.with_extension("ovl.load")).map_err(|error| {
+        format!(
+            "no title menu overlay beside {} ({error}): compile it first",
+            exe.display()
+        )
+    })?;
+    command
+        .arg("--scenes")
+        .arg(scene_manifest(
+            repository,
+            game_file.as_deref(),
+            (&menu, load.trim()),
+        )?)
+        .arg("--core-image")
+        .arg(psoxide.join("sdk/crates/psx-core/prebuilt/psx-core.bin"));
     if let Some(movie) = &movie {
         command.arg("--xa-file").arg(movie.join("INTRO.STR"));
     }

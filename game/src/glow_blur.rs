@@ -28,7 +28,7 @@ pub const fn scratch_len(width: usize, height: usize) -> usize {
 #[inline(never)]
 #[optimize(size)]
 #[cfg_attr(
-    feature = "scene-core",
+    target_arch = "mips",
     link_section = ".text.overlay.1.menu_glow_box3_pass"
 )]
 pub fn box3_pass(cell: &mut [u8], rows: &mut [u16], width: usize, height: usize) {

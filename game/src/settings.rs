@@ -363,7 +363,7 @@ pub fn set_skill(level: u8) {
 /// image the EXE's hazard patcher never sees, and this body inlined into `menu::run` left a
 /// load in a branch delay slot that `hazard-scan --raw` refuses. Here it is resident and patched.
 #[optimize(size)]
-#[cfg_attr(feature = "scene-core", inline(never))]
+#[inline(never)]
 pub fn step_skill(delta: i32) {
     unsafe { SKILL = (SKILL as i32 + delta).clamp(0, 2) as u8 };
 }

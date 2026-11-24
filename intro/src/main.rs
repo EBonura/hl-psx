@@ -5,15 +5,14 @@
 //! it. The BIOS boots this small program instead (`PSX.EXE`, linked high in
 //! RAM, see build.rs). It streams `INTRO.STR` through the SDK's MDEC player,
 //! with its XA audio, until the last frame or until Start or Cross skips it;
-//! then the SDK's chain loader reads the game's own executable (`HLGAME.EXE`,
-//! an ordinary file in the disc's root directory) over the low RAM this
-//! program has been using as the player's buffers, checks its checksum in
-//! RAM, and jumps to it. The game boots from there as it does from the BIOS:
-//! it initialises everything it uses itself.
+//! then it enters the game (`HLGAME.EXE`) with a program switch through the
+//! SDK's resident scene core, which loads the game's image over the low RAM
+//! this program has been using as the player's buffers, checks it and jumps to
+//! it. The game initialises everything it uses itself.
 //!
 //! The movie is the one Half-Life plays at startup, cooked by
 //! host/hl-intro-cook from the player's own install. A disc built without it
-//! has no intro stage and boots the game directly.
+//! (a test disc) has no intro stage and boots the game directly.
 //!
 //! The splash (`psx_splash`) and the movie player (`psx_fmv`) are boot-only
 //! memory (the SDK's psoxide-boot.ld, see build.rs and boot.rs): the EXE
@@ -23,23 +22,15 @@
 #![no_main]
 // The boot-only mover is MIPS assembly (boot.rs).
 #![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
-// On the scene core the game is entered by a core switch: the chain loader, its loading widget and
-// the root lookup of the game are unused there.
-#![cfg_attr(feature = "scene-core", allow(dead_code, unused_imports))]
 
 extern crate psx_rt;
 // The scene core's program side: its image, `__core_boot` and the slots `enter_game` calls.
-#[cfg(feature = "scene-core")]
 extern crate psx_core;
 
-use psx_chainloader::paint;
-use psx_chainloader::runtime::{self, Presentation};
 use psx_fmv::player::{self, Config, Depth, Movie, Stop};
-use psx_font::fonts::BASIC_8X16;
 use psx_gpu::display::{DisplayConfig, DoubleBuffer, Resolution, VideoMode};
 use psx_gpu::Gpu;
 use psx_io::periph::ControllerPort;
-use psx_loading::{Gp0, Indicator, Rgb, Style, Tail};
 use psx_pad::{button, Port};
 use psx_rt::{interrupts, tty, Peripherals};
 use psx_spu::{self as spu, Spu, Volume};
@@ -51,27 +42,12 @@ mod cooked {
 }
 
 const MOVIE_FILE: &str = "INTRO.STR";
-const GAME_FILE: &str = "HLGAME.EXE";
 
 /// Where the player's buffers sit: low RAM above the kernel, which the game's
 /// image overwrites once the movie is over. They end below this program.
 const PLAYER_MEMORY: usize = 0x8004_0000;
-/// The checksum of the game's payload (hl-build computes it from the image
-/// it packs, see build.rs).
-const GAME_FNV: u32 = parse_u32(env!("HL_INTRO_GAME_FNV_VALUE"));
 /// No sector for two seconds ends the movie.
 const STALL_VBLANKS: u32 = 120;
-
-const fn parse_u32(text: &str) -> u32 {
-    let bytes = text.as_bytes();
-    let mut value = 0u32;
-    let mut i = 0;
-    while i < bytes.len() {
-        value = value * 10 + (bytes[i] - b'0') as u32;
-        i += 1;
-    }
-    value
-}
 
 extern "C" {
     /// First byte of this program's image (psoxide.ld).
@@ -159,12 +135,6 @@ fn play_movie(skip: &mut Skip, limit: u32) {
     report(&outcome);
 }
 
-/// The game's executable in the root directory, through the film player's lookup (a disc
-/// without the scene core chain-loads it).
-fn find_game() -> Option<u32> {
-    player::find_root_file(GAME_FILE).map(|(lba, _)| lba)
-}
-
 /// The movie's outcome, published for tests that wait on game state (the cross-emulator smoke):
 /// `[stop, frames shown]`, stop 0 until the player returns, then 1 + the `Stop` (1 end,
 /// 2 skipped, 3 stall, 4 cd-error, 5 wedged, 6 setup). The game loads below this image, so the
@@ -228,69 +198,11 @@ fn print_decimal(mut v: u32) {
     tty::print(core::str::from_utf8(&digits[at..]).unwrap_or("?"));
 }
 
-/// Half-Life's loading indicator (the game's `draw_loading_strip` draws the same
-/// one for every load it does): a small black square in the bottom-right
-/// corner with a ring of orange lights in it. It runs from the end of the movie
-/// through the chain-load, and the game carries on with it through its boot, so
-/// the corner stays the same across the hand-off.
-const WIDGET: Style = Style::new(&BASIC_8X16, "", Rgb(255, 170, 0), Rgb(0, 0, 0))
-    .with_tail(Tail::Spinner {
-        lit: Rgb(255, 214, 96),
-        unlit: Rgb(40, 34, 20),
-    })
-    .in_corner(24, 320, 240, 12)
-    .timed(2, 64);
-
-/// The widget over black while the game's image streams in.
-struct Loading {
-    widget: Indicator,
-    ticks: u32,
-}
-
-impl Loading {
-    const fn new() -> Self {
-        Loading {
-            widget: Indicator::new(WIDGET),
-            ticks: 0,
-        }
-    }
-}
-
-impl Presentation for Loading {
-    fn setup(&mut self) {
-        paint::setup(319, 239);
-    }
-    fn begin(&mut self) {
-        paint::rect(0, 0, 320, 240, 0);
-        paint::draw_sync();
-        paint::show();
-        paint::ack_vblank();
-        self.widget.begin(self.ticks);
-        self.widget.poll(&mut Gp0, self.ticks);
-    }
-    fn update(&mut self, _done: u32, _total: u32) {}
-    fn finish(&mut self) {
-        paint::draw_sync();
-    }
-    fn diagnostic_mode(&mut self) {
-        paint::diagnostic_mode();
-    }
-    fn no_scratchpad(&mut self) {}
-    fn tick(&mut self) {
-        // One animation tick per VBlank edge; the loader runs with interrupts
-        // masked, so the edge is polled.
-        if paint::take_vblank() {
-            self.ticks = self.ticks.wrapping_add(1);
-        }
-        self.widget.poll(&mut Gp0, self.ticks);
-    }
-}
-
 #[no_mangle]
 fn main() {
     interrupts::install_vblank_counter();
     let peripherals = Peripherals::take().expect("the intro takes the peripherals once, at boot");
-    // The player and the chain loader take the drive, the MDEC and the GPU's
+    // The player and the core take the drive, the MDEC and the GPU's
     // channel over themselves, as their docs say; the display and the SPU are
     // set up here.
     let mut gpu = Gpu::new(
@@ -336,50 +248,18 @@ fn main() {
     boot::black(&mut gpu, &mut fb);
     play_movie(&mut skip, image_start());
 
-    #[cfg(feature = "scene-core")]
     enter_game();
-    #[cfg(not(feature = "scene-core"))]
-    let Some(lba) = find_game() else {
-        tty::println("hl-intro: no HLGAME.EXE on this disc");
-        loop {
-            interrupts::wait_vblank();
-        }
-    };
-    #[cfg(not(feature = "scene-core"))]
-    {
-        // The game is on the same disc as this program, so it takes over the
-        // bases the launcher gave this one. Passing zero here made the game read
-        // its packs at unshifted sectors whenever the disc is a multi-program one.
-        let lba_offset = psx_io::disc_base::lba_offset();
-        let cdda_track_base = u32::from(psx_io::disc_base::cdda_track_base());
-        // SAFETY: the game's payload ends below this image (hl-build checks it
-        // when it packs the disc), the player has returned, and nothing else
-        // uses the drive. `run` never returns.
-        unsafe {
-            runtime::run(
-                lba,
-                lba_offset,
-                cdda_track_base,
-                GAME_FNV,
-                image_start(),
-                Loading::new(),
-            )
-        }
-    }
 }
 
 /// The game's scene in SCENES.TBL (hl-build's manifest: BOOT 0, GAME 1).
-#[cfg(feature = "scene-core")]
 const GAME_SCENE: u32 = 1;
 /// This program's copy of SCENES.TBL: psx-core reads it on the switch (header and up to six rows).
-#[cfg(feature = "scene-core")]
 static mut TABLE: [u32; 16 + 8 * 6] = [0; 16 + 8 * 6];
 
 /// Enter the game with a core program switch: the core loads HLGAME.EXE (its row in the
 /// table), checks it and jumps to it with the disc base and the CD-DA base in the entry
 /// registers, and the loaded mask then holds the game's bit, so overlays it owns load. The
 /// switch returns only when the core refused it before touching anything.
-#[cfg(feature = "scene-core")]
 fn enter_game() -> ! {
     // SAFETY: single-threaded; the one borrow lives for the call.
     let table = unsafe { &mut *core::ptr::addr_of_mut!(TABLE) };

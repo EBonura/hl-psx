@@ -30,9 +30,12 @@ const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
 const FALLBACK_MODEL_WORDS: usize = 24_576;
-/// Bytes at the world arena's start that the scene-core build keeps for the title menu overlay
+/// Bytes at the world arena's start kept for the title menu overlay
 /// (whole sectors; the link asserts the overlay fits).
 const MENU_OVERLAY_BYTES: usize = 0x4000;
+/// Bytes at the top of RAM, under the 256 B handoff block at 0x801FFF00, that the resident scene
+/// core's window takes: psx-scene-abi's CORE_WINDOW (0x801FDF00..0x801FFF00).
+const CORE_WINDOW: u32 = 0x2000;
 const FALLBACK_PACK_CACHE_ENTRIES: usize = 512;
 const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // MODEL_BUF must hold a whole per-map model set (the fixed viewmodel reserve,
@@ -1834,53 +1837,26 @@ fn main() {
     // Rare renderer extensions live in `.psx_cold.*`, which the SDK script places after all
     // other code, so enabling one does not shift the cache-sensitive world loop.
 
-    // `-T` selects the linker script; `--oformat=binary` dumps a flat PSX-EXE
-    // image (the script lays out the executable header) instead of an ELF.
+    // `-T` selects the linker scripts; the link writes an ELF (see the scene core below).
     // The resident scene core's window sits at the top of RAM, under the 256 B handoff block:
-    // `game/core-window` holds its size in bytes, and the program links for
-    // `RAM_SIZE_OVERRIDE = 2M - size`, which puts `STACK_INIT` (RAM_SIZE - 0x100) at the
+    // CORE_WINDOW bytes (psx-scene-abi's window), and the program links for
+    // `RAM_SIZE_OVERRIDE = 2M - CORE_WINDOW`, which puts `STACK_INIT` (RAM_SIZE - 0x100) at the
     // window's base, so the stack and everything under it stay below the window.
-    // `HLPSX_CORE_WINDOW` overrides it for one build (0 links for the whole 2 MiB).
-    println!("cargo:rerun-if-env-changed=HLPSX_CORE_WINDOW");
-    let core_file = manifest.join("core-window");
-    println!("cargo:rerun-if-changed={}", core_file.display());
-    let core_window: u32 = match env::var("HLPSX_CORE_WINDOW") {
-        Ok(bytes) if !bytes.is_empty() => bytes.trim().parse().expect("HLPSX_CORE_WINDOW: a byte count"),
-        _ => fs::read_to_string(&core_file)
-            .ok()
-            .and_then(|text| {
-                text.lines()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty() && !line.starts_with('#'))?
-                    .split_whitespace()
-                    .next()?
-                    .parse()
-                    .ok()
-            })
-            .unwrap_or(0),
-    };
-    assert!(core_window % 256 == 0 && core_window < 0x10_0000, "core window {core_window} B: a multiple of 256 under 1 MiB");
     let mut link_script = String::new();
     if let Some(reserve) = &stack_override {
         link_script.push_str(&format!("STACK_RESERVE_OVERRIDE = {reserve};\n"));
     }
-    if core_window != 0 {
-        link_script.push_str(&format!("RAM_SIZE_OVERRIDE = {:#x};\n", 0x20_0000 - core_window));
-    }
-    if !link_script.is_empty() {
-        let stack_ld = out_dir.join("stack-reserve.ld");
-        fs::write(&stack_ld, link_script).expect("write stack reserve script");
-        println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
-    }
-    // The `scene-core` build runs on the SDK's scene core: psoxide-core.ld (after the RAM size
-    // script, before psoxide.ld) stores psx-core's image after `.data` and makes `__core_boot` the
+    link_script.push_str(&format!("RAM_SIZE_OVERRIDE = {:#x};\n", 0x20_0000 - CORE_WINDOW));
+    let stack_ld = out_dir.join("stack-reserve.ld");
+    fs::write(&stack_ld, link_script).expect("write stack reserve script");
+    println!("cargo:rustc-link-arg=-T{}", stack_ld.display());
+    // The program runs on the SDK's scene core: psoxide-core.ld (after the RAM size script,
+    // before psoxide.ld) stores psx-core's image after `.data` and makes `__core_boot` the
     // entry; the slot symbols come from psx-core itself. This program carries no `.boot` (the
     // splash lives in hl-intro, the disc's first program). Stored and run addresses of the core
     // differ, so the link writes an ELF and hl-build writes the EXE from its load addresses
     // (psx-exe); ld.lld's --oformat=binary would place it at its run address.
-    let scene_core = env::var_os("CARGO_FEATURE_SCENE_CORE").is_some();
-    if scene_core {
-        assert!(core_window == 0x2000, "the scene core links at the 8,192 B window (game/core-window)");
+    {
         let core_ld = ld.with_file_name("psoxide-core.ld");
         println!("cargo:rerun-if-changed={}", core_ld.display());
         println!("cargo:rustc-link-arg=-T{}", core_ld.display());
@@ -1909,13 +1885,6 @@ fn main() {
     )
     .expect("write the menu overlay size");
     println!("cargo:rustc-link-arg=-T{}", ld.display());
-    // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to
-    // symbolize emulator PC profiles. Same code at the same addresses; it
-    // does not boot.
-    println!("cargo:rerun-if-env-changed=HLPSX_LINK_ELF");
-    if env::var_os("HLPSX_LINK_ELF").is_none() && !scene_core {
-        println!("cargo:rustc-link-arg=--oformat=binary");
-    }
     println!("cargo:rerun-if-changed={}", ld.display());
     // Optional linker map for PC-sample attribution. A link-only argument
     // leaves the emitted bytes untouched, unlike RUSTFLAGS, which enters

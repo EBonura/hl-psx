@@ -27,7 +27,6 @@
 
 extern crate psx_rt;
 // The scene core's program side: its image, `__core_boot` and the slot symbols cdstream.rs calls.
-#[cfg(feature = "scene-core")]
 extern crate psx_core;
 
 mod air_navigation;
@@ -195,7 +194,7 @@ use psx_io;
 use psx_math::fmt::{i32_dec, I32_DEC_MAX};
 use psx_math::int32::{isqrt_i32, mul_div_i32, mul_shr_i32};
 use psx_math::{atan2_q12, sincos, Mask64, Wide};
-use psx_pad::{button, AnalogRequirement, Port};
+use psx_pad::{button, Port};
 #[cfg(not(feature = "semantic-input"))]
 use psx_pad::PadTracker;
 use psx_rt::interrupts;
@@ -238,7 +237,7 @@ const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 // from the arena's end stop where the blocks start (`FACE_USED_WORDS`).
 const FACE_REGION_WORDS: usize = hl_format::room_budget::FACE_REGION_WORDS;
 const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS + FACE_REGION_WORDS;
-#[cfg_attr(feature = "scene-core", link_section = ".bss.overlay_host")]
+#[link_section = ".bss.overlay_host"]
 static mut WORLD_ARENA: [u32; ARENA_WORDS] = [0; ARENA_WORDS];
 // On the scene core the arena is the title menu overlay's host (psoxide-overlay.ld): MENU.OVL
 // runs at its start (`__overlay_vma`), which no map holds while a menu runs, and the link allows
@@ -247,7 +246,6 @@ static mut WORLD_ARENA: [u32; ARENA_WORDS] = [0; ARENA_WORDS];
 // `_start` zeroes it with .bss. Same size and contents as on every other build: only its address
 // moves. The menu art streams in after MENU_OVERLAY_BYTES (`stream_menu_assets`), over MENU.OVL's
 // tail of pack header sectors, which is read before (cdstream.rs, `core::TAIL`).
-#[cfg(feature = "scene-core")]
 include!(concat!(env!("OUT_DIR"), "/menu_overlay.rs"));
 /// Words of the arena's top taken by the resident models' face blocks.
 static mut FACE_USED_WORDS: usize = 0;
@@ -2033,21 +2031,14 @@ fn begin_loading(fb: &mut DoubleBuffer) {
         LOADING_TICK = 0;
         LOADING_VBLANK = interrupts::vblank_count();
     }
-    #[cfg(not(feature = "scene-core"))]
-    psx_io::cd::reader::set_idle_hook(Some(loading_idle));
-    #[cfg(feature = "scene-core")]
     cdstream::set_idle_hook(Some(loading_idle_core));
 }
 
-#[cfg(feature = "scene-core")]
 extern "C" fn loading_idle_core() {
     loading_idle();
 }
 
 pub(crate) fn end_loading() {
-    #[cfg(not(feature = "scene-core"))]
-    psx_io::cd::reader::set_idle_hook(None);
-    #[cfg(feature = "scene-core")]
     cdstream::set_idle_hook(None);
     unsafe { LOADING_FB = core::ptr::null_mut() };
 }
@@ -4511,25 +4502,13 @@ unsafe fn streamed_map_bytes(len: usize) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
-/// Stream the menu bg+logo art chunk into MAP_BUF (free before a map loads) and
-/// return the raw blob for `menu::run`/`ending`. These are no longer baked into
-/// the EXE (~33 KiB of .rodata reclaimed); re-streamed on every menu entry since
-/// play() clobbers MAP_BUF + the menu VRAM. Empty on a failed read -> menu still
-/// runs, just unbranded.
-#[inline(never)]
-#[cfg(not(feature = "scene-core"))]
-unsafe fn stream_menu_assets() -> &'static [u8] {
-    let n = cdstream::load_chunk_decompressed(menu::MENU_CHUNK_ID, map_buf())
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-    streamed_map_bytes(n.max(8))
-}
-
-/// The scene-core build: the title menu's own code runs from the arena's first
+/// Stream the menu bg+logo art chunk into the world arena (free before a map loads) and
+/// return the raw blob for `menu::run`/`ending`, re-streamed on every menu entry since
+/// play() clobbers the arena and the menu VRAM. Empty on a failed read -> menu still
+/// runs, just unbranded. The title menu's own code runs from the arena's first
 /// MENU_OVERLAY_BYTES (MENU.OVL, read by `cdstream::core::load_menu`), so the art streams in
 /// after it.
 #[inline(never)]
-#[cfg(feature = "scene-core")]
 unsafe fn stream_menu_assets() -> &'static [u8] {
     const SKIP_WORDS: usize = MENU_OVERLAY_BYTES / 4;
     let n = cdstream::load_chunk_decompressed(menu::MENU_CHUNK_ID, &mut map_buf()[SKIP_WORDS..])
@@ -35021,14 +35000,9 @@ fn main() {
     music::install(peripherals.cd);
     // A program started by a launcher inherits whatever mode the last one left, so the
     // first poll asks for analog and locks it, before anything reads the pad. The poll
-    // blocks for a few frames. Anything but analog gets a notice on the splash; a pad
-    // plugged in later gets the same handshake from its first poll.
+    // blocks for a few frames. The intro tells a player with anything but analog before the
+    // movie; a pad plugged in later gets the same handshake from its first poll.
     let _ = pads::poll(Port::One);
-    let pad_notice = match pads::analog(Port::One) {
-        AnalogRequirement::Analog => ["", ""],
-        AnalogRequirement::DigitalOnly => ["Digital pad detected", "Half-Life needs a DualShock"],
-        AnalogRequirement::Absent => ["No controller found", "Plug a DualShock into port 1"],
-    };
     driver::with(|gpu| {
         gpu.set_draw_area((0, 0), (319, 239));
         gpu.set_draw_offset((0, 0));
@@ -35100,28 +35074,11 @@ fn main() {
         }
     }
 
-    // Keep the branded presentation out of deterministic direct-map builds so
-    // their route timing and performance counters begin at exactly the same
-    // guest state. Shipping boots mirror the Celeste collection's PSoXide
-    // splash before entering the original-style Half-Life menu.
-    #[cfg(not(feature = "scene-core"))]
-    if !DBG_PAD_BOOT {
-        let assets = unsafe { stream_menu_assets() };
-        end_loading();
-        // A disc with the intro stage opened with this splash already (the intro
-        // program plays it before the movie, pad notice included); showing it again
-        // here would put the logo after the movie.
-        if !music::booted_by_intro() {
-            menu::intro(&mut fb, assets, pad_notice);
-        }
-    }
-    // On the scene core the splash lives only in hl-intro's `.boot` (the disc's first
-    // program); this program carries no `.boot`, shows none, and so reads no menu art for
-    // it: the title menu below reads its art once.
-    #[cfg(feature = "scene-core")]
+    // The splash lives only in hl-intro's `.boot` (the disc's first program, which shows the
+    // pad notice too); this program carries no `.boot`, shows none, and so reads no menu art
+    // for it: the title menu below reads its art once.
     if !DBG_PAD_BOOT {
         end_loading();
-        let _ = pad_notice;
     }
 
     // Boot flow: pick a map in the menu, stream + play it, return on Select.
@@ -35203,9 +35160,8 @@ fn main() {
             // strip keeps the screen alive until the first menu frame.
             begin_loading(&mut fb);
             draw_next_loading_screen(&mut fb);
-            // The menu's code is an overlay in the arena on the scene core: read it again
+            // The menu's code is an overlay in the arena: read it again
             // (play() overwrote it), as its art below.
-            #[cfg(feature = "scene-core")]
             cdstream::core::load_menu();
             let assets = unsafe { stream_menu_assets() };
             // The widget keeps moving through the menu's own setup (its glow atlas is
@@ -35306,7 +35262,6 @@ fn main() {
                     // menu-asset streams.
                     unsafe { music_stop_for_menu() };
                     if matches!(exit, PlayExit::Ending) {
-                        #[cfg(feature = "scene-core")]
                         cdstream::core::load_menu();
                         menu::ending(&mut fb, unsafe { stream_menu_assets() });
                     }
