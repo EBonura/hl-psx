@@ -2853,8 +2853,9 @@ const MENU_TAIL_SECTORS: u32 = 9;
 /// disc with the intro stage (HLGAME.EXE; the intro is PSX.EXE, `--exe`); `None` makes a test
 /// disc without it, whose PSX.EXE is the game. `menu` is the title menu overlay and its `load=`
 /// option (`write_menu_overlay`); it is volatile because the world arena it runs in is
-/// overwritten by every map. MENU.OVL is the image right after the game's program and the
-/// game's scene id is that program's image (cdstream.rs, `core::menu_image`).
+/// overwritten by every map. MENU.OVL is image 2 on both discs (cdstream.rs,
+/// `core::MENU_IMAGE`): without the intro, image 1 is a placeholder row the game never loads
+/// (MENU.OVL's own file again, so the disc needs no extra file).
 fn scene_manifest(
     repository: &Path,
     game_file: Option<&Path>,
@@ -2895,7 +2896,11 @@ fn scene_manifest(
         None => (
             format!(
                 "# A test disc without the intro: the BIOS boots the game (PSX.EXE) itself.\n\
-                 program PSX.EXE    - {reserve}\n"
+                 # Image 1 only keeps MENU.OVL at image 2, as on the disc with the intro.\n\
+                 program PSX.EXE    - {reserve}\n\
+                 overlay IMAGE1.OVL {} owner=PSX.EXE {} class=volatile\n",
+                menu.0.display(),
+                menu.1
             ),
             "PSX.EXE",
         ),
@@ -2908,7 +2913,7 @@ fn scene_manifest(
     fs::write(
         &manifest,
         format!(
-            "# Written by hl-build. MENU.OVL follows the game's program (cdstream::core::menu_image).\n\
+            "# Written by hl-build. MENU.OVL is image 2 (cdstream::core::MENU_IMAGE).\n\
              {head}\
              overlay MENU.OVL   {} owner={game} {} class=volatile place=before-world tail={MENU_TAIL_SECTORS}\n\
              {boot_scene}\

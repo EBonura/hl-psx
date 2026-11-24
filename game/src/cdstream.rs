@@ -100,21 +100,18 @@ pub mod core {
     const TABLE_WORDS: usize = 16 + 8 * 5;
     static mut TABLE: [u32; TABLE_WORDS] = [0; TABLE_WORDS];
 
-    /// The title menu overlay's image in the scene table. hl-build's manifest lists MENU.OVL right
-    /// after the game's program and gives the game's scene the id of its program's image: on a
-    /// disc with the intro PSX.EXE (scene BOOT 0), HLGAME.EXE (scene GAME 1), MENU.OVL 2; on a
-    /// test disc without it PSX.EXE is the game (scene GAME 0) and MENU.OVL is 1. The core keeps
-    /// the running scene's id in the handoff block (a cold boot's is 0).
-    fn menu_image() -> u32 {
-        (psx_core::link::block_word(psx_core::abi::block::OFF_SCENES) & 0xffff) + 1
-    }
+    /// The title menu overlay's image in Half-Life's own scene table (hl-build's manifest:
+    /// PSX.EXE, HLGAME.EXE, then MENU.OVL; a test disc without the intro keeps the numbering with
+    /// a placeholder at image 1). A constant, not the handoff block's scene id: nested under the
+    /// demo disc's launcher, the first entry carries the launcher table's scene id.
+    const MENU_IMAGE: u32 = 2;
 
     /// Read the pre-play title menu's code (MENU.OVL, menu.rs's `.text.overlay.1.*`) into the
     /// world arena's start before a call into it. A volatile overlay: the core reads it on every
     /// call, since a map overwrites that memory. The menu cannot run without it: a refusal or a
     /// failed read is the core's fatal screen with its code.
     pub fn load_menu() {
-        let image = menu_image();
+        let image = MENU_IMAGE;
         let status = psx_core::link::load_image(image, scene_table());
         if status != 0 {
             psx_core::link::fatal(status);
