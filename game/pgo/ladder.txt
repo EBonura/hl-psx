@@ -10,3 +10,4 @@ chosen threshold 300
 450 (the rung shipped before the tentacle) links but leaves -52 B; the profile is carried across unchanged
 2026-11-22 at 962c97e, no layout: 300 2,748 B / 200 3,884 B / 150 4,540 B free; 150 chosen (c4a3 +0.22% before layout search)
 2026-11-23 at 01a9a3e, no layout: 60 5,068 B free; 60 chosen to fund the marine cover search (Manny's ask)
+2026-11-24 on the scene core (MENU.OVL gave back 13,880 B), no layout, c4a3 work/frame: 60 1,715,069 (15,928 B free) / 300 1,682,654 (12,024 B) / 600 1,666,273 (6,984 B) / 1000 1,673,851 (4,456 B); 600 chosen (fastest; the marine cover stays in)
