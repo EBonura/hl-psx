@@ -30,7 +30,9 @@ extern crate psx_core;
 use psx_fmv::player::{self, Config, Depth, Movie, Stop};
 use psx_gpu::display::{DisplayConfig, DoubleBuffer, Resolution, VideoMode};
 use psx_gpu::Gpu;
+use psx_font::fonts::BASIC_8X16;
 use psx_io::periph::ControllerPort;
+use psx_loading::{Gp0, Indicator, Rgb, Style, Tail};
 use psx_pad::{button, Port};
 use psx_rt::{interrupts, tty, Peripherals};
 use psx_spu::{self as spu, Spu, Volume};
@@ -248,7 +250,33 @@ fn main() {
     boot::black(&mut gpu, &mut fb);
     play_movie(&mut skip, image_start());
 
+    show_loading_frame(&mut gpu);
     enter_game();
+}
+
+/// Half-Life's loading indicator, the same one the game's `LOADING_STRIP` draws for every
+/// load: a small black square in the bottom-right corner with a ring of orange lights.
+const LOADING_STRIP: Style = Style::new(&BASIC_8X16, "", Rgb(255, 170, 0), Rgb(0, 0, 0))
+    .with_tail(Tail::Spinner {
+        lit: Rgb(255, 214, 96),
+        unlit: Rgb(40, 34, 20),
+    })
+    .in_corner(24, 320, 240, 12)
+    .timed(2, 64);
+
+/// Leave the loading strip, still, in the loading frame (VRAM 0..320 x 0..240) and show it.
+/// The core holds that frame through the switch's load and the game's first CD reads, until
+/// the game draws its own strip in the same corner and animates it. Without it the frame
+/// held is the movie's last one, black, for about five seconds.
+fn show_loading_frame(gpu: &mut Gpu) {
+    gpu.set_draw_area((0, 0), (319, 239));
+    gpu.set_draw_offset((0, 0));
+    psx_loading::prepare(&mut Gp0);
+    psx_loading::rect(&mut Gp0, 0, 0, 320, 240, Rgb(0, 0, 0));
+    Indicator::new(LOADING_STRIP).draw(&mut Gp0, LOADING_STRIP.look(0));
+    gpu.wait_idle();
+    interrupts::wait_vblank();
+    gpu.set_display_start((0, 0));
 }
 
 /// The game's scene in SCENES.TBL (hl-build's manifest: BOOT 0, GAME 1).

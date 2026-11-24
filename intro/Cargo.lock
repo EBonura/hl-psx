@@ -18,6 +18,7 @@ dependencies = [
  "psx-font",
  "psx-gpu",
  "psx-io",
+ "psx-loading",
  "psx-pad",
  "psx-rt",
  "psx-splash",
@@ -88,6 +89,15 @@ version = "0.1.0"
 dependencies = [
  "psx-hw",
  "psx-math",
+]
+
+[[package]]
+name = "psx-loading"
+version = "0.1.0"
+dependencies = [
+ "psx-font",
+ "psx-hw",
+ "psx-io",
 ]
 
 [[package]]
