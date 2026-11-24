@@ -28,9 +28,9 @@ extern crate psx_rt;
 extern crate psx_core;
 
 use psx_fmv::player::{self, Config, Depth, Movie, Stop};
+use psx_font::fonts::BASIC_8X16;
 use psx_gpu::display::{DisplayConfig, DoubleBuffer, Resolution, VideoMode};
 use psx_gpu::Gpu;
-use psx_font::fonts::BASIC_8X16;
 use psx_io::periph::ControllerPort;
 use psx_loading::{Gp0, Indicator, Rgb, Style, Tail};
 use psx_pad::{button, Port};
