@@ -11,6 +11,10 @@ symbols = ["build/ship/hl-intro.map"]
 pad = "dualshock"
 
 [[step]]
+label = "the intro has started"
+wait_until = { kind = "ram", sym = "__psx_rt_started", op = "eq", value = 0x5F6E7572 }
+
+[[step]]
 label = "the movie player returns"
 wait_until = { kind = "ram", sym = "INTRO_MOVIE", offset = 0, op = "ne", value = 0 }
 timeout = 4000
