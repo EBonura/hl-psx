@@ -2930,7 +2930,7 @@ fn scene_manifest(repository: &Path, game_file: &Path, menu: (&Path, &str)) -> R
              # MENU.OVL is image 2 (cdstream::core::MENU_IMAGE).\n\
              program PSX.EXE    -\n\
              program HLGAME.EXE {} {reserve}\n\
-             overlay MENU.OVL   {} owner=HLGAME.EXE {} class=volatile\n\
+             overlay MENU.OVL   {} owner=HLGAME.EXE {} class=volatile place=before-world\n\
              scene   BOOT       PSX.EXE    start\n\
              scene   GAME       HLGAME.EXE start\n",
             game_file.display(),
