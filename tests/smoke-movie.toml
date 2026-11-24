@@ -13,6 +13,7 @@ pad = "dualshock"
 [[step]]
 label = "the intro has started"
 wait_until = { kind = "ram", sym = "__psx_rt_started", op = "eq", value = 0x5F6E7572 }
+timeout = 3000
 
 [[step]]
 label = "the movie player returns"
