@@ -2899,6 +2899,16 @@ fn check_scene_core_sections(map: &Path) -> Result<()> {
 /// The title menu overlay's file beside the scene-core link's ELF and EXE.
 const MENU_OVERLAY_FILE: &str = "menu.ovl";
 
+/// WORLD.PAK's first sectors MENU.OVL's read carries on into (its `tail=`): the pack header the
+/// menu's art lookup reads next comes from RAM (cdstream.rs, `core::TAIL`). They load right after
+/// the menu's code in the world arena, which is dead while a menu runs; the art lookup takes them
+/// before the art's own read writes there. Nine is the whole header today (714 chunks: 9 header
+/// sectors, all of which the table cache reads). With more chunks the lookup reads the rest from
+/// the disc after the tail (correct, one restart of the drive); with fewer the spare sectors are
+/// read for nothing (0.4 VBlank each). One sector alone saves nothing: the read of the other eight
+/// costs the same restart (measured 11-24).
+const MENU_TAIL_SECTORS: u32 = 9;
+
 /// The scene manifest of a scene-core disc with the intro stage (mkisopsx `--scenes`).
 /// `menu` is the title menu overlay and its `load=` option (`write_menu_overlay`); it is
 /// volatile because the world arena it runs in is overwritten by every map.
@@ -2914,13 +2924,14 @@ fn scene_manifest(repository: &Path, game_file: &Path, menu: (&Path, &str)) -> R
         return Ok(manifest);
     }
     // HLGAME's reserve is the RAM its overlays may load into: the menu's whole sectors at the
-    // world arena's start (the core reads whole sectors, so the padding lands there too).
+    // world arena's start (the core reads whole sectors, so the padding lands there too), then
+    // its tail.
     let load = menu
         .1
         .strip_prefix("load=0x")
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
         .ok_or_else(|| format!("bad title menu overlay option {:?}", menu.1))?;
-    let sectors = fs::metadata(menu.0)?.len().div_ceil(2048) as u32;
+    let sectors = fs::metadata(menu.0)?.len().div_ceil(2048) as u32 + MENU_TAIL_SECTORS;
     let reserve = format!("reserve={load:#010x}-{:#010x}", load + sectors * 2048);
     fs::write(
         &manifest,
@@ -2930,7 +2941,7 @@ fn scene_manifest(repository: &Path, game_file: &Path, menu: (&Path, &str)) -> R
              # MENU.OVL is image 2 (cdstream::core::MENU_IMAGE).\n\
              program PSX.EXE    -\n\
              program HLGAME.EXE {} {reserve}\n\
-             overlay MENU.OVL   {} owner=HLGAME.EXE {} class=volatile place=before-world\n\
+             overlay MENU.OVL   {} owner=HLGAME.EXE {} class=volatile place=before-world tail={MENU_TAIL_SECTORS}\n\
              scene   BOOT       PSX.EXE    start\n\
              scene   GAME       HLGAME.EXE start\n",
             game_file.display(),

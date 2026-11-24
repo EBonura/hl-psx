@@ -78,7 +78,7 @@ pub use target::*;
 /// in the window at boot.
 #[cfg(all(target_arch = "mips", feature = "scene-core"))]
 pub mod core {
-    use psx_goldsrc::chunk_stream::{ChunkReader, DrainPoll};
+    use psx_goldsrc::chunk_stream::{ChunkReader, DrainPoll, PACK_LBA};
     use psx_pack::cd::SECTOR_WORDS;
     use psx_pack::{entry_location, parse_entry_at, parse_header, PackEntry, ENTRY_BYTES, SECTOR_BYTES};
 
@@ -120,7 +120,31 @@ pub mod core {
         if status != 0 {
             psx_core::link::fatal(status);
         }
+        // Link-time symbol: only its address is taken (it is MENU.OVL's size).
+        let own = core::ptr::addr_of!(__overlay_1_bytes) as u32;
+        // SAFETY: single-threaded; the read just ended, so the tail's words are this load's.
+        unsafe { *core::ptr::addr_of_mut!(TAIL) = psx_core::link::image_tail(MENU_IMAGE, own, scene_table()) };
     }
+
+    extern "C" {
+        /// MENU.OVL's size in bytes (psoxide-overlay.ld), for `image_tail`.
+        static __overlay_1_bytes: u32;
+    }
+
+    /// WORLD.PAK's first sectors as MENU.OVL's tail brought them in (hl-build's `tail=` on its
+    /// line: the overlay sits right before the pack, so the same read carries on into the pack's
+    /// header). The words lie in the world arena right after the menu's code, where the menu art
+    /// and every map load later write. So the tail is good for one read only: `load_menu` sets it,
+    /// and the first `start_read` after it takes it (when that read starts at the pack's first
+    /// sector) or drops it (any other read), before anything can have written over those words.
+    /// `None` on a disc that gives MENU.OVL no tail, and after that first read: then every read
+    /// comes from the disc, as it always does.
+    static mut TAIL: Option<&'static [u32]> = None;
+
+    /// The read `start_read` served from [`TAIL`]: the tail's words not yet handed out and the
+    /// sector they stand for. When they run out mid-read the read goes on from the disc at that
+    /// sector. `None` while a disc read (or none) is open.
+    static mut FROM_TAIL: Option<(&'static [u32], u32)> = None;
 
     /// The program's copy of the scene table, for switches and image loads: psx-core reads
     /// SCENES.TBL into it on the first one that needs it, so a boot that never switches or loads
@@ -170,13 +194,36 @@ pub mod core {
             true
         }
         unsafe fn start_read(&mut self, lba: u32) -> bool {
-            psx_core_stream_open(lba, IMPLICIT_SEEK) == 0
+            let tail = (*core::ptr::addr_of_mut!(TAIL)).take();
+            *core::ptr::addr_of_mut!(FROM_TAIL) = None;
+            match tail {
+                Some(words) if lba == PACK_LBA && words.len() >= SECTOR_WORDS => {
+                    *core::ptr::addr_of_mut!(FROM_TAIL) = Some((words, lba));
+                    true
+                }
+                _ => psx_core_stream_open(lba, IMPLICIT_SEEK) == 0,
+            }
         }
         unsafe fn read_sector(&mut self, dst: &mut [u32; SECTOR_WORDS]) -> bool {
+            if let Some((words, lba)) = *core::ptr::addr_of!(FROM_TAIL) {
+                if words.len() >= SECTOR_WORDS {
+                    dst.copy_from_slice(&words[..SECTOR_WORDS]);
+                    *core::ptr::addr_of_mut!(FROM_TAIL) = Some((&words[SECTOR_WORDS..], lba + 1));
+                    return true;
+                }
+                // The tail is spent: the read goes on from the disc where the tail stopped.
+                *core::ptr::addr_of_mut!(FROM_TAIL) = None;
+                if psx_core_stream_open(lba, IMPLICIT_SEEK) != 0 {
+                    return false;
+                }
+            }
             psx_core_stream_sector(dst.as_mut_ptr()) == 0
         }
         unsafe fn stop(&mut self) {
-            let _ = psx_core_pause();
+            // A read served whole from the tail started nothing on the drive: nothing to pause.
+            if (*core::ptr::addr_of_mut!(FROM_TAIL)).take().is_none() {
+                let _ = psx_core_pause();
+            }
             if ATTACHED {
                 ATTACHED = false;
                 psx_core_client_detach();
