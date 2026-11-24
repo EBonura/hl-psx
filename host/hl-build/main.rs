@@ -2776,9 +2776,9 @@ static INTRO_ENABLED: AtomicBool = AtomicBool::new(false);
 static DIAG_BUILD: AtomicBool = AtomicBool::new(false);
 
 /// Whether the executable `compile_game` linked last runs on the scene core: its disc then
-/// carries SCENES.TBL (the intro as image 0, the game as the program the intro hands over to),
-/// which the game reads into its own copy at boot.
-static SCENE_CORE_BUILD: AtomicBool = AtomicBool::new(false);
+/// carries SCENES.TBL (the intro as image 0, the game as the program the intro switches to),
+/// which psx-core reads into each program's copy on its first switch or image load.
+pub(crate) static SCENE_CORE_BUILD: AtomicBool = AtomicBool::new(false);
 
 /// The scene manifest of a scene-core disc with the intro stage (mkisopsx `--scenes`).
 fn scene_manifest(repository: &Path, game_file: &Path) -> Result<PathBuf> {
@@ -2795,10 +2795,9 @@ fn scene_manifest(repository: &Path, game_file: &Path) -> Result<PathBuf> {
     fs::write(
         &manifest,
         format!(
-            "# Written by hl-build. Image 0 is the intro (PSX.EXE, the BIOS boots it). It is not on\n\
-             # the core (core-hash=0: no stored copy, and a switch to it is refused); it chain-loads\n\
-             # the game, which attaches the core cold, with image 0's bit set.\n\
-             program PSX.EXE    -  core-hash=0\n\
+            "# Written by hl-build. Image 0 is the intro (PSX.EXE, the BIOS boots it): it runs on\n\
+             # the core and enters the game with a core switch to GAME.\n\
+             program PSX.EXE    -\n\
              program HLGAME.EXE {}\n\
              scene   BOOT       PSX.EXE    start\n\
              scene   GAME       HLGAME.EXE start\n",

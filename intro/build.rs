@@ -49,10 +49,12 @@ fn main() {
                 "the SDK linker script changed: {pattern:?}"
             );
         }
-        let script = sdk.replace(SDK_LOAD, &format!("LOAD_ADDR   = {base};")).replace(
-            SDK_LENGTH,
-            "LENGTH = EXE_HEAD_BYTES + RAM_BASE + RAM_SIZE - LOAD_ADDR - STACK_RESERVE",
-        );
+        let script = sdk
+            .replace(SDK_LOAD, &format!("LOAD_ADDR   = {base};"))
+            .replace(
+                SDK_LENGTH,
+                "LENGTH = EXE_HEAD_BYTES + RAM_BASE + RAM_SIZE - LOAD_ADDR - STACK_RESERVE",
+            );
         let out = out_dir.join("hl-intro.ld");
         fs::write(&out, script).expect("write the intro linker script");
         vec![out]
@@ -74,19 +76,35 @@ fn main() {
         ("BOOT_VMA", "BOOT_LMA")
     };
     println!("cargo:rerun-if-changed={}", boot.display());
-    println!("cargo:rustc-link-arg=-T{}", boot.display());
-    println!("cargo:rustc-link-arg=-u__boot_entry");
-    // Stored where it runs (BOOT_LMA = BOOT_VMA = __bss_end), not after `.data`: ld.lld's
-    // `--oformat=binary` writes no program headers and so places every section at its VMA,
-    // ignoring the script's AT() (the first link of this program put `.boot` at __bss_end in
-    // the file whatever BOOT_LMA said, and its mover then copied from the wrong place). The
-    // file carries this program's `.bss` (180 B) as zeros in exchange; `_start` clears it.
-    println!("cargo:rustc-link-arg=--defsym={vma}=__bss_end");
-    println!("cargo:rustc-link-arg=--defsym={lma}=__bss_end");
-    for script in &scripts {
-        println!("cargo:rustc-link-arg=-T{}", script.display());
+    if env::var_os("CARGO_FEATURE_SCENE_CORE").is_some() {
+        // On the scene core (CORE-ABI 4.1): the RAM size and load address first, then
+        // psoxide-core.ld, psoxide-boot.ld and psoxide.ld, as an ELF; hl-build writes the EXE
+        // with psx-exe, `.boot` stored after `.data` and the core's image after it.
+        let core = psoxide.join("sdk/psoxide-core.ld");
+        let core = core.canonicalize().unwrap_or(core);
+        println!("cargo:rerun-if-changed={}", core.display());
+        let (load, sdk_script) = (&scripts[0], scripts.last().expect("psoxide.ld"));
+        let mut text = fs::read_to_string(load).expect("read the intro's load address script");
+        text.push_str("RAM_SIZE_OVERRIDE = 0x1FE000;\n");
+        fs::write(load, text).expect("write the intro's load address script");
+        for script in [load, &core, &boot, sdk_script] {
+            println!("cargo:rustc-link-arg=-T{}", script.display());
+        }
+    } else {
+        println!("cargo:rustc-link-arg=-T{}", boot.display());
+        println!("cargo:rustc-link-arg=-u__boot_entry");
+        // Stored where it runs (BOOT_LMA = BOOT_VMA = __bss_end), not after `.data`: ld.lld's
+        // `--oformat=binary` writes no program headers and so places every section at its VMA,
+        // ignoring the script's AT() (the first link of this program put `.boot` at __bss_end in
+        // the file whatever BOOT_LMA said, and its mover then copied from the wrong place). The
+        // file carries this program's `.bss` (180 B) as zeros in exchange; `_start` clears it.
+        println!("cargo:rustc-link-arg=--defsym={vma}=__bss_end");
+        println!("cargo:rustc-link-arg=--defsym={lma}=__bss_end");
+        for script in &scripts {
+            println!("cargo:rustc-link-arg=-T{}", script.display());
+        }
+        println!("cargo:rustc-link-arg=--oformat=binary");
     }
-    println!("cargo:rustc-link-arg=--oformat=binary");
     if let Ok(map) = env::var("HLPSX_LINK_MAP") {
         if !map.is_empty() {
             println!("cargo:rustc-link-arg=-Map={map}");

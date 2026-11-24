@@ -23,8 +23,14 @@
 #![no_main]
 // The boot-only mover is MIPS assembly (boot.rs).
 #![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
+// On the scene core the game is entered by a core switch: the chain loader, its loading widget and
+// the root lookup of the game are unused there.
+#![cfg_attr(feature = "scene-core", allow(dead_code, unused_imports))]
 
 extern crate psx_rt;
+// The scene core's program side: its image, `__core_boot` and the slots `enter_game` calls.
+#[cfg(feature = "scene-core")]
+extern crate psx_core;
 
 use psx_chainloader::paint;
 use psx_chainloader::runtime::{self, Presentation};
@@ -167,7 +173,9 @@ fn find_game() -> Option<u32> {
         return None;
     }
     let mut sector = [0u32; SECTOR_WORDS];
-    let found = reader.find(&mut sector, None, &[GAME_FILE]).map(|(lba, _)| lba);
+    let found = reader
+        .find(&mut sector, None, &[GAME_FILE])
+        .map(|(lba, _)| lba);
     let _ = reader.release();
     found
 }
@@ -343,28 +351,58 @@ fn main() {
     boot::black(&mut gpu, &mut fb);
     play_movie(&mut skip, image_start());
 
+    #[cfg(feature = "scene-core")]
+    enter_game();
+    #[cfg(not(feature = "scene-core"))]
     let Some(lba) = find_game() else {
         tty::println("hl-intro: no HLGAME.EXE on this disc");
         loop {
             interrupts::wait_vblank();
         }
     };
-    // The game is on the same disc as this program, so it takes over the
-    // bases the launcher gave this one. Passing zero here made the game read
-    // its packs at unshifted sectors whenever the disc is a multi-program one.
-    let lba_offset = psx_io::disc_base::lba_offset();
-    let cdda_track_base = u32::from(psx_io::disc_base::cdda_track_base());
-    // SAFETY: the game's payload ends below this image (hl-build checks it
-    // when it packs the disc), the player has returned, and nothing else
-    // uses the drive. `run` never returns.
-    unsafe {
-        runtime::run(
-            lba,
-            lba_offset,
-            cdda_track_base,
-            GAME_FNV,
-            image_start(),
-            Loading::new(),
-        )
+    #[cfg(not(feature = "scene-core"))]
+    {
+        // The game is on the same disc as this program, so it takes over the
+        // bases the launcher gave this one. Passing zero here made the game read
+        // its packs at unshifted sectors whenever the disc is a multi-program one.
+        let lba_offset = psx_io::disc_base::lba_offset();
+        let cdda_track_base = u32::from(psx_io::disc_base::cdda_track_base());
+        // SAFETY: the game's payload ends below this image (hl-build checks it
+        // when it packs the disc), the player has returned, and nothing else
+        // uses the drive. `run` never returns.
+        unsafe {
+            runtime::run(
+                lba,
+                lba_offset,
+                cdda_track_base,
+                GAME_FNV,
+                image_start(),
+                Loading::new(),
+            )
+        }
+    }
+}
+
+/// The game's scene in SCENES.TBL (hl-build's manifest: BOOT 0, GAME 1).
+#[cfg(feature = "scene-core")]
+const GAME_SCENE: u32 = 1;
+/// This program's copy of SCENES.TBL: psx-core reads it on the switch (header and up to six rows).
+#[cfg(feature = "scene-core")]
+static mut TABLE: [u32; 16 + 8 * 6] = [0; 16 + 8 * 6];
+
+/// Enter the game with a core program switch: the core loads HLGAME.EXE (its row in the
+/// table), checks it and jumps to it with the disc base and the CD-DA base in the entry
+/// registers, and the loaded mask then holds the game's bit, so overlays it owns load. The
+/// switch returns only when the core refused it before touching anything.
+#[cfg(feature = "scene-core")]
+fn enter_game() -> ! {
+    // SAFETY: single-threaded; the one borrow lives for the call.
+    let table = unsafe { &mut *core::ptr::addr_of_mut!(TABLE) };
+    let code = psx_core::link::switch(GAME_SCENE, &[0; 4], table);
+    tty::print("hl-intro: the core refused the switch to the game, code ");
+    print_decimal(code);
+    tty::println("");
+    loop {
+        interrupts::wait_vblank();
     }
 }

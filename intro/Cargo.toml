@@ -39,3 +39,9 @@ psx-vram        = { path = "../.psoxide/sdk/crates/psx-vram" }
 psx-splash      = { path = "../.psoxide/sdk/crates/psx-splash" }
 psx-display     = { path = "../.psoxide/sdk/crates/psx-display" }
 psx-chainloader = { path = "../.psoxide/engine/crates/psx-chainloader" }
+psx-core        = { path = "../.psoxide/sdk/crates/psx-core", features = ["link"], optional = true }
+
+[features]
+# The intro runs on the SDK's scene core and enters the game with a core program switch (hl-build
+# sets it for a scene-core disc).
+scene-core = ["dep:psx-core"]

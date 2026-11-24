@@ -237,10 +237,24 @@ pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<Pa
         .env("HL_INTRO_LOAD_ADDR", format!("{LOAD_ADDR:#x}"))
         .env("HL_INTRO_GAME_FNV", format!("{:x}", game.fnv))
         .env("HLPSX_LINK_MAP", &map);
+    // A scene-core disc: the intro runs on the core too and enters the game with a core switch.
+    let scene_core = crate::SCENE_CORE_BUILD.load(std::sync::atomic::Ordering::Relaxed);
+    if scene_core {
+        command.args(["--features", "scene-core"]);
+    }
     run_compile(&mut command, "compile the hl-psx intro for PlayStation")?;
     let exe = intro.join("target/mipsel-sony-psx/release/hl-intro.exe");
     if !exe.is_file() {
         return Err(format!("the intro build did not produce {}", exe.display()).into());
+    }
+    if scene_core {
+        // An ELF on the core (intro/build.rs): write the EXE from its load addresses.
+        let elf = exe.with_extension("elf");
+        fs::rename(&exe, &elf)?;
+        run(
+            hazard_tool(psoxide, "psx-exe").arg(&elf).arg(&exe),
+            "write hl-intro.exe from its ELF (psx-exe)",
+        )?;
     }
     // LLVM's delay-slot filler leaves a load in a slot here and there; the
     // SDK's patcher reroutes those branches through psx-rt's trampolines, and
@@ -259,7 +273,12 @@ pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<Pa
             .arg(&map),
         "prove hl-intro.exe free of load-delay hazards",
     )?;
-    check_boot_only(&fs::read_to_string(&map)?)?;
+    let stack_bottom = if scene_core {
+        INTRO_CORE_STACK_BOTTOM
+    } else {
+        INTRO_STACK_BOTTOM
+    };
+    check_boot_only(&fs::read_to_string(&map)?, stack_bottom)?;
     crate::stamp_receipt(psoxide, &repository.join("intro"), &exe, None)?;
     Ok(exe)
 }
@@ -267,16 +286,18 @@ pub fn compile(repository: &Path, psoxide: &Path, game: &GameImage) -> Result<Pa
 /// The top of the intro's boot-only memory may not reach its stack: the stack starts 100h
 /// below the top of the 2 MiB it links for, with the SDK's default 32 KiB reserve.
 const INTRO_STACK_BOTTOM: u32 = 0x8020_0000 - 0x100 - 0x8000;
+/// The same on the scene core: the stack starts at the core's window, 0x801F_DF00.
+const INTRO_CORE_STACK_BOTTOM: u32 = 0x801F_DF00 - 0x8000;
 
 /// The end of `.boot` and `.boot_bss` (psoxide-boot.ld) from the intro's map: the splash and
 /// the movie player run there, above `.bss`, and the script gives them no memory region, so
 /// the linker does not check them against the stack.
-fn check_boot_only(map: &str) -> Result<()> {
+fn check_boot_only(map: &str, stack_bottom: u32) -> Result<()> {
     let mut end = None;
     for line in map.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if let [vma, _lma, size, _align, name] = fields[..] {
-            if name == ".boot" || name == ".boot_bss" {
+            if name == ".boot" || name == ".boot_inner" || name == ".boot_bss" {
                 let vma = u32::from_str_radix(vma, 16)?;
                 let size = u32::from_str_radix(size, 16)?;
                 end = end.max(Some(vma + size));
@@ -284,10 +305,10 @@ fn check_boot_only(map: &str) -> Result<()> {
         }
     }
     let end = end.ok_or("the intro's map has no .boot section (psoxide-boot.ld not linked)")?;
-    if end > INTRO_STACK_BOTTOM {
+    if end > stack_bottom {
         return Err(format!(
             "the intro's boot-only memory ends at {end:#x}, inside its stack reserve (from \
-             {INTRO_STACK_BOTTOM:#x})"
+             {stack_bottom:#x})"
         )
         .into());
     }
@@ -367,8 +388,8 @@ mod tests {
                 end - 0x808
             )
         };
-        assert!(check_boot_only(&map(INTRO_STACK_BOTTOM)).is_ok());
-        assert!(check_boot_only(&map(INTRO_STACK_BOTTOM + 4)).is_err());
+        assert!(check_boot_only(&map(INTRO_STACK_BOTTOM), INTRO_STACK_BOTTOM).is_ok());
+        assert!(check_boot_only(&map(INTRO_STACK_BOTTOM + 4), INTRO_STACK_BOTTOM).is_err());
         assert!(check_boot_only("801e0000 801e0000 100 4 .text\n").is_err());
     }
 
