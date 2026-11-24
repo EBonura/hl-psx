@@ -3430,16 +3430,6 @@ fn collect_layout(
 /// Free RAM a profile-guided link keeps, by the SDK's check
 /// (`psoxide-pgo ram`, which prints `free N B`).
 fn ram_free(psoxide: &Path, link_map: &Path) -> Result<u32> {
-    // The scene-core link INSERTs psoxide-overlay.ld after `.bss` with the title menu inside
-    // it, so ld.lld's map line for `__heap_start = __bss_end` carries the location counter
-    // (`__overlay_end`), not the symbol, and `psoxide-pgo ram` reads it as the heap start
-    // (1,124,124 B free on the first overlay link). The same measure from the `__bss_end = .`
-    // line inside `.bss` (ram_report) is right for both links.
-    if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
-        return ram_report::parse(&fs::read_to_string(link_map)?)
-            .free()
-            .ok_or_else(|| format!("no __bss_end or RAM size in {}", link_map.display()).into());
-    }
     let output = Command::new(cargo())
         .current_dir(psoxide)
         .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])
