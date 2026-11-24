@@ -103,36 +103,23 @@ pub mod core {
         unsafe { psx_core_read(lba, 1, dst.as_mut_ptr(), None) == 0 }
     }
 
-    /// Words of the scene table copy: the header and four rows (two images, two scenes).
-    #[cfg(not(scene_overlay_test))]
-    const TABLE_WORDS: usize = 16 + 8 * 4;
-    /// The overlay test's table: two scenes and four images.
-    #[cfg(scene_overlay_test)]
-    const TABLE_WORDS: usize = 16 + 8 * 6;
+    /// Words of the scene table copy: the header and five rows (three images, two scenes).
+    const TABLE_WORDS: usize = 16 + 8 * 5;
     static mut TABLE: [u32; TABLE_WORDS] = [0; TABLE_WORDS];
 
-    /// The overlay test (cfg `scene_overlay_test`, set by HLPSX_SCENE_OVERLAY_TEST at build time;
-    /// never shipped), at boot: load image 2 (an Overlay owned by HLGAME.EXE), write over the first
-    /// word of its range as gameplay would (the world arena), and ask for it again; then ask for
-    /// image 3 (owned by PSX.EXE, the intro). Kept:
-    /// `[status 2, status 2 again, its first word after the second load, status 3]`.
-    #[cfg(scene_overlay_test)]
-    #[no_mangle]
-    pub static mut OVERLAY_TEST: [u32; 4] = [0xffff_ffff; 4];
+    /// The title menu overlay's image in the scene table: hl-build's manifest lists PSX.EXE,
+    /// HLGAME.EXE, then MENU.OVL.
+    const MENU_IMAGE: u32 = 2;
 
-    #[cfg(scene_overlay_test)]
-    pub fn overlay_test() {
-        const RANGE: *mut u32 = 0x8010_0000 as *mut u32;
-        let table = scene_table();
-        let first = psx_core::link::load_image(2, table);
-        // SAFETY: image 2's load range (the test manifest), in the world arena, unused at boot.
-        unsafe { core::ptr::write_volatile(RANGE, 0xdead_beef) };
-        let again = psx_core::link::load_image(2, table);
-        // SAFETY: as above.
-        let word = unsafe { core::ptr::read_volatile(RANGE) };
-        let owned_by_intro = psx_core::link::load_image(3, table);
-        // SAFETY: once, at boot, single-threaded.
-        unsafe { OVERLAY_TEST = [first, again, word, owned_by_intro] };
+    /// Read the pre-play title menu's code (MENU.OVL, menu.rs's `.text.overlay.1.*`) into the
+    /// world arena's start before a call into it. A volatile overlay: the core reads it on every
+    /// call, since a map overwrites that memory. The menu cannot run without it: a refusal or a
+    /// failed read is the core's fatal screen with its code.
+    pub fn load_menu() {
+        let status = psx_core::link::load_image(MENU_IMAGE, scene_table());
+        if status != 0 {
+            psx_core::link::fatal(status);
+        }
     }
 
     /// The program's copy of the scene table, for switches and image loads: psx-core reads

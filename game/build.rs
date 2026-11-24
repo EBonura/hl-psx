@@ -30,6 +30,9 @@ const FALLBACK_MAX_LEAVES: usize = 8192;
 const FALLBACK_MAX_ENTS: usize = 192;
 const FALLBACK_MAX_TEX_SLOTS: usize = 256;
 const FALLBACK_MODEL_WORDS: usize = 24_576;
+/// Bytes at the world arena's start that the scene-core build keeps for the title menu overlay
+/// (whole sectors; the link asserts the overlay fits).
+const MENU_OVERLAY_BYTES: usize = 0x4000;
 const FALLBACK_PACK_CACHE_ENTRIES: usize = 512;
 const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // MODEL_BUF must hold a whole per-map model set (the fixed viewmodel reserve,
@@ -1876,19 +1879,42 @@ fn main() {
     // differ, so the link writes an ELF and hl-build writes the EXE from its load addresses
     // (psx-exe); ld.lld's --oformat=binary would place it at its run address.
     let scene_core = env::var_os("CARGO_FEATURE_SCENE_CORE").is_some();
-    // Test builds only: the scene core overlay test (cdstream::core::overlay_test), with a test
-    // scene manifest from hl-build (HLPSX_SCENES_TEST).
-    println!("cargo::rustc-check-cfg=cfg(scene_overlay_test)");
-    println!("cargo:rerun-if-env-changed=HLPSX_SCENE_OVERLAY_TEST");
-    if scene_core && env::var_os("HLPSX_SCENE_OVERLAY_TEST").is_some() {
-        println!("cargo:rustc-cfg=scene_overlay_test");
-    }
     if scene_core {
         assert!(core_window == 0x2000, "the scene core links at the 8,192 B window (game/core-window)");
         let core_ld = ld.with_file_name("psoxide-core.ld");
         println!("cargo:rerun-if-changed={}", core_ld.display());
         println!("cargo:rustc-link-arg=-T{}", core_ld.display());
+        // The pre-play title menu (menu.rs, `.text.overlay.1.*`) is a fixed-address overlay
+        // (psoxide-overlay.ld) at the world arena's first MENU_OVERLAY_BYTES, which no map
+        // holds while a menu runs; the menu art streams in after it. hl-build writes it as
+        // MENU.OVL, a volatile overlay the core reads again before every menu entry.
+        // `hl_world_arena_base` is the arena's address (main.rs, global_asm).
+        let menu_ld = out_dir.join("menu-overlay.ld");
+        fs::write(
+            &menu_ld,
+            format!(
+                "OVERLAY_VMA = hl_world_arena_base;\n\
+                 ASSERT(((__overlay_end - OVERLAY_VMA + 0x7FF) & ~0x7FF) <= {MENU_OVERLAY_BYTES:#x}, \
+                 \"the title menu overlay, padded to sectors, outgrew MENU_OVERLAY_BYTES (game/build.rs)\")\n"
+            ),
+        )
+        .expect("write the menu overlay script");
+        println!("cargo:rustc-link-arg=-T{}", menu_ld.display());
+        let overlay_ld = ld.with_file_name("psoxide-overlay.ld");
+        println!("cargo:rerun-if-changed={}", overlay_ld.display());
+        println!("cargo:rustc-link-arg=-T{}", overlay_ld.display());
+        // ld.lld refuses an overlay whose run range overlaps `.bss` ("section .bss virtual
+        // address range overlaps with .overlay.1"), and the arena is a `.bss` static. Until the
+        // SDK places an overlay over a program's own buffer, the link skips its section overlap
+        // checks and hl-build makes them itself, allowing only the overlay inside the arena
+        // (`check_scene_core_sections`).
+        println!("cargo:rustc-link-arg=--no-check-sections");
     }
+    fs::write(
+        out_dir.join("menu_overlay.rs"),
+        format!("pub const MENU_OVERLAY_BYTES: usize = {MENU_OVERLAY_BYTES:#x};\n"),
+    )
+    .expect("write the menu overlay size");
     println!("cargo:rustc-link-arg=-T{}", ld.display());
     // `HLPSX_LINK_ELF=1` keeps the ELF instead, for tools that need DWARF to
     // symbolize emulator PC profiles. Same code at the same addresses; it

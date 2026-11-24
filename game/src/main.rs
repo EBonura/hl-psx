@@ -238,6 +238,16 @@ const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 const FACE_REGION_WORDS: usize = hl_format::room_budget::FACE_REGION_WORDS;
 const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS + FACE_REGION_WORDS;
 static mut WORLD_ARENA: [u32; ARENA_WORDS] = [0; ARENA_WORDS];
+// The arena's address under a plain name for the scene-core link, which runs the title menu
+// overlay at the arena's start (game/build.rs, `OVERLAY_VMA`). An alias: no bytes.
+#[cfg(feature = "scene-core")]
+core::arch::global_asm!(
+    ".globl hl_world_arena_base",
+    ".set hl_world_arena_base, {arena}",
+    arena = sym WORLD_ARENA,
+);
+#[cfg(feature = "scene-core")]
+include!(concat!(env!("OUT_DIR"), "/menu_overlay.rs"));
 /// Words of the arena's top taken by the resident models' face blocks.
 static mut FACE_USED_WORDS: usize = 0;
 /// First arena word owned by the model pool. Conservative (= the full staging
@@ -4506,11 +4516,26 @@ unsafe fn streamed_map_bytes(len: usize) -> &'static [u8] {
 /// play() clobbers MAP_BUF + the menu VRAM. Empty on a failed read -> menu still
 /// runs, just unbranded.
 #[inline(never)]
+#[cfg(not(feature = "scene-core"))]
 unsafe fn stream_menu_assets() -> &'static [u8] {
     let n = cdstream::load_chunk_decompressed(menu::MENU_CHUNK_ID, map_buf())
         .map(|load| load.raw_len)
         .unwrap_or(0);
     streamed_map_bytes(n.max(8))
+}
+
+/// The scene-core build: the title menu's own code runs from the arena's first
+/// MENU_OVERLAY_BYTES (MENU.OVL, read by `cdstream::core::load_menu`), so the art streams in
+/// after it.
+#[inline(never)]
+#[cfg(feature = "scene-core")]
+unsafe fn stream_menu_assets() -> &'static [u8] {
+    const SKIP_WORDS: usize = MENU_OVERLAY_BYTES / 4;
+    let n = cdstream::load_chunk_decompressed(menu::MENU_CHUNK_ID, &mut map_buf()[SKIP_WORDS..])
+        .map(|load| load.raw_len)
+        .unwrap_or(0);
+    let ptr = psx_hw::memory::to_kseg0_ptr(arena_ptr().add(SKIP_WORDS).cast::<u8>());
+    unsafe { core::slice::from_raw_parts(ptr, n.max(8)) }
 }
 
 unsafe fn streamed_model_bytes_at(byte_off: usize, len: usize) -> &'static [u8] {
@@ -34992,8 +35017,6 @@ fn main() {
     // GP0(1Fh) with, and every draw and flip below goes through it.
     driver::install(Gpu::new(peripherals.gpu_dma, settings::DISPLAY));
     let mut fb = DoubleBuffer::new(Resolution::R320X240);
-    #[cfg(scene_overlay_test)]
-    cdstream::core::overlay_test();
     music::install(peripherals.cd);
     // A program started by a launcher inherits whatever mode the last one left, so the
     // first poll asks for analog and locks it, before anything reads the pad. The poll
@@ -35175,6 +35198,10 @@ fn main() {
             // strip keeps the screen alive until the first menu frame.
             begin_loading(&mut fb);
             draw_next_loading_screen(&mut fb);
+            // The menu's code is an overlay in the arena on the scene core: read it again
+            // (play() overwrote it), as its art below.
+            #[cfg(feature = "scene-core")]
+            cdstream::core::load_menu();
             let assets = unsafe { stream_menu_assets() };
             // The widget keeps moving through the menu's own setup (its glow atlas is
             // blurred on the CPU); `menu::run` ends it before the first frame.
@@ -35274,6 +35301,8 @@ fn main() {
                     // menu-asset streams.
                     unsafe { music_stop_for_menu() };
                     if matches!(exit, PlayExit::Ending) {
+                        #[cfg(feature = "scene-core")]
+                        cdstream::core::load_menu();
                         menu::ending(&mut fb, unsafe { stream_menu_assets() });
                     }
                     break;

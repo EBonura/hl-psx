@@ -2592,12 +2592,14 @@ fn compile_game(
         if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
             // The scene-core link is an ELF (game/build.rs): write the EXE from its load
             // addresses, keeping the ELF beside it.
+            check_scene_core_sections(&link_map)?;
             let elf = exe.with_extension("elf");
             fs::rename(&exe, &elf)?;
             run(
                 hazard_tool(psoxide, "psx-exe").arg(&elf).arg(&exe),
                 "write hl-psx.exe from the scene-core link's ELF (psx-exe)",
             )?;
+            write_menu_overlay(psoxide, &elf)?;
         }
         // Reroute the R3000 load-delay hazards LLVM's delay-slot filler leaves
         // behind (loads in delay slots consumed one instruction later, including
@@ -2780,8 +2782,127 @@ static DIAG_BUILD: AtomicBool = AtomicBool::new(false);
 /// which psx-core reads into each program's copy on its first switch or image load.
 pub(crate) static SCENE_CORE_BUILD: AtomicBool = AtomicBool::new(false);
 
+/// The title menu overlay of a scene-core link (game/build.rs, psoxide-overlay.ld): menu.rs's
+/// pre-play code runs at the world arena's start and is not in the EXE. `psx-exe --overlay`
+/// writes it beside the ELF as `menu.ovl`, and its manifest option (`load=0x...`) as
+/// `menu.ovl.load`. Its code never passes the EXE's hazard patcher, so it must scan clean as
+/// linked (`hazard-scan --raw`, `check-mfc0 --raw`).
+fn write_menu_overlay(psoxide: &Path, elf: &Path) -> Result<()> {
+    let overlay = elf.with_file_name(MENU_OVERLAY_FILE);
+    println!(
+        "\n==> write the title menu overlay from the scene-core link's ELF (psx-exe --overlay)"
+    );
+    let output = hazard_tool(psoxide, "psx-exe")
+        .args(["--overlay", ".overlay.1"])
+        .arg(elf)
+        .arg(&overlay)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "psx-exe --overlay failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let printed = String::from_utf8_lossy(&output.stdout);
+    let load = printed
+        .split_whitespace()
+        .find(|word| word.starts_with("load=0x"))
+        .ok_or_else(|| format!("psx-exe --overlay printed no load= option: {printed}"))?;
+    let address = &load["load=".len()..];
+    println!(
+        "{} {} bytes, {load}",
+        overlay.display(),
+        fs::metadata(&overlay)?.len()
+    );
+    for scan in ["hazard-scan", "check-mfc0"] {
+        run(
+            hazard_tool(psoxide, scan)
+                .arg("--raw")
+                .arg(address)
+                .arg(&overlay),
+            &format!("prove the title menu overlay free of load-delay hazards ({scan} --raw)"),
+        )?;
+    }
+    fs::write(overlay.with_extension("ovl.load"), load)?;
+    Ok(())
+}
+
+/// One output section of a link map: name, run address, load address, size.
+type MapSection<'a> = (&'a str, u32, u32, u32);
+
+/// The scene-core link runs without ld.lld's section overlap checks (game/build.rs: the title
+/// menu overlay runs inside the world arena, a `.bss` static, which ld.lld refuses). This makes
+/// them from the link map: no two allocated output sections may overlap in run or load address,
+/// except an overlay (`.overlay.N`) with `.bss` or another overlay, and only while the overlay
+/// lies inside `hl_psx::WORLD_ARENA`.
+fn check_scene_core_sections(map: &Path) -> Result<()> {
+    let text = fs::read_to_string(map)?;
+    let hex = |field: &str| u32::from_str_radix(field, 16).ok();
+    let mut sections: Vec<MapSection> = Vec::new();
+    let mut arena = None;
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let [vma, lma, size, _, name] = fields[..] else {
+            continue;
+        };
+        let (Some(vma), Some(lma), Some(size)) = (hex(vma), hex(lma), hex(size)) else {
+            continue;
+        };
+        if name == "hl_psx::WORLD_ARENA" {
+            arena = Some((vma, size));
+        }
+        // An output section's name starts in the map's Out column (byte 33); input sections and
+        // symbols are indented further. Address 0: not allocated (symbol tables, DWARF).
+        if line.as_bytes().get(33) != Some(&b' ') && name.starts_with('.') && vma != 0 && size != 0
+        {
+            sections.push((name, vma, lma, size));
+        }
+    }
+    let (arena_start, arena_size) =
+        arena.ok_or_else(|| format!("no hl_psx::WORLD_ARENA in {}", map.display()))?;
+    let overlaps = |a: u32, a_size: u32, b: u32, b_size: u32| {
+        u64::from(a) < u64::from(b) + u64::from(b_size)
+            && u64::from(b) < u64::from(a) + u64::from(a_size)
+    };
+    let in_arena = |section: &MapSection| {
+        section.0.starts_with(".overlay.")
+            && section.1 >= arena_start
+            && u64::from(section.1) + u64::from(section.3)
+                <= u64::from(arena_start) + u64::from(arena_size)
+    };
+    for (index, a) in sections.iter().enumerate() {
+        for b in &sections[index + 1..] {
+            let allowed =
+                (in_arena(a) && (b.0 == ".bss" || in_arena(b))) || (in_arena(b) && a.0 == ".bss");
+            if overlaps(a.1, a.3, b.1, b.3) && !allowed {
+                return Err(format!(
+                    "sections {} and {} overlap in run address ({:#x}+{:#x}, {:#x}+{:#x})",
+                    a.0, b.0, a.1, a.3, b.1, b.3
+                )
+                .into());
+            }
+            // `.bss` has no bytes to load.
+            if a.0 != ".bss" && b.0 != ".bss" && overlaps(a.2, a.3, b.2, b.3) {
+                return Err(format!(
+                    "sections {} and {} overlap in load address ({:#x}+{:#x}, {:#x}+{:#x})",
+                    a.0, b.0, a.2, a.3, b.2, b.3
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The title menu overlay's file beside the scene-core link's ELF and EXE.
+const MENU_OVERLAY_FILE: &str = "menu.ovl";
+
 /// The scene manifest of a scene-core disc with the intro stage (mkisopsx `--scenes`).
-fn scene_manifest(repository: &Path, game_file: &Path) -> Result<PathBuf> {
+/// `menu` is the title menu overlay and its `load=` option (`write_menu_overlay`); it is
+/// volatile because the world arena it runs in is overwritten by every map.
+fn scene_manifest(repository: &Path, game_file: &Path, menu: (&Path, &str)) -> Result<PathBuf> {
     let directory = repository.join(".hlpsx/scenes");
     fs::create_dir_all(&directory)?;
     let manifest = directory.join("hl-psx.scenes");
@@ -2792,16 +2913,29 @@ fn scene_manifest(repository: &Path, game_file: &Path) -> Result<PathBuf> {
         fs::write(&manifest, text.replace("@GAME@", &game_file.display().to_string()))?;
         return Ok(manifest);
     }
+    // HLGAME's reserve is the RAM its overlays may load into: the menu's whole sectors at the
+    // world arena's start (the core reads whole sectors, so the padding lands there too).
+    let load = menu
+        .1
+        .strip_prefix("load=0x")
+        .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+        .ok_or_else(|| format!("bad title menu overlay option {:?}", menu.1))?;
+    let sectors = fs::metadata(menu.0)?.len().div_ceil(2048) as u32;
+    let reserve = format!("reserve={load:#010x}-{:#010x}", load + sectors * 2048);
     fs::write(
         &manifest,
         format!(
             "# Written by hl-build. Image 0 is the intro (PSX.EXE, the BIOS boots it): it runs on\n\
              # the core and enters the game with a core switch to GAME.\n\
+             # MENU.OVL is image 2 (cdstream::core::MENU_IMAGE).\n\
              program PSX.EXE    -\n\
-             program HLGAME.EXE {}\n\
+             program HLGAME.EXE {} {reserve}\n\
+             overlay MENU.OVL   {} owner=HLGAME.EXE {} class=volatile\n\
              scene   BOOT       PSX.EXE    start\n\
              scene   GAME       HLGAME.EXE start\n",
-            game_file.display()
+            game_file.display(),
+            menu.0.display(),
+            menu.1
         ),
     )?;
     Ok(manifest)
@@ -2890,9 +3024,16 @@ fn pack_disc_into(
     if let Some(game_file) = &game_file {
         if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
             // The program row puts HLGAME.EXE in the root, as `--file` does.
+            let menu = exe.with_file_name(MENU_OVERLAY_FILE);
+            let load = fs::read_to_string(menu.with_extension("ovl.load")).map_err(|error| {
+                format!(
+                    "no title menu overlay beside {} ({error}): compile it first",
+                    exe.display()
+                )
+            })?;
             command
                 .arg("--scenes")
-                .arg(scene_manifest(repository, game_file)?)
+                .arg(scene_manifest(repository, game_file, (&menu, load.trim()))?)
                 .arg("--core-image")
                 .arg(psoxide.join("sdk/crates/psx-core/prebuilt/psx-core.bin"));
         } else {
@@ -3289,6 +3430,16 @@ fn collect_layout(
 /// Free RAM a profile-guided link keeps, by the SDK's check
 /// (`psoxide-pgo ram`, which prints `free N B`).
 fn ram_free(psoxide: &Path, link_map: &Path) -> Result<u32> {
+    // The scene-core link INSERTs psoxide-overlay.ld after `.bss` with the title menu inside
+    // it, so ld.lld's map line for `__heap_start = __bss_end` carries the location counter
+    // (`__overlay_end`), not the symbol, and `psoxide-pgo ram` reads it as the heap start
+    // (1,124,124 B free on the first overlay link). The same measure from the `__bss_end = .`
+    // line inside `.bss` (ram_report) is right for both links.
+    if SCENE_CORE_BUILD.load(Ordering::Relaxed) {
+        return ram_report::parse(&fs::read_to_string(link_map)?)
+            .free()
+            .ok_or_else(|| format!("no __bss_end or RAM size in {}", link_map.display()).into());
+    }
     let output = Command::new(cargo())
         .current_dir(psoxide)
         .args(["run", "-q", "--release", "-p", "psoxide-pgo", "--", "ram"])

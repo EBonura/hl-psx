@@ -11,6 +11,12 @@
 //!                    (the WON splash.bmp isn't present).
 //! Colors are the scheme's: items orange 255 170 0, selected white with a faint
 //! orange armed bar. Returns the chosen streamed room id.
+//!
+//! On the scene core (feature `scene-core`) the functions only the title menu and the end card
+//! use are linked into `.text.overlay.1.*`: the image MENU.OVL, which the core reads into the
+//! world arena before each call into `run` or `ending` (`cdstream::core::load_menu`). What the
+//! pause menu and play also use (`chapter_title`, `label_text`, `room_for_map_name`, the
+//! tables) stays resident, as does everything else the compiler places on its own.
 
 use crate::driver;
 use crate::hltext;
@@ -184,6 +190,7 @@ const SECTION_LOGO_ANIM: usize = 3;
 /// Split the streamed menu chunk into its `.tex` sections. A short or failed
 /// read yields empty slices, which upload_tex turns into 0x0 materials that
 /// every draw helper skips -- the menu still runs, just unbranded.
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_split_menu")]
 fn split_menu(blob: &[u8]) -> [&[u8]; MENU_SECTIONS] {
     let mut out = [&blob[0..0]; MENU_SECTIONS];
     let header = 4 * MENU_SECTIONS;
@@ -211,6 +218,7 @@ fn split_menu(blob: &[u8]) -> [&[u8]; MENU_SECTIONS] {
 /// Only the backdrop uses this, because only the backdrop has to span the
 /// narrow band above the console's black crush with anything resembling a
 /// gradient.
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_upload_tex8")]
 fn upload_tex8(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
     const HEADER: usize = 4 + 512;
     if blob.len() < HEADER {
@@ -233,6 +241,7 @@ fn upload_tex8(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
 }
 
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_upload_tex")]
 fn upload_tex(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
     if blob.len() < 36 {
         return (TextureMaterial::new(0, 0), 0, 0);
@@ -250,6 +259,7 @@ fn upload_tex(blob: &[u8], vx: u16) -> (TextureMaterial, u16, u16) {
 }
 
 /// The conback texture stretched to fill the 320x240 screen.
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_bg")]
 fn draw_bg(mat: TextureMaterial) {
     driver::quad_textured_material(
         [(0, 0), (320, 0), (0, 240), (320, 240)],
@@ -270,6 +280,7 @@ const LOGO_ANIM_HEADER: usize = 8 + 32;
 /// u16 clut[16] | packed 4bpp frames...`. Invalid streamed data leaves the
 /// materials inert so the caller can draw the static wordmark instead.
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_update_logo_anim")]
 fn update_logo_anim(
     blob: &[u8],
     phase: i32,
@@ -335,6 +346,7 @@ fn update_logo_anim(
 /// GoldSrc places the 640x100 movie at y=70 in a 640x480 menu. At half
 /// resolution that is a 320x50 strip at y=35. The cooked 4bpp frame crosses
 /// one texture-page boundary, so the rightmost 64 pixels use a second quad.
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_logo_anim")]
 fn draw_logo_anim(left: TextureMaterial, right: TextureMaterial, w: u16, h: u16) {
     if w != 320 || h == 0 {
         return;
@@ -355,12 +367,14 @@ fn draw_logo_anim(left: TextureMaterial, right: TextureMaterial, w: u16, h: u16)
 }
 
 /// The textured HALF-LIFE wordmark, centered across the top.
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_logo")]
 fn draw_logo(mat: TextureMaterial, w: u16, h: u16) {
     draw_logo_tinted(mat, w, h, 14, (128, 128, 128));
 }
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_logo_tinted")]
 fn draw_logo_tinted(mat: TextureMaterial, w: u16, h: u16, y0: i16, tint: (u8, u8, u8)) {
     if w == 0 || h == 0 {
         return;
@@ -445,6 +459,7 @@ pub fn intro(fb: &mut DoubleBuffer, menu_blob: &[u8], pad_notice: [&str; 2]) {
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_sheen")]
 fn draw_sheen(font: &FontAtlas, mut x: i16, y: i16, text: &str, frame: i32, brightness: i32) {
     let span = text.chars().count() as i32 + 18;
     let head = (frame / 2).rem_euclid(span);
@@ -464,6 +479,7 @@ fn draw_sheen(font: &FontAtlas, mut x: i16, y: i16, text: &str, frame: i32, brig
 /// 96x96 mark above the PSoXide line.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_bonnie_tinted")]
 fn draw_bonnie_tinted(mat: TextureMaterial, w: u16, h: u16, x: i16, y: i16, tint: (u8, u8, u8)) {
     if w == 0 || h == 0 {
         return;
@@ -527,6 +543,7 @@ const GLOW_RGB: (u8, u8, u8) = (255, 178, 67);
 const GLOW_TINT_NORMAL: u8 = 128;
 const GLOW_TINT_ARMED: u8 = 255;
 
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_glow_material")]
 fn glow_material(level: u8) -> TextureMaterial {
     TextureMaterial::blended(
         Clut::new(GLOW_VRAM_X, 256).uv_word(),
@@ -541,6 +558,7 @@ fn glow_material(level: u8) -> TextureMaterial {
 /// the cell. Per-cell uploads keep the whole build inside one 384-byte buffer
 /// instead of staging a 27 KB atlas; this runs once per menu entry, where the
 /// cost is invisible beside the streamed textures.
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_upload_glow_atlas")]
 fn upload_glow_atlas() {
     let font = &BASIC_8X16;
     let mut clut = [0u16; 16];
@@ -620,6 +638,7 @@ fn upload_glow_atlas() {
     }
 }
 
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_bgr555")]
 fn bgr555(r: u8, g: u8, b: u8) -> u16 {
     ((b as u16 >> 3) << 10) | ((g as u16 >> 3) << 5) | (r as u16 >> 3)
 }
@@ -631,6 +650,7 @@ fn bgr555(r: u8, g: u8, b: u8) -> u16 {
 /// the eighth letter the blur reads as a second, offset copy of the word.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_text_glow")]
 fn draw_text_glow(x: i16, y: i16, text: &str, level: u8, tracking: i8) {
     let material = glow_material(level);
     let mut cursor = x;
@@ -662,6 +682,7 @@ const HELP_VRAM_X: u16 = 896;
 const HELP_TPAGE: TexturePage = TexturePage::new(HELP_VRAM_X, 0, TextureDepth::Bit4);
 const HELP_CLUT: Clut = Clut::new(HELP_VRAM_X, 256);
 
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_centered")]
 fn draw_centered(font: &FontAtlas, y: i16, text: &str, color: (u8, u8, u8)) {
     let x = 160 - (font.text_width(text) as i16 / 2);
     font.draw_text(x, y, text, color);
@@ -671,6 +692,7 @@ fn draw_centered(font: &FontAtlas, y: i16, text: &str, color: (u8, u8, u8)) {
 /// placed by the window. Drawn only when the list actually overflows.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_scroll_bar")]
 fn draw_scroll_bar(first: i32, visible: i32, total: i32) {
     if total <= visible || visible <= 0 {
         return;
@@ -717,6 +739,7 @@ enum RowState {
 /// colour but fights the halo the rest of the menu is drawn with.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_list_row")]
 fn draw_list_row(font: &FontAtlas, x: i16, y: i16, text: &str, state: RowState) {
     if state == RowState::Disabled {
         font.draw_text(x, y, text, DIM);
@@ -748,6 +771,7 @@ fn draw_list_row(font: &FontAtlas, x: i16, y: i16, text: &str, state: RowState) 
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_select_bar")]
 fn draw_select_bar(x: i16, y: i16, w: i16) {
     driver::quad_flat(
         [(x, y - 1), (x + w, y - 1), (x, y + 19), (x + w, y + 19)],
@@ -767,6 +791,7 @@ fn draw_select_bar(x: i16, y: i16, w: i16) {
 /// row is a drop shadow, a colour, and a one-pixel rule under the first letter.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_menu_row")]
 fn draw_menu_row(font: &FontAtlas, help: &FontAtlas, y: i16, item: &str, hint: &str, armed: bool) {
     // uiColorHelp, 160 160 160.
     help.draw_text(HELP_X, y + HELP_BASELINE, hint, HINT);
@@ -803,6 +828,7 @@ fn draw_menu_row(font: &FontAtlas, help: &FontAtlas, y: i16, item: &str, hint: &
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_simple_list")]
 fn draw_simple_list(
     font: &FontAtlas,
     help: &FontAtlas,
@@ -835,6 +861,7 @@ struct Shell {
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_shell")]
 fn draw_shell(
     font: &FontAtlas,
     shell: &Shell,
@@ -851,6 +878,7 @@ fn draw_shell(
     }
 }
 
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_wrap_move")]
 fn wrap_move(sel: &mut i32, count: i32, input: MenuEdges) {
     if input.up {
         *sel = (*sel - 1 + count) % count;
@@ -861,17 +889,20 @@ fn wrap_move(sel: &mut i32, count: i32, input: MenuEdges) {
 }
 
 #[inline]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_play_menu_move")]
 fn play_menu_move() {
     unsafe { crate::sfx::play_vol(crate::sfx::MENU_MOVE, 3) };
 }
 
 #[inline]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_play_menu_accept")]
 fn play_menu_accept() {
     unsafe { crate::sfx::play_vol(crate::sfx::MENU_ACCEPT, 2) };
 }
 
 /// One pad poll folded into the tracker's active-high mask: when the pad is
 /// analog, left-stick deflection past a +-48 deadzone maps onto the d-pad bits.
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_menu_buttons")]
 fn menu_buttons() -> u16 {
     let pad = pads::poll(Port::One);
     let mut b = pad.buttons.bits();
@@ -895,6 +926,7 @@ fn menu_buttons() -> u16 {
 /// Poll the pad and reduce it to per-frame menu edges. Every cursor step is a
 /// fresh press (this menu has never auto-repeated; `pad.repeats(mask, delay,
 /// rate)` is the one-line change if hold-to-scroll is ever wanted).
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_poll_menu_edges")]
 fn poll_menu_edges(pad: &mut PadTracker) -> MenuEdges {
     pad.update(menu_buttons());
     MenuEdges {
@@ -917,6 +949,7 @@ const NEW_GAME_HINTS: [&str; 3] = [
     "Difficulty:  < Hard >",
 ];
 
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_main_menu")]
 fn draw_main_menu(font: &FontAtlas, help: &FontAtlas, sel: usize) {
     let mut hints = MAIN_HINTS;
     hints[0] = NEW_GAME_HINTS[crate::settings::skill()];
@@ -925,6 +958,7 @@ fn draw_main_menu(font: &FontAtlas, help: &FontAtlas, sel: usize) {
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_chapter_menu")]
 fn draw_chapter_menu(font: &FontAtlas, sel: i32) {
     let n = CHAPTERS.len() as i32;
     let max_first = (n - VISIBLE_ROWS).max(0);
@@ -974,6 +1008,7 @@ pub fn chapter_title(chapter: usize) -> &'static str {
 /// says so; the rest exist to drop straight into a later section.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_map_menu")]
 fn draw_map_menu(font: &FontAtlas, help: &FontAtlas, chapter: usize, sel: i32) {
     let (start, end) = chapter_rooms(chapter);
     let n = (end - start) as i32;
@@ -1007,6 +1042,7 @@ fn draw_map_menu(font: &FontAtlas, help: &FontAtlas, chapter: usize, sel: i32) {
 /// Session-only cheat toggles, shared with the in-game pause menu.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_debug_menu")]
 fn draw_debug_menu(font: &FontAtlas, sel: usize) {
     let labels = crate::settings::DEBUG_LABELS;
     let x_label = 40i16;
@@ -1045,6 +1081,7 @@ fn draw_debug_menu(font: &FontAtlas, sel: usize) {
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_segment_menu")]
 fn draw_segment_menu(font: &FontAtlas, selection: &psx_segments::Selection) {
     let visible = selection.visible_range(VISIBLE_ROWS as usize);
     let mut y = LIST_Y;
@@ -1071,6 +1108,7 @@ fn draw_segment_menu(font: &FontAtlas, selection: &psx_segments::Selection) {
 /// 8-segment volume bar; filled segments up to `v` are lit, the rest dim.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_vol_bar")]
 fn draw_vol_bar(x: i16, y: i16, v: i32, bright: bool) {
     let lit = if bright { ITEM_SEL } else { ITEM };
     for i in 0..8i16 {
@@ -1100,6 +1138,7 @@ pub(crate) fn label_text(label: &psx_display::Label) -> &str {
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_options_menu")]
 fn draw_options_menu(font: &FontAtlas, help: &FontAtlas, sel: usize) {
     // Two columns on the list's own grid: label at LIST_X, control at the far
     // side of the panel. The old layout began at y=60, which put the first row
@@ -1164,6 +1203,7 @@ const CREDIT_ROW_H: i16 = 12;
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_credits_menu")]
 fn draw_credits_menu(help: &FontAtlas, first: i32) {
     let n = CREDIT_LINES.len() as i32;
     let first = first.clamp(0, (n - CREDIT_ROWS).max(0));
@@ -1204,6 +1244,7 @@ const CONTROL_RIGHT: [(&str, &str); 6] = [
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_control_column")]
 fn draw_control_column(font: &FontAtlas, rows: &[(&str, &str)], label_x: i16) {
     // Six rows below the screen title, on a tighter pitch than a list so the
     // last one clears the hint line.
@@ -1225,6 +1266,7 @@ fn draw_control_column(font: &FontAtlas, rows: &[(&str, &str)], label_x: i16) {
 
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_draw_controls_menu")]
 fn draw_controls_menu(font: &FontAtlas, help: &FontAtlas) {
     // Keep a real gutter between the two longest rows ("Change Weapon" and
     // "Start/Select Pause") while still fitting the right column at 320 px.
@@ -1241,6 +1283,7 @@ fn draw_controls_menu(font: &FontAtlas, help: &FontAtlas) {
 /// and the credit lines. Waits for a button, then returns (to the main menu).
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_ending")]
 pub fn ending(fb: &mut DoubleBuffer, assets: &[u8]) {
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
     let (logo, lw, lh) = upload_tex(split_menu(assets)[SECTION_LOGO], LOGO_VRAM_X);
@@ -1279,6 +1322,7 @@ pub fn ending(fb: &mut DoubleBuffer, assets: &[u8]) {
 /// Run the menu until the player confirms a launch; returns its room id.
 #[inline(never)]
 #[optimize(size)]
+#[cfg_attr(feature = "scene-core", link_section = ".text.overlay.1.menu_run")]
 pub fn run(fb: &mut DoubleBuffer, assets: &[u8]) -> usize {
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
     let help_font = FontAtlas::upload(&SPLEEN_5X8, HELP_TPAGE, HELP_CLUT);
