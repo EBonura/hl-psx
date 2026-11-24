@@ -110,25 +110,9 @@ pub mod core {
     #[cfg(scene_overlay_test)]
     const TABLE_WORDS: usize = 16 + 8 * 6;
     static mut TABLE: [u32; TABLE_WORDS] = [0; TABLE_WORDS];
-    /// What reading the table at boot returned: the words kept, or 0x8000_0000 | the core's code.
-    #[no_mangle]
-    pub static mut SCENE_TABLE_STATUS: u32 = 0;
-
-    /// Read this disc's scene table into the program's copy, once at boot (psx-core's
-    /// `read_table`, through the core's read slot), for every later switch and image load.
-    pub fn read_scene_table() {
-        // SAFETY: once, at boot, single-threaded.
-        let table = unsafe { &mut *core::ptr::addr_of_mut!(TABLE) };
-        let status = match psx_core::link::read_table(table) {
-            Ok(words) => words as u32,
-            Err(code) => 0x8000_0000 | code,
-        };
-        // SAFETY: as above.
-        unsafe { SCENE_TABLE_STATUS = status };
-    }
 
     /// The overlay test (cfg `scene_overlay_test`, set by HLPSX_SCENE_OVERLAY_TEST at build time;
-    /// never shipped): after the table read, ask the core for image 2 (an Overlay owned by
+    /// never shipped): at boot, ask the core for image 2 (an Overlay owned by
     /// HLGAME.EXE) and image 3 (one owned by PSX.EXE, the intro), and keep what it answered, with
     /// the handoff block's loaded mask before and after:
     /// `[status 2, status 3, mask before, mask after]`.
@@ -147,11 +131,13 @@ pub mod core {
         unsafe { OVERLAY_TEST = [owned_by_game, owned_by_intro, before, after] };
     }
 
-    /// The program's copy of the scene table (for switches and image loads).
+    /// The program's copy of the scene table, for switches and image loads: psx-core reads
+    /// SCENES.TBL into it on the first one that needs it, so a boot that never switches or loads
+    /// an image reads nothing.
     #[allow(dead_code)]
-    pub fn scene_table() -> &'static [u32] {
-        // SAFETY: written once at boot, read afterwards.
-        unsafe { &*core::ptr::addr_of!(TABLE) }
+    pub fn scene_table() -> &'static mut [u32] {
+        // SAFETY: single-threaded; the one borrow lives for one core call.
+        unsafe { &mut *core::ptr::addr_of_mut!(TABLE) }
     }
 
     pub fn set_idle_hook(hook: Option<extern "C" fn()>) {

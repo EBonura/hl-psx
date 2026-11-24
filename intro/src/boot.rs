@@ -75,7 +75,7 @@ const NOTICE_GRACE: i32 = 8;
 /// The SDK splash takes no text but its one line, so the notice HL's own splash carried under
 /// the tag is a screen of its own, shown only to such a pad.
 #[inline(never)]
-#[link_section = ".boot_only.pad_notice"]
+#[link_section = ".text.boot_only.pad_notice"]
 pub fn pad_notice(gpu: &mut Gpu, fb: &mut DoubleBuffer, skip: &mut Skip, lines: [&str; 2]) {
     let font = FontAtlas::upload(&BASIC_8X16, FONT_TPAGE, FONT_CLUT);
     let ends = button::CROSS | button::CIRCLE | button::START;
@@ -101,7 +101,7 @@ pub fn pad_notice(gpu: &mut Gpu, fb: &mut DoubleBuffer, skip: &mut Skip, lines: 
 
 /// Leave both buffers black, so the movie starts from black.
 #[inline(never)]
-#[link_section = ".boot_only.black"]
+#[link_section = ".text.boot_only.black"]
 pub fn black(gpu: &mut Gpu, fb: &mut DoubleBuffer) {
     for _ in 0..2 {
         fb.clear(gpu, (0, 0, 0));

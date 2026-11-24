@@ -34992,9 +34992,6 @@ fn main() {
     // GP0(1Fh) with, and every draw and flip below goes through it.
     driver::install(Gpu::new(peripherals.gpu_dma, settings::DISPLAY));
     let mut fb = DoubleBuffer::new(Resolution::R320X240);
-    // The scene table copy, before any other read: the core reads it once, from LBA 22.
-    #[cfg(feature = "scene-core")]
-    cdstream::core::read_scene_table();
     #[cfg(scene_overlay_test)]
     cdstream::core::overlay_test();
     music::install(peripherals.cd);
