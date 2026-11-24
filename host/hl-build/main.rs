@@ -3506,7 +3506,10 @@ fn bound_profile(
 }
 
 /// What the twin's code depends on: the features and every source file of the game and its
-/// shared crates, the manifests and the component pin. A twin is reused while this holds.
+/// shared crates, the manifests, the component pin and the hydrated SDK's crates. A twin is
+/// reused while this holds. The SDK's sources are in it because a `--psoxide` tree moves without
+/// the pin: a twin of the code on another SDK carries other crate hashes, and the profile bound
+/// onto it silently stopped applying (11-24: `play` 40 KB less inlined, c4a3 +11%).
 fn twin_key(repository: &Path, features: Option<&str>) -> Result<String> {
     fn visit(dir: &Path, hasher: &mut Sha256) -> Result<()> {
         let mut entries: Vec<_> = fs::read_dir(dir)?
@@ -3534,7 +3537,14 @@ fn twin_key(repository: &Path, features: Option<&str>) -> Result<String> {
             .unwrap_or_default()
             .as_bytes(),
     );
-    for part in ["game/src", "game/.cargo", "shared"] {
+    for part in [
+        "game/src",
+        "game/.cargo",
+        "shared",
+        ".psoxide/sdk/crates",
+        ".psoxide/engine/crates",
+        ".psoxide/crates",
+    ] {
         let dir = repository.join(part);
         if dir.is_dir() {
             visit(&dir, &mut hasher)?;
@@ -3546,6 +3556,7 @@ fn twin_key(repository: &Path, features: Option<&str>) -> Result<String> {
         "Cargo.toml",
         "Cargo.lock",
         "components.lock.json",
+        ".psoxide/.psoxide-source",
     ] {
         if let Ok(bytes) = fs::read(repository.join(file)) {
             hasher.update(bytes);
