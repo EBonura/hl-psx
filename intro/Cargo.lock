@@ -12,30 +12,17 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 name = "hl-intro"
 version = "0.2.0"
 dependencies = [
- "psx-chainloader",
  "psx-core",
  "psx-display",
  "psx-fmv",
  "psx-font",
  "psx-gpu",
  "psx-io",
- "psx-loading",
  "psx-pad",
  "psx-rt",
  "psx-splash",
  "psx-spu",
  "psx-vram",
-]
-
-[[package]]
-name = "psx-chainloader"
-version = "0.1.0"
-dependencies = [
- "psx-font",
- "psx-hw",
- "psx-io",
- "psx-pack",
- "psx-rt",
 ]
 
 [[package]]
@@ -100,15 +87,6 @@ version = "0.1.0"
 dependencies = [
  "psx-hw",
  "psx-math",
-]
-
-[[package]]
-name = "psx-loading"
-version = "0.1.0"
-dependencies = [
- "psx-font",
- "psx-hw",
- "psx-io",
 ]
 
 [[package]]
