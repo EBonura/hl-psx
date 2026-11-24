@@ -3144,8 +3144,24 @@ fn profile_guided_pack(
     }
     let catalog = stack_gate::Catalog::parse(include_str!("../../game/src/map_catalog.rs"))
         .ok_or("cannot read the map catalog")?;
+    // The scripted maps start from the title menu, which comes up when the intro and the
+    // scene core have run: read where on this disc (stack_gate.rs).
+    let menu = if scripts.is_empty() {
+        None
+    } else {
+        let map = fs::read_to_string(repository.join(LINK_MAP))?;
+        let menu_state = stack_gate::menu_state_address(&map)
+            .ok_or("MENU_STATE is not in the collect build's link map")?;
+        Some(stack_gate::menu_ready(
+            &frontend,
+            &collect_cue,
+            menu_state,
+            &work,
+        )?)
+    };
     for (index, (play_order, stop)) in scripts.iter().enumerate() {
         let log = work.join(format!("pc-script-{index}.csv"));
+        let menu_tick = menu.map_or(0, |menu| menu.tick) + stack_gate::MENU_SETTLE_TICKS;
         run(
             Command::new(&frontend)
                 .arg("launch")
@@ -3158,7 +3174,7 @@ fn profile_guided_pack(
                     "--no-memcard",
                 ])
                 .arg("--pad-pulses")
-                .arg(catalog.pulses(*play_order))
+                .arg(catalog.pulses(*play_order, menu_tick))
                 .args(["--stop-at-poll", &stop.to_string()])
                 .arg("--pc-sample-log")
                 .arg(&log)
@@ -3831,11 +3847,25 @@ fn run_stack_gate(repository: &Path, psoxide: &Path, cue: &Path, maps: Option<&s
             .map_err(|error| format!("--maps: {error}"))?,
     };
     let out = repository.join(".hlpsx/stack");
+    let menu_state =
+        stack_gate::menu_state_address(&map).ok_or("MENU_STATE is not in the link map")?;
+    let reserve = stack_gate::committed_reserve(repository)?;
+    // `STACK_INIT` is 0x100 under the top of RAM the link assigns (psoxide.ld).
+    let stack = stack_gate::MainStack {
+        init: ram_top - 0x100,
+        reserve,
+    };
+    println!("==> the title menu on this disc");
+    let menu = stack_gate::menu_ready(&frontend, cue, menu_state, &out)?;
+    println!(
+        "title menu up at route tick {}, poll {}",
+        menu.tick, menu.poll
+    );
     let mut readings = Vec::new();
     for play_order in wanted {
         println!("==> stack watermark, play-order {play_order}");
         readings.push(stack_gate::measure(
-            &frontend, cue, &catalog, play_pc, ram_top, play_order, &out,
+            &frontend, cue, &catalog, play_pc, ram_top, stack, menu, play_order, &out,
         )?);
     }
     let bound = static_stack_bound(repository, psoxide, None)?;
@@ -3854,7 +3884,7 @@ fn run_stack_gate(repository: &Path, psoxide: &Path, cue: &Path, maps: Option<&s
     stack_gate::check(
         &readings,
         Some(bound.worst + stack_gate::MAIN_ENTRY_OFFSET),
-        stack_gate::committed_reserve(repository)?,
+        reserve,
     )?;
     Ok(())
 }
