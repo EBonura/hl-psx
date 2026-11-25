@@ -1295,8 +1295,10 @@ const BARNEY_ATTACK_TICKS: u8 = 14;
 const BARNEY_DRAW_TICKS: u8 = 18;
 /// Retained clip slot after the five AI clips: the sequence a species plays
 /// beyond them (host/hl-content/model-roster.txt): Barney's draw, the
-/// houndeye's rest, the vortigaunt's claw and the bullsquid's whip.
+/// houndeye's rest, the vortigaunt's claw and the bullsquid's bite.
 const PROP_CLIP_ALT: usize = 5;
+/// The houndeye's jumpback, after its rest (CHoundeye's SCHED_HOUND_HOP_RETREAT).
+const HOUNDEYE_HOP_CLIP: usize = 6;
 const BARNEY_DAMAGE: u8 = 5; // sk_9mm_bullet 5/5/8 (skill.cfg), scaled by skill
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
 const BARNEY_STOP_RANGE2: i32 = 128 * 128;
@@ -15439,7 +15441,10 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     // Three species play a sequence of their own beyond the five states:
     // the houndeye's rest after a blast (idle with its cooldown running), the
     // vortigaunt's claw (attacking with no zap in flight) and the bullsquid's
-    // whip (the whip flag of its bout timer).
+    // bite (the melee flag of its bout timer); the houndeye's hop back has a clip of its own.
+    if unsafe { PROP_KIND[pi] == PROP_TYPE_HOUNDEYE && species::houndeye_hopping(pi, state) } {
+        return HOUNDEYE_HOP_CLIP;
+    }
     let alt = unsafe {
         match PROP_KIND[pi] {
             6 => state == PROP_STATE_IDLE && PROP_ATTACK_COOLDOWN[pi] != 0,
@@ -15461,10 +15466,11 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
 /// The c1a1b jumpwindow studio sequence carries the houndeye roughly 200 units
 /// away from its actor origin. Expanding every houndeye's sphere would undo
 /// useful culling campaign-wide, so pay for the larger bound only on the actor
-/// whose scripted play clip is present. Slot 6 is fixed by the type-6 roster.
+/// whose scripted play clip is present. Slot 7 is fixed by the type-6 roster
+/// (five states, madidle2, jumpback, then jumpwindow).
 #[inline]
 unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
-    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 6;
+    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 7;
     const HOUNDEYE_JUMPWINDOW_RADIUS: i32 = 208;
     if ty == PROP_TYPE_HOUNDEYE && PROP_SCRIPT_PLAY_CLIP[pi] == HOUNDEYE_JUMPWINDOW_CLIP {
         HOUNDEYE_JUMPWINDOW_RADIUS

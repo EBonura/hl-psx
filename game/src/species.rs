@@ -1009,6 +1009,29 @@ unsafe fn tick_squid(
     }
 }
 
+/// The hop back's AI timer runs from `HOUND_HOP_END + HOUND_HOP_TICKS` down to
+/// `HOUND_HOP_END`; the slide's stays at 30 and under.
+const HOUND_HOP_END: u8 = 100;
+const HOUND_HOP_TICKS: u8 = 19;
+
+/// The houndeye is in its hop back: `prop_clip` shows jumpback.
+pub(crate) unsafe fn houndeye_hopping(pi: usize, state: u8) -> bool {
+    state == PROP_STATE_MOVE_AWAY && PROP_AI_TIMER[pi] > HOUND_HOP_END
+}
+
+/// UTIL_TraceHull 128 units straight back from the hound (away from `aim`),
+/// as a line at its middle height.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn hound_clear_behind(m: &Map, pi: usize, aim: [i32; 3]) -> bool {
+    let pos = PROP_POS[pi];
+    let (dx, dz) = (pos[0] - aim[0], pos[2] - aim[2]);
+    let len = isqrt_i32(dx * dx + dz * dz).max(1);
+    let from = prop_target(PROP_KIND[pi], pos);
+    let to = [from[0] + dx * 128 / len, from[1], from[2] + dz * 128 / len];
+    phys::line_clear_world(m, from, to)
+}
+
 /// monster_houndeye: runs in to 190 units, charges for 49 ticks and lets go at
 /// +45 with 15 x (1 - distance / 384), multiplied by the pack (every living
 /// houndeye within 1,024 units, up to four, counted at the blast). A hit aborts the charge: it slides 140 units back
@@ -1040,7 +1063,27 @@ unsafe fn tick_hound(
     }
     let d2 = dist2_xz(pos, aim);
     let left = PROP_AI_TIMER[pi];
-    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY {
+    if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY && left > HOUND_HOP_END {
+        // SCHED_HOUND_HOP_RETREAT: jumpback (29 frames at 30 fps, 19 ticks),
+        // HOUND_AE_HOPBACK at frame 6 sets 200 u/s back and 0.3 g (240 u/s)
+        // up. The airborne ticks are spent in prop_air_tick, so the clip's
+        // last 3 ticks run after the landing; then it takes cover (the slide).
+        PROP_AI_TIMER[pi] = left - 1;
+        if left == HOUND_HOP_END + HOUND_HOP_TICKS - 4 {
+            let (dx, dz) = (pos[0] - aim[0], pos[2] - aim[2]);
+            let len = isqrt_i32(dx * dx + dz * dz).max(1);
+            PROP_JUMP[pi].start();
+            PROP_JUMP[pi].launch(
+                [(dx * 160 / len) as i16, 192, (dz * 160 / len) as i16],
+                true,
+            );
+            PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+            PROP_NEAR_COUNT[pi] = 0xff;
+            prop_set_pos_exact(m, pi, [pos[0], pos[1] + 1, pos[2]]);
+        } else if left == HOUND_HOP_END + 1 {
+            PROP_AI_TIMER[pi] = 30;
+        }
+    } else if PROP_STATE[pi] == PROP_STATE_MOVE_AWAY {
         PROP_AI_TIMER[pi] = left - 1;
         prop_try_step(m, movers, pi, pos[0] - aim[0], pos[2] - aim[2], 5, true);
         if left == 1 {
@@ -1049,8 +1092,14 @@ unsafe fn tick_hound(
         }
     } else if PROP_STATE[pi] == PROP_STATE_ATTACK {
         if PROP_HIT_FLASH[pi] > 0 {
+            // CHoundeye::GetSchedule: hurt, it hops back 40% of the time when
+            // 128 units behind it are clear, else takes cover.
             PROP_STATE[pi] = PROP_STATE_MOVE_AWAY;
-            PROP_AI_TIMER[pi] = 30;
+            PROP_AI_TIMER[pi] = if impact_rng().below(10) < 4 && hound_clear_behind(m, pi, aim) {
+                HOUND_HOP_END + HOUND_HOP_TICKS
+            } else {
+                30
+            };
             return;
         }
         PROP_AI_TIMER[pi] = left - 1;

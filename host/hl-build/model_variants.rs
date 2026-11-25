@@ -277,10 +277,10 @@ fn base_clip_count(ty: u8) -> usize {
         14 => 2,
         // Barney's draw sequence follows his five.
         1 => 6,
-        // The bullsquid's whip follows its five.
+        // The bullsquid's melee clip (bite) follows its five.
         7 => 6,
-        // The houndeye's rest follows its five.
-        6 => 6,
+        // The houndeye's rest and its hop back (jumpback) follow its five.
+        6 => 7,
         // The vortigaunt's claw follows its five.
         9 => 6,
         // HECU hand toss and grenade-launcher attack events.
