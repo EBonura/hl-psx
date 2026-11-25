@@ -6725,6 +6725,8 @@ const SF_DOOR_TOGGLE: u16 = 32;
 const SF_DOOR_USE_ONLY: u16 = 256;
 const SF_SCRIPT_REPEATABLE: u16 = 4;
 const SF_SCRIPT_NOINTERRUPT: u16 = 32;
+/// SF_SCRIPT_LEAVECORPSE (scripted.h): a clip-killed actor stays as a corpse.
+const SF_SCRIPT_LEAVECORPSE: u16 = 8;
 const SF_BUTTON_DONTMOVE: u16 = 1;
 const SF_BUTTON_TOGGLE: u16 = 32;
 const SF_BUTTON_TOUCH_ONLY: u16 = 256;
@@ -11469,10 +11471,11 @@ unsafe fn tick_scripted_actor(
     // next script in a chain can immediately acquire the same actor.
     if PROP_SCRIPT_LI[pi] != u16::MAX && time_reached(SIM_NOW, PROP_SCRIPT_PLAY_UNTIL[pi]) {
         let li = prop_script_li(pi);
+        let play_clip = PROP_SCRIPT_PLAY_CLIP[pi];
         prop_script_clear(pi);
-        script_lay_corpse(pi);
         if li < m.n_logic.min(MAX_LOGIC) {
             let rec = m.logic(li);
+            script_lay_corpse(pi, play_clip, rec.spawnflags);
             script_root_motion(m, pi, rec);
             logic_sub_use_targets(
                 m,
@@ -11496,14 +11499,40 @@ unsafe fn tick_scripted_actor(
     false
 }
 
-/// A sequence that ended on SCRIPT_EVENT_DEAD (health 0 since the event) leaves a corpse.
+/// CBaseMonster::CineCleanup for an actor its clip killed (SCRIPT_EVENT_DEAD,
+/// health 0 since the event): the corpse keeps the play clip's last frame
+/// (kept in PROP_SCRIPT_PLAY_CLIP, which `prop_anim_frame` reads for a dead
+/// actor with no script), and without SF_SCRIPT_LEAVECORPSE the body goes
+/// (SUB_StartFadeOut; the port has no model fade, so it goes at once).
 #[cold]
 #[inline(never)]
-unsafe fn script_lay_corpse(pi: usize) {
+unsafe fn script_lay_corpse(pi: usize, play_clip: u8, spawnflags: u16) {
     if PROP_HEALTH[pi] == 0 {
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW;
+        PROP_SCRIPT_PLAY_CLIP[pi] = play_clip;
+        if spawnflags & SF_SCRIPT_LEAVECORPSE == 0 {
+            PROP_ACTIVE[pi] = 0;
+        }
     }
+}
+
+/// A dead actor still owned by a script (its clip's SCRIPT_EVENT_DEAD, not
+/// damage, killed it) stays on the scripted path, as DEAD_DYING does in the
+/// original: the clip plays to its end, its later events fire and the
+/// completion targets fire. False once the script has completed.
+#[cold]
+#[inline(never)]
+unsafe fn tick_dying_scripted_actor(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    player_pos: [i32; 3],
+    map_index: u16,
+) -> bool {
+    let primed_hold = scientist_logic::script_is_primed(PROP_SCRIPT_MODE[pi])
+        && script_primed_actor_holds(m, pi, SIM_NOW);
+    tick_scripted_actor(m, movers, movers, pi, primed_hold, player_pos, map_index, false)
 }
 
 /// CBaseMonster::CineCleanup: a play sequence that carries its actor away
@@ -11545,8 +11574,9 @@ unsafe fn script_find_owned_actor(li: usize) -> ScriptOwnedActor {
     let n = PROP_COUNT.min(CARRY_MAILBOX_FIRST);
     let mut pi = 0usize;
     while pi < n {
+        // No health test: an actor its own idle clip killed (SCRIPT_EVENT_DEAD
+        // is DEAD_DYING, not a release) is still this sequence's to play.
         if PROP_ACTIVE[pi] != 0
-            && PROP_HEALTH[pi] > 0
             && PROP_SCRIPT_LI[pi] != u16::MAX
             && prop_script_li(pi) == li
         {
@@ -15510,6 +15540,16 @@ fn prop_anim_frame(
                     };
                 }
             }
+        }
+        // A scripted death (CineCleanup) holds the play clip's last frame.
+        let scripted = unsafe { PROP_SCRIPT_PLAY_CLIP[pi] } as usize;
+        if scripted < md.clip_count() && unsafe { PROP_SCRIPT_LI[pi] } == u16::MAX {
+            forget_clip();
+            return if pose {
+                md.one_shot_clip_phase(scripted, 1, 1)
+            } else {
+                (0, 0, 0)
+            };
         }
         forget_clip();
         if !pose {
@@ -21220,6 +21260,14 @@ unsafe fn tick_props(
             continue;
         }
         if PROP_HEALTH[pi] == 0 {
+            // Damage releases a script on death, so a dead actor that still has
+            // one was killed by its clip's SCRIPT_EVENT_DEAD: it plays on.
+            if PROP_SCRIPT_LI[pi] != u16::MAX
+                && tick_dying_scripted_actor(m, movers, pi, player_pos, map_index)
+            {
+                pi += 1;
+                continue;
+            }
             prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);
             PROP_STATE[pi] = PROP_STATE_DEAD;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
