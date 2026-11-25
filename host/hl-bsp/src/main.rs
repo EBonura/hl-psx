@@ -4891,6 +4891,8 @@ const ENT_KIND_PENDULUM: u16 = 10;
 // door's compact angle + axis encoding but keeps button logic and solidity.
 const ENT_KIND_ROT_BUTTON: u16 = 11;
 const SF_PUSH_BREAKABLE: u16 = 128;
+/// func_rotating SF_BRUSH_HURT (bmodels.cpp:31): HurtTouch deals |avelocity| / 10 on touch.
+const SF_BRUSH_HURT: u16 = 32;
 
 const PUSHABLE_COLLISION_META_VALID: u16 = 0x8000;
 const PUSHABLE_COLLISION_HULL_SHIFT: u16 = 8;
@@ -8586,10 +8588,11 @@ fn collect_logic_entities_with_lightstyles(
             "func_button" | "func_rot_button" => LOGIC_FUNC_BUTTON,
             "momentary_rot_button" => LOGIC_MOMENTARY,
             // Cosmetic untargeted fans keep the map-tick path. Hazardous fans
+            // (SF_BRUSH_HURT 32, bmodels.cpp:31; 128 is only the sound radius)
             // need live angular speed even without a FireTargets name.
             "func_rotating"
                 if !ent_value(block, "targetname").unwrap_or("").is_empty()
-                    || parse_spawnflags(block) & 128 != 0
+                    || parse_spawnflags(block) & SF_BRUSH_HURT != 0
                     || parse_f32_key(block, "dmg", 0.0) != 0.0 =>
             {
                 LOGIC_FUNC_ROTATING

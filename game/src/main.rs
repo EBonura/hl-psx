@@ -6746,6 +6746,8 @@ const SF_CHANGELEVEL_USE_ONLY: u16 = 2; // named/target-fired, never Touch()
 const SF_ROTATING_INSTANT: u16 = 1;
 const SF_ROTATING_ACCDCC: u16 = 16;
 const SF_ROTATING_NOT_SOLID: u16 = 64;
+/// SF_BRUSH_HURT (bmodels.cpp:31): touching the fan hurts (CFuncRotating::HurtTouch).
+const SF_ROTATING_HURT: u16 = 32;
 // Ent.mv[2] high-half profile bits for allocation-free cosmetic fans. The
 // authored friction is only 1..100, leaving room for two cook-time GoldSrc
 // pusher quirks without adding a resident per-entity byte.
@@ -13113,7 +13115,7 @@ unsafe fn damage_player_fan_contacts(m: &Map, nents: usize, health: &mut u16, ar
         if phys::player_touched_mover(ei) {
             if let Some(li) = fan_logic_index(ei) {
                 let rec = m.logic(li);
-                if rec.spawnflags & 128 != 0 {
+                if rec.spawnflags & SF_ROTATING_HURT != 0 {
                     let damage = logic_state::rotating_touch_damage(rec.speed, LOGIC_COUNTER[li]);
                     if damage != 0 {
                         note_damage_direction(ENT_CACHE[ei].origin);

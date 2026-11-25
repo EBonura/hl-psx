@@ -505,7 +505,7 @@ func_rotating|flag:128|unreviewed|-|-|bit 128
 func_rotating|flag:16|yes|game:SF_ROTATING_INSTANT|-
 func_rotating|flag:2|yes|game:SF_ROTATING_INSTANT|-
 func_rotating|flag:256|unreviewed|-|-|bit 256
-func_rotating|flag:32|unreviewed|-|-|bit 32
+func_rotating|flag:32|yes|game:SF_ROTATING_HURT|-|SF_BRUSH_HURT: touch damage
 func_rotating|flag:4|yes|cook:rotating_sweep_bounds|-|rotation axis
 func_rotating|flag:512|unreviewed|-|-|bit 512
 func_rotating|flag:64|yes|game:SF_ROTATING_NOT_SOLID|-
