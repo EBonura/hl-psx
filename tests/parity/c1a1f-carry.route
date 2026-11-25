@@ -1,4 +1,4 @@
-@journey name=hl-parity-c1a1f-carry title="Half-Life c1a1f to c1a1b: the crawl Barney and the sliding zombie die in their scripted sequences (SCRIPT_EVENT_DEAD) and cross the changelevel as corpses, as in the reference (edicts 344 and 345, health 0); the player arrives with his health and nothing attacks him for 100 ticks (the port carried them alive: the zombie clawed him three times for 20 each)" prologue=segment segment_row=14 max_ticks=80000 sync=poll
+@journey name=hl-parity-c1a1f-carry title="Half-Life c1a1f to c1a1b: the headcrab scene plays to its end and its actors lie dead in their last frames; the crawl Barney and the sliding zombie die in their scripted sequences (SCRIPT_EVENT_DEAD) and cross the changelevel as corpses, as in the reference (edicts 344 and 345, health 0); the player arrives with his health and nothing attacks him for 100 ticks (the port carried them alive: the zombie clawed him three times for 20 each)" prologue=segment segment_row=14 max_ticks=80000 sync=poll
 
 map c1a1f next c1a1b
   100
@@ -323,6 +323,21 @@ map c1a1f next c1a1b
   @checkpoint c1a1f-pre-crawl
   @probe
   @assert sym=LOGIC_PLAYER_HEALTH size=2 op=between value=1 value_hi=100
+  # The headcrab scene (headcrabbed: cabinet 2, crabs 5 and 6, scientist 8; SCRIPT_EVENT_DEAD early in each clip) played
+  # to its end: each script completed and released its actor, the corpse keeps its play clip (last frame) and lies dead.
+  # Before the scripted-death fix the clips were cut two ticks in and the scripts never completed.
+  @assert sym=PROP_SCRIPT_LI offset=4 size=2 op=eq value=65535
+  @assert sym=PROP_SCRIPT_PLAY_CLIP offset=2 size=1 op=between value=0 value_hi=254
+  @assert sym=PROP_STATE offset=2 size=1 op=eq value=3
+  @assert sym=PROP_SCRIPT_LI offset=10 size=2 op=eq value=65535
+  @assert sym=PROP_SCRIPT_PLAY_CLIP offset=5 size=1 op=between value=0 value_hi=254
+  @assert sym=PROP_STATE offset=5 size=1 op=eq value=3
+  @assert sym=PROP_SCRIPT_LI offset=12 size=2 op=eq value=65535
+  @assert sym=PROP_SCRIPT_PLAY_CLIP offset=6 size=1 op=between value=0 value_hi=254
+  @assert sym=PROP_STATE offset=6 size=1 op=eq value=3
+  @assert sym=PROP_SCRIPT_LI offset=16 size=2 op=eq value=65535
+  @assert sym=PROP_SCRIPT_PLAY_CLIP offset=8 size=1 op=between value=0 value_hi=254
+  @assert sym=PROP_STATE offset=8 size=1 op=eq value=3
   # crouch first and settle, then crawl: a hull still standing when it reaches the hole stops at the wall (m1i)
   12 duck
   # the hole is y -1084..-1072: settle on its middle crouched (nothing shoves the player here any more: the zombie no longer claws him)
