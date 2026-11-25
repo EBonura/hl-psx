@@ -1209,7 +1209,7 @@ fn scan_model_variant_index(repo_root: &std::path::Path) -> (Vec<u16>, Vec<u8>) 
         let map = fields[0].parse::<usize>().expect("variant map index");
         let ty = fields[2].parse::<u8>().expect("variant model type");
         let chunk = fields[3].parse::<u16>().expect("variant chunk id");
-        assert!(ty < 57, "variant model type {ty} is out of range");
+        assert!((ty as usize) < MODEL_TYPES, "variant model type {ty} is out of range");
         assert!(
             seen.insert((map, ty)),
             "duplicate map/type variant {map}/{ty}"

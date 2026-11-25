@@ -1146,7 +1146,7 @@ const fn split_model_stream(ty: usize) -> bool {
 
 /// Sparse build-generated map/type -> deduplicated HMD8 chunk lookup. Entries
 /// are packed as three bytes so all 103 maps cost roughly 2.5 KiB of read-only
-/// RAM rather than a 103x57 u16 matrix. Clip slots remain map-local and are
+/// RAM rather than a 103 x N_MODEL_TYPES u16 matrix. Clip slots remain map-local and are
 /// already baked into that room's scripted-sequence tokens.
 #[inline]
 fn map_model_variant_chunk(map_index: usize, ty: usize) -> Option<u32> {

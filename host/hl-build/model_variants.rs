@@ -265,6 +265,13 @@ fn uses_map_variant(ty: u8) -> bool {
     matches!(ty, 0..=2 | 5..=25 | 50..=56)
 }
 
+/// Types that keep the shared roster model except on a map whose scripts name
+/// one of their sequences: monster_furniture (67), c1a1f's file cabinet that
+/// plays `headcrabbed` with the scientist and the headcrabs.
+fn scripted_only_variant(ty: u8) -> bool {
+    ty == 67
+}
+
 fn base_clip_count(ty: u8) -> usize {
     match ty {
         14 => 2,
@@ -655,6 +662,11 @@ fn plan_maps(
                 continue;
             };
             if uses_map_variant(ty) {
+                scripts.entry(ty).or_default().extend(names.into_iter());
+            } else if scripted_only_variant(ty) && !names.is_empty() {
+                // Placed and live like any other actor once a script names it.
+                static_types.insert(ty);
+                live_types.insert(ty);
                 scripts.entry(ty).or_default().extend(names.into_iter());
             }
         }
