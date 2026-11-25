@@ -134,6 +134,9 @@ pub(crate) unsafe fn tick_grunt(
                 // DMG_CLUB: the suit names only a major club hit, which a kick never is.
                 hev::set_kind(hev::Kind::Generic);
                 damage_target(target, skill_hit(Sk::HgruntKick), pos, health, armor);
+                if target == PROP_TARGET_PLAYER {
+                    set_view_punch(Some(15), None, None); // hgrunt.cpp:953
+                }
             }
         } else if mode == 3 {
             // TASK_RUN_PATH to the cover, then GRUNT_WAIT_FACE_ENEMY there
@@ -348,6 +351,9 @@ pub(crate) unsafe fn tick_slave(
             // CISlave's claws are DMG_SLASH; its zap (DMG_SHOCK) names nothing.
             hev::set_kind(hev::Kind::Slash);
             damage_target(target, claw, pos, health, armor);
+            if target == PROP_TARGET_PLAYER {
+                set_view_punch(Some(5), None, Some(-18)); // islave.cpp:323-324, 344-345
+            }
             cue(SP::SLV_CLAW, pos);
         }
     } else if visible && d2 <= RANGE * RANGE && d2 > 64 * 64 && cooldown == 0 {
@@ -889,6 +895,16 @@ unsafe fn tick_zombie(
                 };
                 let len = isqrt_i32(dx * dx + dz * dz).max(1);
                 KNOCK = [(dx * 5 + dz * side) / len, 0, (dz * 5 - dx * side) / len];
+                // zombie.cpp:202-203 (right claw), 226-227 (left), 248 (both).
+                set_view_punch(
+                    Some(5),
+                    None,
+                    match ev {
+                        1 => Some(-18),
+                        2 => Some(18),
+                        _ => None,
+                    },
+                );
             }
             // The claws land with claw_strike; the second swipe of a bout (or
             // the lone heavy one) adds the zombie's roar.

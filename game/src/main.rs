@@ -5990,6 +5990,24 @@ unsafe fn add_view_punch(pitch: i32, yaw: i32) {
     PUNCH_YAW = (PUNCH_YAW + yaw).clamp(-400, 400);
 }
 
+/// A monster's hit writes the player's punchangle (the SDK assigns these
+/// components, it does not add): HL degrees per component, `None` keeps it.
+/// Decays with the other punches.
+#[inline(never)]
+#[optimize(size)]
+pub(crate) unsafe fn set_view_punch(pitch: Option<i32>, yaw: Option<i32>, roll: Option<i32>) {
+    let q12 = |degrees: i32| degrees * 4096 / 360;
+    if let Some(p) = pitch {
+        PUNCH_PITCH = q12(p);
+    }
+    if let Some(y) = yaw {
+        PUNCH_YAW = q12(y);
+    }
+    if let Some(r) = roll {
+        PUNCH_ROLL = q12(r);
+    }
+}
+
 /// Rotation a shot is actually aimed along. Every GoldSrc attack builds its
 /// vectors from `v_angle + punchangle`, so accumulated recoil steers the
 /// bullets, not just the camera: an MP5 burst climbs and its later rounds go
@@ -19553,6 +19571,11 @@ unsafe fn tick_alien_attack(
             hev::set_kind(hev::Kind::Generic);
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
             setpiece_sfx::play(hl_format::setpiece_audio::AG_PUNCH, pos);
+            if target == PROP_TARGET_PLAYER {
+                // agrunt.cpp:512-513 (left punch) and 542-543 (right), alternated.
+                let side = if (pi as u16 ^ SIM_NOW) & 1 == 0 { -25 } else { 25 };
+                set_view_punch(Some(8), Some(side), None);
+            }
             prop_attack_cooldown_set(pi, 24);
         } else if d2 >= 100 * 100 && d2 <= 1024 * 1024 && senses::within_cone(2048, fx, fz, dx, dz)
         {
@@ -19994,6 +20017,10 @@ unsafe fn tick_headcrab(
                         setpiece_sfx::play(hl_format::setpiece_audio::HC_BITE, pos);
                     } else if kind == 19 {
                         setpiece_sfx::play(hl_format::setpiece_audio::ICHY_BITE, pos);
+                        // ichthyosaur.cpp:445-446.
+                        if target == PROP_TARGET_PLAYER {
+                            set_view_punch(Some(5), None, Some(-18));
+                        }
                     }
                 }
             }
