@@ -399,6 +399,26 @@ fn verbatim_poses(map: &str) -> usize {
     }
 }
 
+/// Long scripted scenes the player stands and watches, baked with more poses
+/// than the map's baseline: (map, sequence, poses). Each row is paid from that
+/// map's model-pool slack (`.hlpsx/reports/model-residency.csv`); add a scene
+/// here after checking its map's slack in that report.
+/// - c1a1f `headcrabbed`: the scientist, both headcrabs and the file cabinet
+///   share one 201-frame, 10 s sequence name; 4 poses showed it as a slow
+///   blend (c1a1f slack 276,296 B before this row).
+const LONG_SCENE_POSES: &[(&str, &str, usize)] = &[
+    ("c1a1f", "headcrabbed", 16),
+    ("c1a1f", "headcrabbed#1", 16),
+    ("c1a1f", "headcrabbed#2", 16),
+];
+
+fn long_scene_poses(map: &str, sequence: &str) -> Option<usize> {
+    LONG_SCENE_POSES
+        .iter()
+        .find(|(m, s, _)| *m == map && s.eq_ignore_ascii_case(sequence))
+        .map(|&(_, _, poses)| poses)
+}
+
 /// Roster aliases that exist because the model has no such sequence at all
 /// (barney is never authored sitting twice; the loader/forklift idles are named
 /// differently). Baking these verbatim would ask `cook_mdl` for a missing label.
@@ -524,7 +544,7 @@ fn build_variant(
                 if ty == 0 && hl_format::map::SCIENTIST_CORPSE_POSES.contains(&name.as_str()) {
                     1
                 } else {
-                    verbatim_poses(map)
+                    long_scene_poses(map, name).unwrap_or_else(|| verbatim_poses(map))
                 };
             geometry_fields.push(format!("{name}:{poses}"));
             manifest_fields.push(format!("{name}:{poses}"));
