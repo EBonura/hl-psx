@@ -240,7 +240,8 @@ pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
 const SEQDESC_BYTES: usize = 176;
 const EVENT_BYTES: usize = 76;
 const SCRIPT_EVENT_DEAD: i32 = 1000;
-const SCRIPT_EVENT_NOT_DEAD: i32 = 1001;
+/// scriptevent.h:28. (1001 is SCRIPT_EVENT_NOINTERRUPT, which says nothing about death.)
+const SCRIPT_EVENT_NOT_DEAD: i32 = 1010;
 const SCRIPT_EVENT_FIRE_TARGET: i32 = 1003;
 /// Manifest target for a sequence that leaves its actor dead (SCRIPT_EVENT_DEAD, with no later
 /// SCRIPT_EVENT_NOT_DEAD). The map cook folds it into a LogicAux event the runtime reads as
