@@ -1255,7 +1255,16 @@ const PROP_CLIP_ATTACK: usize = 2;
 const PROP_CLIP_PAIN: usize = 3;
 const PROP_CLIP_DEAD: usize = 4;
 const PLAYER_START_HEALTH: u16 = 100;
-const DEATH_TICKS: u8 = 40; // death window before a press is taken: the 2 s cap retail puts on the death animation
+/// Death window before a press is taken. PlayerDeathThink waits while the
+/// player model's death sequence plays (4 s cap, player.cpp:1361-1367); the
+/// port draws no player model, so the window is die_simple's length (18
+/// frames at 22 fps, 0.82 s), the sequence a plain death picks.
+const DEATH_TICKS: u8 = 16;
+/// PM_DEAD_VIEWHEIGHT (pm_shared.c:81): the eye 8 units under the hull centre,
+/// 36 below the standing eye.
+const DEAD_VIEW_HEIGHT: i32 = -8;
+/// The dead view's roll (view.cpp:414-419: 80 degrees), in Q12 turns.
+const DEAD_VIEW_ROLL: i32 = 80 * 4096 / 360;
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
 const CHARGER_RATE: u16 = 4; // health/armor points per use pulse (8-tick cadence)
@@ -1616,9 +1625,6 @@ static mut POISON: player_rules::Poison = player_rules::Poison::new();
 // independently disagreeing about whether the camera is submerged.
 static mut PLAYER_EYE_UNDER: bool = false;
 static mut DEATH_OVERLAY: RectFlat = RectFlat::new(0, 0, 0, 0, 0, 0, 0);
-/// Strength of the death red-wash, 0 = alive. Drawn blended by
-/// `draw_screen_fx` so the room stays visible underneath, HL-style.
-static mut DEATH_WASH: u8 = 0;
 static mut TEX_SLOTS: [TexSlot; MAX_TEX_SLOTS] = [ZERO_SLOT; MAX_TEX_SLOTS];
 
 #[inline(always)]
@@ -12598,27 +12604,8 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
         }
     }
 
-    // Death wash. GoldSrc keeps the room on screen and reddens it, which is
-    // most of why an HL death reads as a scene rather than a crash. Two blended
-    // full-screen passes get there without a texture: subtract drains green and
-    // blue so the scene survives in its red channel, then a weaker additive
-    // pass lifts it so it reads as a wash rather than as darkness.
-    if DEATH_WASH != 0 {
-        // Held short of a full drain: bright surfaces keep some green and blue,
-        // so the room reads as lit geometry under red rather than as a silhouette.
-        let d = (DEATH_WASH as u16 * 4 / 5) as u8;
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], 0, d, d, BlendMode::Subtract);
-        fx_tri_flat_blended(
-            [(320, 0), (320, 240), (0, 240)],
-            0,
-            d,
-            d,
-            BlendMode::Subtract,
-        );
-        let lift = (d as u16 / 2) as u8;
-        fx_tri_flat_blended([(0, 0), (320, 0), (0, 240)], lift, 0, 0, BlendMode::Add);
-        fx_tri_flat_blended([(320, 0), (320, 240), (0, 240)], lift, 0, 0, BlendMode::Add);
-    }
+    // No death tint: CBasePlayer::Killed leaves its red fade commented out
+    // (player.cpp:993-994), so a death shows the room through the dead camera.
     // Screen fade: level 0..255. Subtractive gray = fade to black; additive =
     // fade to white. It covers world + HUD, but GoldSrc draws its HUD messages
     // after the fade (CL_DrawHUD: CL_DrawScreenFade, then the client Redraw),
@@ -35277,8 +35264,9 @@ fn main() {
                 }
                 PlayExit::Restart(checkpoint) => {
                     // Death reloads the room from its immutable entry handoff.
-                    // Keeping the final red frame avoids flashing stale room
-                    // geometry while WORLD.PAK and the checkpoint assets stream.
+                    // Keeping the last dead-camera frame (untinted, as the
+                    // original) avoids flashing stale room geometry while
+                    // WORLD.PAK and the checkpoint assets stream.
                     unsafe { music_suspend_for_stream() };
                     launch = checkpoint;
                     keep_frame = true;
@@ -37286,8 +37274,8 @@ fn play(
                 unsafe { REVERT_REQUEST = false };
                 restart_requested = true;
             }
-            // Player death: freeze for DEATH_TICKS (a red death screen renders),
-            // then wait for a button press and reload the latest save point, or
+            // Player death: the dead camera holds for DEATH_TICKS (input is
+            // ignored, the body keeps falling and sliding to a stop), then wait for a button press and reload the latest save point, or
             // the immutable entry handoff when there is none. That handoff is either
             // the latest successful changelevel (full carried player state) or
             // the selected chapter start; the current room's pickups/damage
@@ -38496,6 +38484,10 @@ fn play(
                 pending_duck,
             );
             view_prev_crouch = player.crouch;
+            if dead {
+                // PM_PlayerMove sets the dead view offset outright.
+                view_h_cur = DEAD_VIEW_HEIGHT;
+            }
             let view_h = view_h_cur;
             // Drowning (player.cpp:1215-1329): 12 s of air once the eye goes
             // under, then escalating 3,4,5,5.. damage per second straight to
@@ -39397,6 +39389,12 @@ fn play(
             }
             if health == 0 && death_ticks == 0 {
                 death_ticks = DEATH_TICKS; // enemies killed the player -> start the death window
+                // CBasePlayer::Killed tosses the body: off the ground, and up
+                // by 0 to 300 u/s (0 to 15 a tick) unless it already rises at 10.
+                player.on_ground = false;
+                if player.vel[1] < 1 {
+                    player.vel[1] += unsafe { impact_rng().below(16) } as i32;
+                }
                 unsafe { CHANGE_REQUEST_ACTIVE = 0 };
             }
             telemetry::counter(
@@ -39545,7 +39543,9 @@ fn play(
             let side =
                 (right.m[0][0] as i32 * player.vel[0] + right.m[0][2] as i32 * player.vel[2]) >> 12;
             // 2 degrees = 22.76 Q12 units at 10 u/tick (200 u/s).
-            view_roll = if player_eye {
+            view_roll = if player_eye && death_ticks > 0 {
+                DEAD_VIEW_ROLL
+            } else if player_eye {
                 side.clamp(-10, 10) * 2276 / 1000 + PUNCH_ROLL
             } else {
                 0
@@ -40923,10 +40923,13 @@ fn play(
             let world_prims = np;
             let world_quads = nq;
             let mut viewmodel_screen_off = [0i16; 2];
-            // CFuncTank::StartControl holsters the weapon (viewmodel 0), and a
-            // trigger_camera view hides it too.
-            let draw_viewmodel_now =
-                SHOW_VIEWMODEL && weapon.any_weapon() && CAMERA_LI == u16::MAX && MOUNTED_TANK < 0;
+            // CFuncTank::StartControl holsters the weapon (viewmodel 0), and so
+            // does death (CBasePlayer::Killed); a trigger_camera view hides it too.
+            let draw_viewmodel_now = SHOW_VIEWMODEL
+                && weapon.any_weapon()
+                && CAMERA_LI == u16::MAX
+                && MOUNTED_TANK < 0
+                && death_ticks == 0;
             WEAPON_MUZZLE_SLOT = weapon.current;
             let viewmodel_draw = if draw_viewmodel_now {
                 let vm_off = viewmodel_offset(recoil, sim_frame_no);
@@ -40957,7 +40960,6 @@ fn play(
                 // Outro: the G-Man scene has played out -- fade to white.
                 let t = (sim_frame_no - ENDING_FROM).min(ENDING_FADE_TICKS);
                 let w = (t * 255 / ENDING_FADE_TICKS) as u8;
-                DEATH_WASH = 0;
                 DEATH_OVERLAY = RectFlat::new(0, 0, 320, 240, w, w, w);
                 hud_ot().resume_frame().add_raw(
                     0,
@@ -40971,16 +40973,12 @@ fn play(
                     return PlayExit::Ending;
                 }
                 false
-            } else if death_ticks > 0 {
-                // Death: HL washes the view red and you keep watching the
-                // room. The blended pass lives in `draw_screen_fx`; here we
-                // only ramp its level over the death window.
-                DEATH_WASH = (((DEATH_TICKS - death_ticks) as u32) * 5).min(190) as u8;
-                false
             } else {
-                DEATH_WASH = 0;
                 true
             };
+            // Dead: health (at 0) and armour stay up; the weapon, ammo and
+            // crosshair HUD hide (the CurWeapon message of CBasePlayer::Killed).
+            let hud_armed = death_ticks == 0 && weapon.any_weapon();
             queue_world_beams(&mut packets, world_ot(), &m, nlogic, &rot, base_t);
 
             // Present the previous frame at the last possible moment. Camera,
@@ -41072,20 +41070,20 @@ fn play(
                     suit_equipped,
                     flashlight,
                     flashlight_battery,
-                    weapon.any_weapon(),
+                    hud_armed,
                     zoom_aim,
                     health,
                     armor,
                     weapon.clip_display(),
                     weapon.reserve_display(),
                     weapon.ammo[AMMO_ARGREN],
-                    weapon.ammo_mode(),
-                    if weapon.any_weapon() {
+                    if hud_armed { weapon.ammo_mode() } else { 0 },
+                    if hud_armed {
                         weapon.current as i32
                     } else {
                         -1
                     },
-                    weapon_icon_ticks,
+                    if hud_armed { weapon_icon_ticks } else { 0 },
                     train_hud_position(tram_controlling, tram_speed, TRACKTRAIN_USE_SPEED as i32),
                     &weapon,
                     hud_ot(),
