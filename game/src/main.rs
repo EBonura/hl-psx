@@ -185,7 +185,7 @@ use psx_gpu::material::{
 };
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{
-    QuadTexturedGouraud, RectFlat, Sprite, TriFlat, TriTextured, TriTexturedGouraud,
+    QuadGouraudBlended, QuadTexturedGouraud, RectFlat, Sprite, TriFlat, TriTextured, TriTexturedGouraud,
 };
 use psx_gpu::Gpu;
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
@@ -24695,11 +24695,12 @@ unsafe fn blast_sees(
 /// A houndeye's sonic wave (`CHoundeye::SonicAttack`): everything that can be
 /// hurt inside `radius` except other houndeyes takes `damage` less its share of
 /// the distance. The player who is out of sight takes half; an actor out of
-/// sight takes nothing (so a houndeye next door hurts no one); breakables take
-/// it through walls.
+/// sight takes nothing (so a houndeye next door hurts no one). Breakables and
+/// pushables, which retail hurts through walls, are not reached yet (ENEMIES.md
+/// finding 12). The two blast circles are coloured by `pack`.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8) {
+unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8, pack: i32) {
     let src = prop_target(PROP_KIND[pi], PROP_POS[pi]);
     let falloff = |d: i32, full: i32| (full * (radius - d).max(0) / radius).clamp(0, 255) as u8;
     let body = [
@@ -24737,7 +24738,7 @@ unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8) {
         }
         q += 1;
     }
-    queue_explosion_fx(src, 40); // pale burst stand-in (a proper ring lands with the FX pool)
+    spawn_sonic_rings(PROP_POS[pi], pack);
 }
 
 /// CCrossbowBolt: a straight flight. The first actor its path crosses takes
@@ -33755,6 +33756,114 @@ unsafe fn draw_tripmine_beams(
     }
 }
 
+/// A houndeye's blast circles (`CHoundeye::SonicAttack`, houndeye.cpp:563-603):
+/// two TE_BEAMCYLINDERs from 16 units above the hound, life 0.2 s, width 16,
+/// coloured by the pack (`WriteBeamColor`). The engine grows a cylinder's radius
+/// at the encoded height per second (1,920 and 960 u/s, so 384 and 192 at the
+/// end of its life) and draws it as a band from 16 above to 16 below that
+/// point, black at the top edge and full colour at the bottom (R_DrawCylinder).
+/// No texture here: the band's Gouraud ramp stands in for shockwave.spr.
+const MAX_SONIC_RINGS: usize = 4;
+/// Ring life in sim ticks (0.2 s).
+const SONIC_RING_TICKS: i32 = 4;
+const SONIC_RING_SEGMENTS: i32 = 16;
+/// Pack colours, alone then two, three, four or five hounds.
+const SONIC_RING_COLOURS: [(u8, u8, u8); 4] =
+    [(188, 220, 255), (101, 133, 221), (67, 85, 255), (62, 33, 211)];
+/// Feet position, the sim tick it went off and the pack colour of each ring.
+static mut SONIC_RINGS: [([i32; 3], u16, u8); MAX_SONIC_RINGS] = [([0; 3], 0, 0); MAX_SONIC_RINGS];
+static mut SONIC_RING_CURSOR: u8 = 0;
+/// Some ring may still be drawn: lets a frame skip the ring pass.
+static mut SONIC_RINGS_LIVE: bool = false;
+/// Presentation phase of the frame being built (Q12 of a tick), for effects
+/// that grow between ticks.
+static mut RENDER_PHASE_Q12: i32 = 0;
+
+/// Start a houndeye blast's circles at `feet`; `pack` is the hounds counted.
+unsafe fn spawn_sonic_rings(feet: [i32; 3], pack: i32) {
+    let slot = SONIC_RING_CURSOR as usize % MAX_SONIC_RINGS;
+    SONIC_RINGS[slot] = (feet, SIM_NOW, (pack.clamp(1, 4) - 1) as u8);
+    SONIC_RING_CURSOR = SONIC_RING_CURSOR.wrapping_add(1);
+    SONIC_RINGS_LIVE = true;
+}
+
+/// # Safety
+///
+/// As `draw_beam`: the packets stay linked into `ot` until its walk ends.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn draw_sonic_rings(
+    packets: &mut PrimitivePacketArena<'_>,
+    ot: &mut OrderingTable<OT_LEN>,
+    rot: &Mat3I16,
+    base_t: [i32; 3],
+) {
+    let mut live = false;
+    let mut ri = 0usize;
+    while ri < MAX_SONIC_RINGS {
+        let (feet, start, colour) = SONIC_RINGS[ri];
+        ri += 1;
+        // The camera shows the previous tick plus the phase, so a ring set
+        // off on tick T starts growing on screen as tick T+1 is presented.
+        let age = SIM_NOW.wrapping_sub(start) as i32;
+        if age > SONIC_RING_TICKS {
+            continue;
+        }
+        live = true;
+        let elapsed_q12 = ((age - 1) << 12) + RENDER_PHASE_Q12;
+        if elapsed_q12 <= 0 || elapsed_q12 >= SONIC_RING_TICKS << 12 {
+            continue;
+        }
+        let col = SONIC_RING_COLOURS[colour as usize & 3];
+        // The wide ring (384 at the end of its life) and the half one.
+        for full in [384i32, 192] {
+            let radius = full * elapsed_q12 / (SONIC_RING_TICKS << 12);
+            if radius < 4 {
+                continue;
+            }
+            let point = |i: i32, y: i32| {
+                let a = ((i * 4096 / SONIC_RING_SEGMENTS) & 0xfff) as u16;
+                [
+                    feet[0] + (sincos::sin_q12(a) * radius >> 12),
+                    y,
+                    feet[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * radius >> 12),
+                ]
+            };
+            let mut i = 0i32;
+            while i < SONIC_RING_SEGMENTS {
+                let low = project_beam_segment(point(i, feet[1]), point(i + 1, feet[1]), rot, base_t);
+                let high = project_beam_segment(
+                    point(i, feet[1] + 32),
+                    point(i + 1, feet[1] + 32),
+                    rot,
+                    base_t,
+                );
+                i += 1;
+                let (Some((l0, l1)), Some((h0, h1))) = (low, high) else {
+                    continue;
+                };
+                let z = (((l0.2 + l1.2) / 2) - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
+                let otz = clamp_otz((z as usize) >> OT_SHIFT);
+                let quad = QuadGouraudBlended::new(
+                    [h0, h1, l0, l1].map(|p| (p.0 as i16, p.1 as i16)),
+                    [(0, 0, 0), (0, 0, 0), col, col],
+                    BlendMode::Add,
+                );
+                if let Some(packet) = packets.push(quad) {
+                    ot.resume_frame().add_raw(
+                        otz,
+                        core::ptr::from_mut(packet).cast(),
+                        QuadGouraudBlended::WORDS,
+                    );
+                } else {
+                    note_render_packet_drop(false);
+                }
+            }
+        }
+    }
+    SONIC_RINGS_LIVE = live;
+}
+
 /// Queue every world-space beam before the world OT is submitted. Static map
 /// beams, bullet tracers, and armed tripmines share the same depth behavior.
 #[optimize(size)]
@@ -33867,6 +33976,9 @@ unsafe fn queue_world_beams(
             draw_look(packets, ot, start, end, TRACER_STYLE[ti], rot, base_t);
         }
         ti += 1;
+    }
+    if SONIC_RINGS_LIVE {
+        draw_sonic_rings(packets, ot, rot, base_t);
     }
     draw_tripmine_beams(packets, ot, m, rot, base_t);
     // The nihilanth's circling spheres: CircleTarget holds them 24 * N_SCALE
@@ -39557,6 +39669,7 @@ fn play(
         // pose as the next tick's deadline approaches. Simulation state is
         // untouched; only what the camera looks like this frame changes.
         let render_phase_q12: i32 = sim_clock.phase_q12(interrupts::vblank_count()) as i32;
+        unsafe { RENDER_PHASE_Q12 = render_phase_q12 };
         let (cam_pos, cam_h, cam_yaw, cam_pitch) =
             if DBG_CAM || reference_checkpoint::DBG_CAM_OVERRIDE.is_some() {
                 (player.pos, view_h_cur, yaw, pitch)

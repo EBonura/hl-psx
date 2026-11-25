@@ -994,8 +994,8 @@ unsafe fn tick_squid(
 }
 
 /// monster_houndeye: runs in to 190 units, charges for 49 ticks and lets go at
-/// +45 with 15 x (1 - distance / 384), multiplied by the pack (up to three
-/// alive within 150 units). A hit aborts the charge: it slides 140 units back
+/// +45 with 15 x (1 - distance / 384), multiplied by the pack (every living
+/// houndeye within 1,024 units, up to four, counted at the blast). A hit aborts the charge: it slides 140 units back
 /// over 30 ticks and rests 54. A blast every 80 ticks otherwise.
 ///
 /// Animation and cries follow the retail sequences: an alert cry at first
@@ -1067,7 +1067,7 @@ unsafe fn tick_hound(
             }
             let dmg = skill_hit(Sk::HoundeyeBlast) as i32;
             let squad = dmg * (10 + 11 * (pack.clamp(1, 4) - 1)) / 10;
-            houndeye_blast(m, pi, 384, squad.min(255) as u8);
+            houndeye_blast(m, pi, 384, squad.min(255) as u8, pack);
             sfx::play_world(sfx::HE_BLAST, pos);
         } else if left == 1 {
             // Rest: `prop_clip` plays madidle2 while the cooldown runs.
