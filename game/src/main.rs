@@ -35365,6 +35365,9 @@ fn main() {
                 i += 1;
             }
         }
+        // The title menu uploads its own art over VRAM: the next play() uploads the
+        // load-resident textures again.
+        unsafe { LOAD_RESIDENT = false };
         // Instrumented direct-map discs never need the interactive menu. Making
         // the timeout fall back to map zero lets LTO discard menu-only code and
         // leaves enough executable RAM for profiler hooks; shipping still takes
@@ -35546,6 +35549,11 @@ fn retry_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::Chun
     diag_hex(0x0F00, "RETRY", chunk_id, 0);
     cdstream::load_chunk_decompressed(chunk_id, dst)
 }
+
+/// The map-independent textures of a load (the HUD sheet) are still in VRAM from
+/// the previous play(): set by the first load after the title menu, cleared when
+/// the menu runs again (its art overwrites VRAM).
+static mut LOAD_RESIDENT: bool = false;
 
 #[inline]
 fn load_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::ChunkLoad> {
@@ -36297,7 +36305,12 @@ fn play(
     // Real HUD sprite sheet -> free gameplay tpage. Streams from the pack
     // (MAP_BUF is free until the world chunk below); a failed read leaves the
     // stale VRAM copy from the previous map, which is the same sheet anyway.
-    let hud_mat = {
+    // The sheet sits at a fixed address outside the room allocator and only the
+    // title menu writes over that VRAM, so after the first map of a session it
+    // is still there: no read, the same materials.
+    let hud_mat = if unsafe { LOAD_RESIDENT } {
+        hud::upload(&[])
+    } else {
         let n = unsafe {
             load_accounted_map_chunk(
                 hud::HUD_CHUNK_ID,
@@ -36309,6 +36322,7 @@ fn play(
         .map(|load| load.raw_len)
         .unwrap_or(0);
         let blob = unsafe { streamed_map_bytes(n.max(68)) };
+        unsafe { LOAD_RESIDENT = n >= hud::HUD_BLOB_BYTES };
         hud::upload(blob)
     };
 

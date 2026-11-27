@@ -32,7 +32,7 @@ const HUD_RIGHT_W: usize = 96;
 const HUD_RIGHT_H: usize = 112;
 const HUD_LEFT_BYTES: usize = HUD_LEFT_W * HUD_LEFT_H / 2;
 const HUD_RIGHT_BYTES: usize = HUD_RIGHT_W * HUD_RIGHT_H / 2;
-const HUD_BLOB_BYTES: usize = HUD_HEADER_BYTES + HUD_LEFT_BYTES + HUD_RIGHT_BYTES;
+pub(crate) const HUD_BLOB_BYTES: usize = HUD_HEADER_BYTES + HUD_LEFT_BYTES + HUD_RIGHT_BYTES;
 
 /// The native HUD's busiest possible frame is MP5 + secondary ammo + selection
 /// strip + item history + active flashlight + three damage icons. Each packet explicitly restores
