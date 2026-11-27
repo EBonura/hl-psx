@@ -1040,20 +1040,6 @@ pub(crate) unsafe fn houndeye_hopping(pi: usize, state: u8) -> bool {
     state == PROP_STATE_MOVE_AWAY && PROP_AI_TIMER[pi] > HOUND_HOP_END
 }
 
-/// UTIL_TraceHull 128 units straight back from the hound (away from `aim`),
-/// as a line at its middle height.
-#[inline(never)]
-#[optimize(size)]
-unsafe fn hound_clear_behind(m: &Map, pi: usize, aim: [i32; 3]) -> bool {
-    let back = hound_back(pi, aim);
-    let from = prop_target(PROP_KIND[pi], PROP_POS[pi]);
-    blast_line_clear(
-        m,
-        from,
-        [from[0] + (back[0] >> 5), from[1], from[2] + (back[2] >> 5)],
-    )
-}
-
 /// The level direction straight away from `aim`, in Q12.
 #[inline(never)]
 #[optimize(size)]
@@ -1106,9 +1092,7 @@ unsafe fn tick_hound(
                 [(back[0] * 160 >> 12) as i16, 192, (back[2] * 160 >> 12) as i16],
                 true,
             );
-            PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
-            PROP_NEAR_COUNT[pi] = 0xff;
-            prop_set_pos_exact(m, pi, [pos[0], pos[1] + 1, pos[2]]);
+            prop_take_off(m, pi);
             // The AI sleeps through the 12 airborne ticks; 3 are left after the landing.
             PROP_AI_TIMER[pi] = HOUND_HOP_END + 3;
         } else if left == HOUND_HOP_END + 1 {
@@ -1126,7 +1110,11 @@ unsafe fn tick_hound(
             // CHoundeye::GetSchedule: hurt, it hops back 40% of the time when
             // 128 units behind it are clear, else takes cover.
             PROP_STATE[pi] = PROP_STATE_MOVE_AWAY;
-            PROP_AI_TIMER[pi] = if impact_rng().below(10) < 4 && hound_clear_behind(m, pi, aim) {
+            // UTIL_TraceHull 128 units straight back, as a line at mid height.
+            let from = prop_target(PROP_KIND[pi], pos);
+            let back = hound_back(pi, aim);
+            let to = [from[0] + (back[0] >> 5), from[1], from[2] + (back[2] >> 5)];
+            PROP_AI_TIMER[pi] = if impact_rng().below(10) < 4 && blast_line_clear(m, from, to) {
                 HOUND_HOP_END + HOUND_HOP_TICKS
             } else {
                 30

@@ -16654,11 +16654,20 @@ unsafe fn prop_monsterjump_touch(m: &Map, pi: usize) {
         // launching one monster (until a Use turns it back on).
         LOGIC_STATE[li] = LOGIC_STATE_TOP;
         if !airborne {
-            PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
-            PROP_NEAR_COUNT[pi] = 0xff;
-            prop_set_pos_exact(m, pi, [pos[0], pos[1] + 1, pos[2]]);
+            prop_take_off(m, pi);
         }
     }
+}
+
+/// A grounded actor leaves the floor on its `PROP_JUMP` velocity: airborne from
+/// the next tick, lifted one unit so the ground probe lets go.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_take_off(m: &Map, pi: usize) {
+    let pos = PROP_POS[pi];
+    PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
+    PROP_NEAR_COUNT[pi] = 0xff;
+    prop_set_pos_exact(m, pi, [pos[0], pos[1] + 1, pos[2]]);
 }
 
 /// Environment forces on one actor before its AI thinks: airborne integration
@@ -33886,38 +33895,15 @@ unsafe fn draw_sonic_rings(
             if radius < 4 {
                 continue;
             }
+            // The ring is a loop of beams 16 units wide (TE_BEAMCYLINDER, width 16)
+            // drawn by the beam path, 16 units above the hound's feet.
             let mut i = 0i32;
             let mut prev = sonic_ring_point(feet, radius, 0);
             while i < SONIC_RING_SEGMENTS {
-                let next = sonic_ring_point(feet, radius, i + 1);
-                let low = project_beam_segment(prev, next, rot, base_t);
-                let high = project_beam_segment(
-                    [prev[0], prev[1] + 32, prev[2]],
-                    [next[0], next[1] + 32, next[2]],
-                    rot,
-                    base_t,
-                );
-                prev = next;
                 i += 1;
-                let (Some((l0, l1)), Some((h0, h1))) = (low, high) else {
-                    continue;
-                };
-                let z = (((l0.2 + l1.2) / 2) - BEAM_DEPTH_BIAS).max(render::NEAR_Z);
-                let otz = clamp_otz((z as usize) >> OT_SHIFT);
-                let quad = QuadGouraudBlended::new(
-                    [h0, h1, l0, l1].map(|p| (p.0 as i16, p.1 as i16)),
-                    [(0, 0, 0), (0, 0, 0), col, col],
-                    BlendMode::Add,
-                );
-                if let Some(packet) = packets.push(quad) {
-                    ot.resume_frame().add_raw(
-                        otz,
-                        core::ptr::from_mut(packet).cast(),
-                        QuadGouraudBlended::WORDS,
-                    );
-                } else {
-                    note_render_packet_drop(false);
-                }
+                let next = sonic_ring_point(feet, radius, i);
+                draw_beam(packets, ot, prev, next, 8, col, rot, base_t);
+                prev = next;
             }
         }
     }
@@ -33931,7 +33917,7 @@ fn sonic_ring_point(feet: [i32; 3], radius: i32, i: i32) -> [i32; 3] {
     let a = ((i * 4096 / SONIC_RING_SEGMENTS) & 0xfff) as u16;
     [
         feet[0] + (sincos::sin_q12(a) * radius >> 12),
-        feet[1],
+        feet[1] + 16,
         feet[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * radius >> 12),
     ]
 }
