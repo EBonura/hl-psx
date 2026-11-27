@@ -18135,6 +18135,9 @@ unsafe fn sentry_schedule_wake(pi: usize) {
 
 /// Set while a bolt's damage is applied (DMG_NEVERGIB).
 static mut DMG_NEVERGIB: bool = false;
+/// Set while a DMG_ALWAYSGIB hit is applied (the houndeye's sonic blast, the
+/// bullsquid's whip): a kill bursts the body whatever the overkill.
+pub(crate) static mut DMG_ALWAYSGIB: bool = false;
 
 /// GibMonster: the body bursts into a shower of gore and is gone.
 #[inline(never)]
@@ -18426,7 +18429,10 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         }
         // ShouldGibMonster: health below -30 bursts the body (no u8 health goes
         // negative; the overkill is the damage past the last hit point).
-        if dmg as i32 - health_before as i32 > 30 && !DMG_NEVERGIB && prop_can_gib(pi) {
+        if (DMG_ALWAYSGIB || dmg as i32 - health_before as i32 > 30)
+            && !DMG_NEVERGIB
+            && prop_can_gib(pi)
+        {
             gib_prop(pi);
         }
         sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
@@ -24806,7 +24812,10 @@ unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8, pack: i32) {
             if d < radius && blast_line_clear(m, src, t) {
                 let scaled = falloff(d, dmg as i32);
                 if scaled != 0 {
+                    // DMG_SONIC | DMG_ALWAYSGIB (houndeye.cpp SonicAttack).
+                    DMG_ALWAYSGIB = true;
                     damage_prop(q, scaled, false);
+                    DMG_ALWAYSGIB = false;
                 }
             }
         }
