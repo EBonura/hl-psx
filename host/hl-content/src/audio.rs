@@ -1922,6 +1922,31 @@ fn plan_entry<'a>(valve: &Path, entry: &'a MapAudioKey) -> Result<Planned<'a>> {
     })
 }
 
+/// Energy (dB) a looping bed may lose against its base-disc rate before the drop
+/// counts as audible. Below it the low-pass only takes a sliver of top end off a
+/// bed that is already band-limited, so the base disc's rate stops being a floor.
+const LOOP_INAUDIBLE_DB: f64 = 0.25;
+
+/// The lowest rate `p` may take against the base disc's `base`: `base` itself,
+/// except for a loop, which may go down its ladder while it keeps all but
+/// [`LOOP_INAUDIBLE_DB`] of the energy it has at `base`.
+fn base_floor(p: &Planned<'_>, base: u32) -> u32 {
+    if p.entry.class != MapAudioClass::Loop {
+        return base;
+    }
+    let mut rates = vec![base];
+    rates.extend(p.ladder.iter().copied().filter(|&r| r < base));
+    let kept = levels_kept_db(&p.source, &rates);
+    let limit = kept[0] - LOOP_INAUDIBLE_DB;
+    rates
+        .iter()
+        .zip(&kept)
+        .take_while(|(_, &level)| level >= limit)
+        .map(|(&rate, _)| rate)
+        .min()
+        .unwrap_or(base)
+}
+
 fn pack_overhead(entries: usize) -> usize {
     8 + entries * 8 // HSFX header + sample table
 }
@@ -2731,6 +2756,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             // ladder step that is not below that rate is the last this entry may take.
             for (p, c) in planned.iter().zip(candidates.iter_mut()) {
                 if let Some(&rate) = reference.get(p.entry.key.as_str()) {
+                    let rate = base_floor(p, rate);
                     let step = p.ladder.iter().rposition(|&r| r >= rate).unwrap_or(0);
                     c.max_step = c.max_step.min(step);
                 }
@@ -2777,7 +2803,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                                 .iter()
                                 .position(|q| std::ptr::eq(q, *p))
                                 .expect("member");
-                            previous[i] = Some(rate);
+                            previous[i] = Some(base_floor(&planned[i], rate));
                         }
                     }
                 }
@@ -3029,7 +3055,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
             .collect();
         lost.extend(planned.iter().zip(&rates).filter_map(|(p, &rate)| {
             let base = *reference.get(p.entry.key.as_str())?;
-            (rate < base).then(|| format!("{} {base} -> {rate} Hz", p.entry.key))
+            (rate < base_floor(p, base)).then(|| format!("{} {base} -> {rate} Hz", p.entry.key))
         }));
         if !lost.is_empty() {
             if let Some(&last) = hev_chosen.last() {
