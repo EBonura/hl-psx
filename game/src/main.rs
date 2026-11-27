@@ -25594,43 +25594,9 @@ unsafe fn tick_projectiles(m: &Map, movers: &[phys::Mover]) {
             if matches!(kind, PROJ_HORNET | PROJ_HORNET_FAST) && !from_enemy {
                 sfx::play_world(sfx::HORNET_HIT, hit_pos);
             }
-            if kind == PROJ_SPIT && hit {
-                spit_splash(m, movers, old, new, hit_pos, player_hit);
-            }
             PROJECTILES[i].active = false;
         }
         i += 1;
-    }
-}
-
-/// CSquidSpit::Touch: a spray of yellow flecks where the glob lands, bc_spithit,
-/// and on a surface (not a creature) a spit decal (yellow blood stands in).
-#[inline(never)]
-#[cold]
-#[optimize(size)]
-unsafe fn spit_splash(
-    m: &Map,
-    movers: &[phys::Mover],
-    old: [i32; 3],
-    new: [i32; 3],
-    at: [i32; 3],
-    on_player: bool,
-) {
-    setpiece_sfx::play(hl_format::setpiece_audio::BC_SPITHIT, at);
-    let mut k = 0;
-    while k < 6 {
-        let v = [
-            (impact_rng().below(9) as i32) - 4,
-            1 + (impact_rng().below(5) as i32),
-            (impact_rng().below(9) as i32) - 4,
-        ];
-        spawn_debris(at, v, DEBRIS_YELLOW_BLOOD, 10);
-        k += 1;
-    }
-    if !on_player {
-        if let Some(h) = phys::trace_line(m, movers, old, new) {
-            spawn_impact_mark(m, &h, IMPACT_KIND_YBLOOD);
-        }
     }
 }
 
