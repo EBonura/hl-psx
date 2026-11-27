@@ -36316,6 +36316,47 @@ fn play(
         mat
     };
 
+    // The core bank goes before the room's textures: the textures, voices, sprites
+    // and world that follow lie one after the other on the disc (pack_order.rs), so
+    // reading the bank between them cost a seek out and one back.
+    // These dialogue-heavy maps cannot emit most of the complete campaign
+    // combat bank. Fixed-id profiles reclaim that SPU RAM without changing any
+    // SFX call sites. Hazard Course upgrades to its weapon profile exactly
+    // when the weapon section begins; other chapters restore the full bank.
+    let profile = if (launch.room_id as usize) < sfx::CORE_TABLE_MAPS {
+        unsafe { CORE_SFX_PROFILE[launch.room_id as usize] }
+    } else {
+        0
+    };
+    let wanted_sfx = if profile != 0 {
+        profile as u32
+    } else if (6..=11).contains(&launch.room_id)
+        || (menu::TRAINING_START_ROOM as u16..=menu::TRAINING_START_ROOM as u16 + 1)
+            .contains(&launch.room_id)
+    {
+        sfx::CHUNK_ID_LIGHT
+    } else if launch.room_id >= menu::TRAINING_START_ROOM as u16 + 2 {
+        sfx::CHUNK_ID_TRAINING_WEAPONS
+    } else {
+        sfx::CHUNK_ID
+    };
+    if unsafe { ACTIVE_SFX_CHUNK } != wanted_sfx {
+        let n = unsafe {
+            load_accounted_map_chunk(
+                wanted_sfx,
+                &mut stream_chunks,
+                &mut stream_bytes,
+                &mut stream_sectors,
+            )
+        }
+        .map(|load| load.raw_len)
+        .unwrap_or(0);
+        let blob = unsafe { streamed_map_bytes(n) };
+        if n >= 8 && unsafe { sfx::init_from_pack(blob) } > 0 {
+            unsafe { ACTIVE_SFX_CHUNK = wanted_sfx };
+        }
+    }
+
     diag_hex(0x0100, "WORLDT", texture_chunk_id, world_chunk_id);
     let tex_load = load_streamed_chunk(texture_chunk_id, unsafe { map_buf() });
     let tex_len = tex_load.map_or(0, |load| load.raw_len);
@@ -36363,44 +36404,6 @@ fn play(
     let model_tex_failed = 0usize;
     let model_texs = 0usize;
     draw_next_loading_screen(fb);
-
-    // These dialogue-heavy maps cannot emit most of the complete campaign
-    // combat bank. Fixed-id profiles reclaim that SPU RAM without changing any
-    // SFX call sites. Hazard Course upgrades to its weapon profile exactly
-    // when the weapon section begins; other chapters restore the full bank.
-    let profile = if (launch.room_id as usize) < sfx::CORE_TABLE_MAPS {
-        unsafe { CORE_SFX_PROFILE[launch.room_id as usize] }
-    } else {
-        0
-    };
-    let wanted_sfx = if profile != 0 {
-        profile as u32
-    } else if (6..=11).contains(&launch.room_id)
-        || (menu::TRAINING_START_ROOM as u16..=menu::TRAINING_START_ROOM as u16 + 1)
-            .contains(&launch.room_id)
-    {
-        sfx::CHUNK_ID_LIGHT
-    } else if launch.room_id >= menu::TRAINING_START_ROOM as u16 + 2 {
-        sfx::CHUNK_ID_TRAINING_WEAPONS
-    } else {
-        sfx::CHUNK_ID
-    };
-    if unsafe { ACTIVE_SFX_CHUNK } != wanted_sfx {
-        let n = unsafe {
-            load_accounted_map_chunk(
-                wanted_sfx,
-                &mut stream_chunks,
-                &mut stream_bytes,
-                &mut stream_sectors,
-            )
-        }
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-        let blob = unsafe { streamed_map_bytes(n) };
-        if n >= 8 && unsafe { sfx::init_from_pack(blob) } > 0 {
-            unsafe { ACTIVE_SFX_CHUNK = wanted_sfx };
-        }
-    }
 
     // Per-map dialogue: stream this map's voice pack (chunk 3100 + room) into
     // the SPU region above the resident core SFX, replacing the previous map's
