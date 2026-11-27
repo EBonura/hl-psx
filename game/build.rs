@@ -93,8 +93,9 @@ const MODEL_INDEX_VERTEX_LIMIT: usize = 1024;
 // returned the room the clips took. The weapon-cache audit still keeps its
 // margin on the smaller pool; it re-checks this on every cook.
 // 160 more words (640 B) went to the executable for the Unforeseen Consequences
-// monster work of 2026-11-27; the tightest map (c4a1b) keeps about 2.6 KB.
-const NPC_MODEL_POOL_WORDS: usize = 20_894;
+// monster work of 2026-11-27, and 512 more (2,048 B) for the level-change
+// residency and the rest of that work; the tightest map (c4a1b) keeps about 600 B.
+const NPC_MODEL_POOL_WORDS: usize = 20_382;
 // Viewmodel reserve when no cooked viewmodels exist yet (a fresh checkout).
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
