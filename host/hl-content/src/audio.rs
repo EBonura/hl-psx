@@ -2586,8 +2586,11 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 continue;
             }
             let mut cue = plan_entry(valve, entry)?;
+            // A sample the base disc placed keeps its own ladder: its base rate is a floor
+            // the cap could put it under (c0a0's steps were spare-only at 11,025 Hz).
             if *slot >= hl_format::setpiece_audio::FIRST_CUE
                 && hl_format::setpiece_audio::SOUNDS[*slot].tier == 3
+                && !reference.contains_key(entry.key.as_str())
             {
                 // A cue that competes for rate is cooked no higher than the cap, so it
                 // takes little from the sounds it shares the bank with.
@@ -2595,9 +2598,7 @@ pub fn build_voices(valve: &Path, map_list: &str, output: &Path) -> Result<()> {
                 let from = cue.ladder.iter().position(|&r| r <= cap).unwrap_or(0);
                 cue.ladder.drain(..from);
                 cue.bytes.drain(..from);
-                if !reference.contains_key(entry.key.as_str()) {
-                    cue_keys.push(entry.key.clone());
-                }
+                cue_keys.push(entry.key.clone());
             }
             planned.push(cue);
             joined.push((
