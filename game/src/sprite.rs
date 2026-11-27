@@ -336,7 +336,8 @@ pub unsafe fn reserve_resident() -> bool {
         let def = if i == 0 { EXPL_DEF } else { WPN_DEFS[i - 1] };
         let mut f = 0;
         while f < def.n_frames {
-            if k >= RES_FRAMES || !crate::vram::reserve_again(&*slots.add(k), def.crush_w, def.crush_h)
+            if k >= RES_FRAMES
+                || !crate::vram::reserve_again(&*slots.add(k), def.crush_w, def.crush_h)
             {
                 return false;
             }

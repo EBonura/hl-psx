@@ -168,7 +168,10 @@ pub fn cluster_plan(repository: &Path, contents: &PackContents) -> Result<BTreeM
     let mut variant_of: BTreeMap<(u32, u8), u32> = BTreeMap::new();
     let variants = repository.join("data/modelpack/map-model-variants.txt");
     if let Ok(text) = fs::read_to_string(&variants) {
-        for line in text.lines().filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        for line in text
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        {
             let f: Vec<&str> = line.split('|').collect();
             let (Some(map), Some(ty), Some(chunk)) = (
                 f.first().and_then(|v| v.parse::<u32>().ok()),
@@ -205,7 +208,11 @@ pub fn cluster_plan(repository: &Path, contents: &PackContents) -> Result<BTreeM
         if contents.ids.contains(&VIEWMODEL_FIRST) {
             cluster.tail.push(room_alias(room, VIEWMODEL_FIRST));
         }
-        let mut types: Vec<u8> = placed.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
+        let mut types: Vec<u8> = placed
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         types.sort_by_key(|&ty| rank(ty));
         for ty in types {
             let geometry = variant_of
@@ -213,11 +220,13 @@ pub fn cluster_plan(repository: &Path, contents: &PackContents) -> Result<BTreeM
                 .copied()
                 .unwrap_or(GEOMETRY_BASE + u32::from(ty));
             if contents.ids.contains(&geometry) {
-                cluster.tail.push(if exclusive_map(geometry, contents) == Some(room) {
-                    geometry
-                } else {
-                    room_alias(room, geometry)
-                });
+                cluster
+                    .tail
+                    .push(if exclusive_map(geometry, contents) == Some(room) {
+                        geometry
+                    } else {
+                        room_alias(room, geometry)
+                    });
             }
             let texture = TEXTURE_BASE + u32::from(ty);
             if contents.ids.contains(&texture) {
@@ -226,7 +235,10 @@ pub fn cluster_plan(repository: &Path, contents: &PackContents) -> Result<BTreeM
         }
         let copies = cluster.head.len() + cluster.tail.len();
         if copies > ROOM_ALIAS_MAX {
-            return Err(format!("room {room} wants {copies} cluster copies, more than {ROOM_ALIAS_MAX}").into());
+            return Err(format!(
+                "room {room} wants {copies} cluster copies, more than {ROOM_ALIAS_MAX}"
+            )
+            .into());
         }
         plan.insert(room, cluster);
     }
@@ -273,7 +285,10 @@ pub fn stage_room_clusters(repository: &Path, staged: &Path) -> Result<bool> {
             bytes += fs::metadata(from)?.len();
         }
     }
-    println!("room clusters: {copies} copies over {} rooms, {bytes} bytes staged", plan.len());
+    println!(
+        "room clusters: {copies} copies over {} rooms, {bytes} bytes staged",
+        plan.len()
+    );
     Ok(true)
 }
 
@@ -525,7 +540,11 @@ mod tests {
     #[test]
     fn cluster_copies_follow_the_room_read_order() {
         let mut contents = sample();
-        let (core, glock, model) = (room_alias(1, 3050), room_alias(1, 1000), room_alias(1, 1306));
+        let (core, glock, model) = (
+            room_alias(1, 3050),
+            room_alias(1, 1000),
+            room_alias(1, 1306),
+        );
         contents.ids.extend([core, glock, model]);
         let clusters = BTreeMap::from([(
             1,
