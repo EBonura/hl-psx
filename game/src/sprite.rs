@@ -47,7 +47,8 @@ static mut N_SPRITE_FRAMES: usize = 0;
 // Resident explosion sprite (s_explod.spr): its own single-sprite pack, loaded
 // every map into these dedicated slots (weapon blasts happen anywhere, not just
 // where env_explosion entities are placed). Separate from the per-map tables so
-// reset() never clears it; it re-appends to the atlas each map load.
+// reset() never clears it. It is the first thing a load puts in the atlas, so it
+// keeps its windows from map to map (`reserve_resident`).
 pub const EXPL_CHUNK_ID: u32 = 3002;
 pub const MAX_EXPL_FRAMES: usize = 5;
 /// Frames of the whole resident pack: the explosion's five and the weapon sprites' nine.
@@ -119,8 +120,8 @@ pub unsafe fn load_pack(data: &[u8]) {
 }
 
 /// Parse the resident pack (HSPR: the explosion, then the weapon effects' sprites)
-/// into EXPL_DEF/WPN_DEFS/EXPL_SLOTS, appending its frames to the atlas. Call
-/// each map load.
+/// into EXPL_DEF/WPN_DEFS/EXPL_SLOTS, appending its frames to the atlas. Called
+/// right after the atlas reset when the pack is not already resident.
 #[inline(never)]
 #[optimize(size)]
 pub unsafe fn load_explosion(data: &[u8]) {
@@ -187,6 +188,8 @@ pub const DECAL_SHOT: usize = 0;
 pub const DECAL_BLOOD: usize = 1;
 pub const DECAL_YBLOOD: usize = 2;
 static mut DECAL_SLOT: TexSlot = EMPTY_SLOT;
+/// The decal sheet's texture size, for [`reserve_resident`].
+static mut DECAL_WH: (u16, u16) = (0, 0);
 static mut DECAL_RECS: [[u8; 4]; MAX_DECALS] = [[0; 4]; MAX_DECALS];
 /// First decal and count per family.
 static mut DECAL_FAMILY: [(u8, u8); 3] = [(0, 0); 3];
@@ -222,6 +225,12 @@ pub unsafe fn load_decals(data: &[u8]) {
         let o = 8 + i * 4;
         DECAL_RECS[i] = [data[o], data[o + 1], data[o + 2], data[o + 3]];
         i += 1;
+    }
+    if blob + 4 <= data.len() {
+        DECAL_WH = (
+            u16::from_le_bytes([data[blob], data[blob + 1]]),
+            u16::from_le_bytes([data[blob + 2], data[blob + 3]]),
+        );
     }
     upload_tex_blob_raw(&data[blob..], 1, core::ptr::addr_of_mut!(DECAL_SLOT), 1);
 }
@@ -310,4 +319,31 @@ pub fn slot_for(id: usize, frame: usize) -> TexSlot {
             .get(fi)
             .unwrap_or(&EMPTY_SLOT)
     }
+}
+
+/// Keep the resident pack (explosion and weapon sprites) and the decal sheet from the
+/// previous map: right after `vram::begin_map`, allocate their windows again in the
+/// order they were uploaded. True when every one lands where its pixels still are, so
+/// the load skips both reads; false leaves the allocators part used (the caller starts
+/// the map's allocation again and reads the chunks).
+#[inline(never)]
+#[optimize(size)]
+pub unsafe fn reserve_resident() -> bool {
+    let slots = core::ptr::addr_of!(EXPL_SLOTS).cast::<TexSlot>();
+    let mut k = 0usize;
+    let mut i = 0usize;
+    while i <= WPN_SPRITES {
+        let def = if i == 0 { EXPL_DEF } else { WPN_DEFS[i - 1] };
+        let mut f = 0;
+        while f < def.n_frames {
+            if k >= RES_FRAMES || !crate::vram::reserve_again(&*slots.add(k), def.crush_w, def.crush_h)
+            {
+                return false;
+            }
+            k += 1;
+            f += 1;
+        }
+        i += 1;
+    }
+    k > 0 && crate::vram::reserve_again(&*core::ptr::addr_of!(DECAL_SLOT), DECAL_WH.0, DECAL_WH.1)
 }

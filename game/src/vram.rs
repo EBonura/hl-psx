@@ -170,7 +170,8 @@ fn rd_u32(d: &[u8], o: usize) -> Option<u32> {
     ]))
 }
 
-unsafe fn reset_allocators() {
+/// Start a map's VRAM allocation: every atlas window and CLUT is free again.
+pub unsafe fn begin_map() {
     unsafe {
         ATLAS = TextureWindowAtlas::new();
         CLUTS = ClutRowAllocator::new(CLUT_BASE_Y);
@@ -185,29 +186,11 @@ unsafe fn canonical_ram_bytes(data: &[u8]) -> &[u8] {
     unsafe { core::slice::from_raw_parts(psx_hw::memory::to_kseg0_ptr(data.as_ptr()), data.len()) }
 }
 
-/// Upload a streamed map texture chunk:
-/// `magic "HLTX" | u32 n_texs | texture blob`.
+/// Upload a streamed texture chunk (`magic "HLTX" | u32 n_texs | texture blob`)
+/// into the current allocation state: the room's material chunk right after
+/// [`begin_map`] and the load-resident textures, then the models.
 ///
-/// Returns `(n_texs, failed_uploads)` so the caller can report the same
-/// counters as the legacy inline map-texture path.
-pub unsafe fn upload_tex_chunk_raw(
-    data: &[u8],
-    slots: *mut TexSlot,
-    slot_len: usize,
-) -> Option<(usize, usize)> {
-    let data = unsafe { canonical_ram_bytes(data) };
-    if data.len() < 8 || data.get(0..4)? != b"HLTX" {
-        return None;
-    }
-    let n_texs = rd_u32(data, 4)? as usize;
-    unsafe { reset_allocators() };
-    let failed = unsafe { upload_tex_blob_raw(&data[8..], n_texs, slots, slot_len) };
-    Some((n_texs, failed))
-}
-
-/// Upload a streamed texture chunk without resetting the atlas. Use this for
-/// model textures after the room's material chunk has established the frame's
-/// VRAM allocation state.
+/// Returns `(n_texs, failed_uploads)`.
 #[optimize(size)]
 pub unsafe fn upload_tex_chunk_append_raw(
     data: &[u8],
@@ -277,7 +260,7 @@ pub unsafe fn upload_tex_chunk_append_masked_raw(
             continue;
         }
         remap[i] = out as u8;
-        let slot = match upload_one(w, h, clut, pix, false) {
+        let slot = match upload_one(w, h, clut, pix, false, false) {
             Some(s) => s,
             None => {
                 failed += 1;
@@ -330,6 +313,7 @@ pub unsafe fn upload_tex_blob_raw(
             entry.clut,
             entry.pixels,
             entry.eight_bit,
+            false,
         ) {
             Some(s) => s,
             None => {
@@ -349,9 +333,17 @@ pub unsafe fn upload_tex_blob_raw(
 
 /// Upload one texture: 4 bit into an atlas window, or (`eight`) an 8 bit sky
 /// face into half a page of its own. `clut_bytes` is empty for a sky face that
-/// shares the palette an earlier one uploaded.
+/// shares the palette an earlier one uploaded. `dry` allocates exactly as an upload
+/// would and writes no VRAM (see [`reserve_again`]).
 #[optimize(size)]
-fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8], eight: bool) -> Option<TexSlot> {
+fn upload_one(
+    w: u16,
+    h: u16,
+    clut_bytes: &[u8],
+    pix: &[u8],
+    eight: bool,
+    dry: bool,
+) -> Option<TexSlot> {
     unsafe {
         let (page, u0, v0) = if eight {
             // The second face of a page goes under the first.
@@ -384,7 +376,9 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8], eight: bool) -> Opt
         if !rect_fits_vram(vram_x, vram_y, vram_w, h) {
             return None;
         }
-        upload_bytes(VramRect::new(vram_x, vram_y, vram_w, h), pix);
+        if !dry {
+            upload_bytes(VramRect::new(vram_x, vram_y, vram_w, h), pix);
+        }
 
         let clut_word = if clut_bytes.is_empty() {
             SKY_CLUT
@@ -401,7 +395,9 @@ fn upload_one(w: u16, h: u16, clut_bytes: &[u8], pix: &[u8], eight: bool) -> Opt
             if !rect_fits_vram(clut.x(), clut.y(), entries, 1) {
                 return None;
             }
-            upload_bytes(VramRect::new(clut.x(), clut.y(), entries, 1), clut_bytes);
+            if !dry {
+                upload_bytes(VramRect::new(clut.x(), clut.y(), entries, 1), clut_bytes);
+            }
             if eight {
                 SKY_CLUT = clut.uv_word();
             }
@@ -433,4 +429,25 @@ fn rect_fits_vram(x: u16, y: u16, w: u16, h: u16) -> bool {
         && h > 0
         && (x as u32 + w as u32) <= VRAM_W as u32
         && (y as u32 + h as u32) <= VRAM_H as u32
+}
+
+/// Allocate the atlas window and CLUT a 4 bit `w` x `h` texture would get now, upload
+/// nothing, and say whether they are the ones `slot` already uses. A load that keeps a
+/// texture in VRAM from the previous map calls this in the same order it first uploaded
+/// it, right after [`begin_map`]: the allocators are deterministic, so a match means the
+/// pixels and palette are still where the slot points and the room's textures will be
+/// placed around them.
+pub fn reserve_again(slot: &TexSlot, w: u16, h: u16) -> bool {
+    if !slot.valid {
+        return false;
+    }
+    // One byte stands in for the palette: only its presence matters to a dry allocation.
+    match upload_one(w, h, &[0], &[], false, true) {
+        Some(s) => {
+            s.packet.tex_window_word == slot.packet.tex_window_word
+                && s.packet.clut_high_word == slot.packet.clut_high_word
+                && s.packet.tpage_high_word == slot.packet.tpage_high_word
+        }
+        None => false,
+    }
 }

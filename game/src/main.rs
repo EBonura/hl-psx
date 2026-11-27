@@ -36252,12 +36252,73 @@ fn play(
     begin_loading(fb);
     draw_next_loading_screen(fb);
 
-    diag_hex(0x0100, "WORLDT", texture_chunk_id, world_chunk_id);
-    let tex_load = load_streamed_chunk(texture_chunk_id, unsafe { map_buf() });
-    let tex_len = tex_load.map_or(0, |load| load.raw_len);
     let mut stream_bytes = 0u32;
     let mut stream_chunks = 0u32;
     let mut stream_sectors = 0u32;
+    // The map-independent textures go first in VRAM, so they land in the same atlas
+    // windows on every map: the HUD sheet (a fixed page outside the allocator), the
+    // explosion and weapon sprites and the decal sheet. Only the title menu writes over
+    // that VRAM, so after the first map of a session they are still there and the load
+    // only allocates their windows again (`sprite::reserve_resident` checks each lands
+    // where its pixels are); otherwise it reads the three chunks, which lie one after
+    // the other on the disc, and uploads them before the room's textures.
+    unsafe { vram::begin_map() };
+    let hud_mat = if unsafe { LOAD_RESIDENT && sprite::reserve_resident() } {
+        hud::upload(&[])
+    } else {
+        unsafe { vram::begin_map() };
+        // A failed read leaves the stale VRAM copy from the previous map, which is
+        // the same sheet anyway.
+        let n = unsafe {
+            load_accounted_map_chunk(
+                hud::HUD_CHUNK_ID,
+                &mut stream_chunks,
+                &mut stream_bytes,
+                &mut stream_sectors,
+            )
+        }
+        .map(|load| load.raw_len)
+        .unwrap_or(0);
+        let blob = unsafe { streamed_map_bytes(n.max(68)) };
+        unsafe { LOAD_RESIDENT = n >= hud::HUD_BLOB_BYTES };
+        let mat = hud::upload(blob);
+        // Explosion (s_explod.spr) and the weapon effects' sprites: blasts happen on
+        // any map.
+        let en = unsafe {
+            load_accounted_map_chunk(
+                sprite::EXPL_CHUNK_ID,
+                &mut stream_chunks,
+                &mut stream_bytes,
+                &mut stream_sectors,
+            )
+        }
+        .map(|load| load.raw_len)
+        .unwrap_or(0);
+        if en >= 20 {
+            let blob = unsafe { streamed_map_bytes(en) };
+            unsafe { sprite::load_explosion(blob) };
+        }
+        // Decals (decals.wad): shots and blood land on any map.
+        let dn = unsafe {
+            load_accounted_map_chunk(
+                sprite::DECAL_CHUNK_ID,
+                &mut stream_chunks,
+                &mut stream_bytes,
+                &mut stream_sectors,
+            )
+        }
+        .map(|load| load.raw_len)
+        .unwrap_or(0);
+        if dn >= 8 {
+            let blob = unsafe { streamed_map_bytes(dn) };
+            unsafe { sprite::load_decals(blob) };
+        }
+        mat
+    };
+
+    diag_hex(0x0100, "WORLDT", texture_chunk_id, world_chunk_id);
+    let tex_load = load_streamed_chunk(texture_chunk_id, unsafe { map_buf() });
+    let tex_len = tex_load.map_or(0, |load| load.raw_len);
     if let Some(load) = tex_load {
         account_streamed_chunk(
             load,
@@ -36280,7 +36341,7 @@ fn play(
     let tex_bytes = unsafe { streamed_map_bytes(tex_len) };
     telemetry::stage_begin(telemetry::stage::VRAM_UPLOAD);
     let (room_texs, tex_failed) = match unsafe {
-        vram::upload_tex_chunk_raw(
+        vram::upload_tex_chunk_append_raw(
             tex_bytes,
             core::ptr::addr_of_mut!(TEX_SLOTS).cast::<TexSlot>(),
             MAX_TEX_SLOTS,
@@ -36302,29 +36363,6 @@ fn play(
     let model_tex_failed = 0usize;
     let model_texs = 0usize;
     draw_next_loading_screen(fb);
-    // Real HUD sprite sheet -> free gameplay tpage. Streams from the pack
-    // (MAP_BUF is free until the world chunk below); a failed read leaves the
-    // stale VRAM copy from the previous map, which is the same sheet anyway.
-    // The sheet sits at a fixed address outside the room allocator and only the
-    // title menu writes over that VRAM, so after the first map of a session it
-    // is still there: no read, the same materials.
-    let hud_mat = if unsafe { LOAD_RESIDENT } {
-        hud::upload(&[])
-    } else {
-        let n = unsafe {
-            load_accounted_map_chunk(
-                hud::HUD_CHUNK_ID,
-                &mut stream_chunks,
-                &mut stream_bytes,
-                &mut stream_sectors,
-            )
-        }
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-        let blob = unsafe { streamed_map_bytes(n.max(68)) };
-        unsafe { LOAD_RESIDENT = n >= hud::HUD_BLOB_BYTES };
-        hud::upload(blob)
-    };
 
     // These dialogue-heavy maps cannot emit most of the complete campaign
     // combat bank. Fixed-id profiles reclaim that SPU RAM without changing any
@@ -36410,44 +36448,6 @@ fn play(
             unsafe { sprite::load_pack(blob) };
         } else {
             unsafe { sprite::reset() };
-        }
-    }
-
-    // Resident explosion sprite (s_explod.spr): weapon blasts happen on any map,
-    // so load it every map (like the HUD) into its own slots, appended to the
-    // atlas right after the per-map sprites. MAP_BUF is still free (world below).
-    {
-        let en = unsafe {
-            load_accounted_map_chunk(
-                sprite::EXPL_CHUNK_ID,
-                &mut stream_chunks,
-                &mut stream_bytes,
-                &mut stream_sectors,
-            )
-        }
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-        if en >= 20 {
-            let blob = unsafe { streamed_map_bytes(en) };
-            unsafe { sprite::load_explosion(blob) };
-        }
-    }
-
-    // Resident decals (decals.wad): shots and blood land on any map.
-    {
-        let dn = unsafe {
-            load_accounted_map_chunk(
-                sprite::DECAL_CHUNK_ID,
-                &mut stream_chunks,
-                &mut stream_bytes,
-                &mut stream_sectors,
-            )
-        }
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-        if dn >= 8 {
-            let blob = unsafe { streamed_map_bytes(dn) };
-            unsafe { sprite::load_decals(blob) };
         }
     }
 
