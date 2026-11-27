@@ -1096,14 +1096,20 @@ mod tests {
 
     #[test]
     fn setpiece_audio_paths_are_lower_case_wavs_in_tier_order() {
-        use super::setpiece_audio::{COUNT, SOUNDS};
+        use super::setpiece_audio::{COUNT, FIRST_CUE, SOUNDS};
         assert!(COUNT < u8::MAX as usize);
         for sound in SOUNDS.iter() {
             assert!(sound.path.ends_with(".wav"));
             assert_eq!(sound.path, sound.path.to_ascii_lowercase());
             assert!((1..=4).contains(&sound.tier));
         }
-        assert!(SOUNDS.windows(2).all(|w| w[0].tier <= w[1].tier));
+        // The original set is in tier order. The cues after it keep the slots they
+        // were added at (the game and the cooked maps name them by slot), so they
+        // are only held to being one-shots of tier 3 or 4.
+        assert!(SOUNDS[..FIRST_CUE].windows(2).all(|w| w[0].tier <= w[1].tier));
+        assert!(SOUNDS[FIRST_CUE..]
+            .iter()
+            .all(|s| !s.looping && (3..=4).contains(&s.tier)));
     }
 
     #[test]
