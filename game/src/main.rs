@@ -36339,7 +36339,7 @@ fn play(
     // the other on the disc, and uploads them before the room's textures.
     unsafe { vram::begin_map() };
     let hud_mat = if unsafe { LOAD_RESIDENT && sprite::reserve_resident() } {
-        hud::upload(&[])
+        hud::materials()
     } else {
         unsafe { vram::begin_map() };
         // A failed read leaves the stale VRAM copy from the previous map, which is
@@ -36356,7 +36356,8 @@ fn play(
         .unwrap_or(0);
         let blob = unsafe { streamed_map_bytes(n.max(68)) };
         unsafe { LOAD_RESIDENT = n >= hud::HUD_BLOB_BYTES };
-        let mat = hud::upload(blob);
+        hud::upload(blob);
+        let mat = hud::materials();
         // Explosion (s_explod.spr) and the weapon effects' sprites: blasts happen on
         // any map.
         let en = unsafe {

@@ -154,7 +154,7 @@ static mut AMMO_FADE: u8 = 0;
 /// chunk omits u=160..255/v=0..127 (owned by gameplay text) and the unused
 /// bottom-right tail. Avoiding those transparent pixels keeps this chunk below
 /// the largest room stream, so improving the HUD cannot grow MAP_BUF.
-pub fn upload(blob: &[u8]) -> Materials {
+pub fn upload(blob: &[u8]) {
     if blob.len() >= HUD_BLOB_BYTES && &blob[..4] == b"HUD2" {
         upload_bytes(
             VramRect::new(HUD_VRAM_X, 256, (HUD_LEFT_W / 4) as u16, HUD_LEFT_H as u16),
@@ -178,6 +178,11 @@ pub fn upload(blob: &[u8]) -> Materials {
             &blob[36..68],
         );
     }
+}
+
+/// The amber and white additive materials over the sheet [`upload`] puts in VRAM
+/// (a fixed page, so they are the same whether or not this load uploaded it).
+pub fn materials() -> Materials {
     let tp = TexturePage::new(HUD_VRAM_X, 256, TextureDepth::Bit4);
     let tpage = tp.uv_word(BlendMode::Add.texture_page_bits());
     Materials {
