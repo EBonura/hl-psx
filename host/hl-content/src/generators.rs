@@ -243,6 +243,12 @@ const SCRIPT_EVENT_DEAD: i32 = 1000;
 /// scriptevent.h:28. (1001 is SCRIPT_EVENT_NOINTERRUPT, which says nothing about death.)
 const SCRIPT_EVENT_NOT_DEAD: i32 = 1010;
 const SCRIPT_EVENT_FIRE_TARGET: i32 = 1003;
+/// scriptevent.h: EMIT_SOUND on the body channel (1004) and the voice channel (1008).
+const SCRIPT_EVENT_SOUND: i32 = 1004;
+const SCRIPT_EVENT_SOUND_VOICE: i32 = 1008;
+/// Manifest target prefix for a script sound event: `*snd:` and the sample path below
+/// `valve/sound/` (lower case, no stream marker). The map cook binds it to the map's bank id.
+const SOUND_EVENT_PREFIX: &str = "*snd:";
 /// Manifest target for a sequence that leaves its actor dead (SCRIPT_EVENT_DEAD, with no later
 /// SCRIPT_EVENT_NOT_DEAD). The map cook folds it into a LogicAux event the runtime reads as
 /// "kill the actor"; it is never a real targetname (a targetname cannot contain `*`).
@@ -299,7 +305,22 @@ fn extract_events(data: &[u8], sequence: usize) -> Result<Vec<(u16, u16, String)
         {
             death = Some((frame, event == SCRIPT_EVENT_DEAD));
         }
-        if event != SCRIPT_EVENT_FIRE_TARGET || target.is_empty() || target.contains('|') {
+        let target = match event {
+            SCRIPT_EVENT_FIRE_TARGET => target,
+            SCRIPT_EVENT_SOUND | SCRIPT_EVENT_SOUND_VOICE => {
+                let path = target
+                    .trim_start_matches(['*', '!', '/', '\\'])
+                    .replace('\\', "/")
+                    .to_ascii_lowercase();
+                // A sentence (`!NAME`) is not a sample; scripted clips carry none (1005/1009).
+                if path.is_empty() || target.starts_with('!') {
+                    continue;
+                }
+                format!("{SOUND_EVENT_PREFIX}{path}")
+            }
+            _ => continue,
+        };
+        if target.is_empty() || target.contains('|') {
             continue;
         }
         let tick =
@@ -946,6 +967,19 @@ mod tests {
         .unwrap();
         assert!(revived.is_empty());
         assert!(extract_events(&mdl_with_events(&[(1, 2000)]), 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn script_sound_events_name_their_sample() {
+        let mut data = mdl_with_events(&[(5, SCRIPT_EVENT_SOUND), (6, SCRIPT_EVENT_SOUND_VOICE)]);
+        let first = 212 + SEQDESC_BYTES + 12;
+        data[first..first + 26].copy_from_slice(b"*scientist/Sci_Dragoff.wav");
+        let second = first + EVENT_BYTES;
+        data[second..second + 12].copy_from_slice(b"!SC_SENTENCE");
+        assert_eq!(
+            extract_events(&data, 0).unwrap(),
+            vec![(10, 40, "*snd:scientist/sci_dragoff.wav".to_string())]
+        );
     }
 
     #[test]

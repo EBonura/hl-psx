@@ -790,7 +790,14 @@ pub mod setpiece_audio {
     pub const NPC_STEP3: u8 = 75;
     // The tentacle's song (spare SPU RAM only).
     pub const TE_SING: u8 = 76;
-    pub const COUNT: usize = 77;
+    // Sounds a scripted sequence's clip plays on its studio events (1004 and 1008),
+    // for the clips Unforeseen Consequences plays. The class is `@seq:` and the clip's
+    // name: a map whose scripted_sequence plays or idles in that clip carries them.
+    // The runtime plays them by bank id from the script's own event records.
+    pub const SEQ_STAYBACK: u8 = 77;
+    pub const SEQ_CATSCREAM: u8 = 78;
+    pub const SEQ_DRAGOFF: u8 = 79;
+    pub const COUNT: usize = 80;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -919,6 +926,9 @@ pub mod setpiece_audio {
             4,
         ),
         sc("monster_tentacle", "tentacle/te_sing1.wav", 4),
+        sc("@seq:c1a0_catwalk", "scientist/c1a0_sci_stayback.wav", 3),
+        sc("@seq:c1a0_catwalk", "scientist/c1a0_sci_catscream.wav", 3),
+        sc("@seq:ceiling_dangle", "scientist/sci_dragoff.wav", 3),
     ];
 }
 

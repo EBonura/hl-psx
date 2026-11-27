@@ -778,6 +778,13 @@ fn limits(ctx: &Ctx, census: &census::Census, voices: &Path) -> Result<String, S
                 if matches!(e.class(), "func_button" | "func_rot_button") && e.spawnflags() & 64 != 0 {
                     classes.insert("@button_spark".to_string());
                 }
+                if e.class() == "scripted_sequence" {
+                    for key in ["m_iszPlay", "m_iszIdle"] {
+                        if let Some(clip) = e.get(key) {
+                            classes.insert(format!("@seq:{}", clip.trim().to_ascii_lowercase()));
+                        }
+                    }
+                }
             }
             if !s.class.split(',').any(|c| classes.contains(c)) {
                 continue;
@@ -823,6 +830,13 @@ fn carry_stats(ctx: &Ctx, census: &census::Census, voices: &Path) -> Result<BTre
                 }
                 if matches!(e.class(), "func_button" | "func_rot_button") && e.spawnflags() & 64 != 0 {
                     classes.insert("@button_spark".to_string());
+                }
+                if e.class() == "scripted_sequence" {
+                    for key in ["m_iszPlay", "m_iszIdle"] {
+                        if let Some(clip) = e.get(key) {
+                            classes.insert(format!("@seq:{}", clip.trim().to_ascii_lowercase()));
+                        }
+                    }
                 }
             }
             if !s.class.split(',').any(|c| classes.contains(c)) {

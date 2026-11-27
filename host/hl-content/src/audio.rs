@@ -1825,6 +1825,14 @@ fn setpiece_candidates(map: &Path) -> Result<Vec<(usize, MapAudioKey)>> {
                 _ => false,
             };
         }
+        // A scripted sequence's clips bring the samples their studio sound events play.
+        if entity.get("classname").map(String::as_str) == Some("scripted_sequence") {
+            for key in ["m_iszPlay", "m_iszIdle"] {
+                if let Some(clip) = entity.get(key) {
+                    classes.insert(format!("@seq:{}", clip.trim().to_ascii_lowercase()));
+                }
+            }
+        }
         // SF_BUTTON_SPARK_IF_OFF: a resting button or valve sparks.
         if matches!(
             entity.get("classname").map(String::as_str),

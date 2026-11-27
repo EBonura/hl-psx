@@ -11029,6 +11029,9 @@ unsafe fn script_assign_actor(m: &Map, li: usize, rec: map::LogicEnt, pi: usize,
 
 /// LogicAux event target the cook gives a SCRIPT_EVENT_DEAD sequence (hl-bsp `SCRIPT_DEAD_TARGET_ID`).
 const SCRIPT_DEAD_TARGET: u16 = 0xfffe;
+/// LogicAux event targets the cook gives a script sound event (1004, 1008): this base or'ed
+/// with the sample's map-bank id (hl-bsp `SCRIPT_SOUND_TARGET_BASE`).
+const SCRIPT_SOUND_TARGET: u16 = 0xfd00;
 const SCRIPT_CLIP_SLOT_MASK: u16 = 0x003f;
 const SCRIPT_CLIP_DURATION_SHIFT: u32 = 6;
 
@@ -11133,6 +11136,12 @@ unsafe fn script_tick_studio_events(m: &Map, pi: usize, idle: bool) {
                 PROP_HEALTH[pi] = 0;
             }
         } else if play_event == !idle && event.delay_ticks == phase {
+            if event.target & 0xff00 == SCRIPT_SOUND_TARGET {
+                // EMIT_SOUND at the actor (scripted.cpp CCineMonster events 1004/1008).
+                sfx::play_map_world(event.target as u8, PROP_POS[pi]);
+                ai += 2;
+                continue;
+            }
             logic_fire_targets(
                 m,
                 m.n_logic.min(MAX_LOGIC),

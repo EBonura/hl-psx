@@ -8181,6 +8181,11 @@ fn load_clips_manifest() -> std::collections::HashMap<(u16, String), ScriptClip>
 /// `SCRIPT_DEAD_TARGET` must match. Name ids stay below 0x4000, so 0xfffe is never a real name.
 const SCRIPT_DEAD_EVENT_TARGET: &str = "*dead*";
 const SCRIPT_DEAD_TARGET_ID: u16 = 0xfffe;
+/// The extractor's prefix for a script sound event (hl-content `SOUND_EVENT_PREFIX`), and
+/// the LogicAux target range the cook gives it: this base or'ed with the sample's map-bank
+/// id. The runtime's `SCRIPT_SOUND_TARGET` must match. Above every name id, below 0xfffe.
+const SCRIPT_SOUND_EVENT_PREFIX: &str = "*snd:";
+const SCRIPT_SOUND_TARGET_BASE: u16 = 0xfd00;
 
 #[derive(Clone)]
 struct StudioTargetEvent {
@@ -9953,6 +9958,13 @@ fn collect_logic_entities_with_lightstyles(
                     }
                     let target = if event.target == SCRIPT_DEAD_EVENT_TARGET {
                         SCRIPT_DEAD_TARGET_ID
+                    } else if let Some(path) = event.target.strip_prefix(SCRIPT_SOUND_EVENT_PREFIX)
+                    {
+                        // Silent when the map's bank does not carry the sample.
+                        match map_audio_id(&voices, map_index, path, false) {
+                            u8::MAX => 0,
+                            id => SCRIPT_SOUND_TARGET_BASE | id as u16,
+                        }
                     } else {
                         names.id(Some(&event.target))
                     };
