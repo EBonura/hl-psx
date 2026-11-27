@@ -970,9 +970,7 @@ unsafe fn tick_squid(
             // BSQUID_AE_TAILWHIP (whip frame 23): the whip's damage, the punch
             // (x 20, z -20) and a shove 200 to the squid's right and 100 up.
             cue(SP::BC_BITE, pos);
-            DMG_ALWAYSGIB = true;
             damage_target(target, skill_hit(Sk::SquidWhip), pos, health, armor);
-            DMG_ALWAYSGIB = false;
             if target == PROP_TARGET_PLAYER {
                 set_view_punch(Some(20), None, Some(-20));
                 KNOCK = [(fwd[2] * 10) >> 12, 5, -(fwd[0] * 10) >> 12];
