@@ -800,7 +800,9 @@ pub mod setpiece_audio {
     // The barnacle's cry as its tongue takes hold and its chewing (CBarnacle::BarnacleThink).
     pub const BCL_ALERT: u8 = 80;
     pub const BCL_CHEW: u8 = 81;
-    pub const COUNT: usize = 82;
+    // The bullsquid's spit landing (CSquidSpit::Touch).
+    pub const BC_SPITHIT: u8 = 82;
+    pub const COUNT: usize = 83;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -934,6 +936,7 @@ pub mod setpiece_audio {
         sc("@seq:ceiling_dangle", "scientist/sci_dragoff.wav", 3),
         sc("monster_barnacle", "barnacle/bcl_alert2.wav", 3),
         sc("monster_barnacle", "barnacle/bcl_chew1.wav", 3),
+        sc("monster_bullchicken", "bullchicken/bc_spithit1.wav", 3),
     ];
 }
 
