@@ -132,9 +132,11 @@ pub(crate) unsafe fn tick(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut
                 } else {
                     damage_prop(victim as usize, u8::MAX, false);
                 }
+                // ACT_EAT: chewcycle (2 s) for the chew, with its crunch.
                 PROP_STATE[pi] = PROP_STATE_ATTACK;
                 PROP_AI_TIMER[pi] = CHEW_TICKS;
                 setpiece_sfx::play(hl_format::setpiece_audio::BCL_BITE, b);
+                setpiece_sfx::play(hl_format::setpiece_audio::BCL_CHEW, b);
             }
         }
         PROP_STATE_ATTACK => {
@@ -146,8 +148,10 @@ pub(crate) unsafe fn tick(m: &Map, pi: usize, player_pos: [i32; 3], health: &mut
         _ => {
             let prey = find_prey(m, pi, player_pos);
             if prey != PROP_TARGET_NONE {
+                // The tongue takes hold: bcl_alert2, and attack1 plays while it hauls.
                 PROP_AI_TARGET[pi] = prey;
                 PROP_STATE[pi] = PROP_STATE_MOVE;
+                setpiece_sfx::play(hl_format::setpiece_audio::BCL_ALERT, b);
             }
         }
     }

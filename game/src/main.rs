@@ -1299,6 +1299,8 @@ const BARNEY_DRAW_TICKS: u8 = 18;
 const PROP_CLIP_ALT: usize = 5;
 /// The houndeye's jumpback, after its rest (CHoundeye's SCHED_HOUND_HOP_RETREAT).
 const HOUNDEYE_HOP_CLIP: usize = 6;
+/// The bullsquid's tail whip, after its bite (CheckMeleeAttack1).
+const SQUID_WHIP_CLIP: usize = 6;
 const BARNEY_DAMAGE: u8 = 5; // sk_9mm_bullet 5/5/8 (skill.cfg), scaled by skill
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
 const BARNEY_STOP_RANGE2: i32 = 128 * 128;
@@ -15454,6 +15456,9 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     if unsafe { PROP_KIND[pi] == PROP_TYPE_HOUNDEYE && species::houndeye_hopping(pi, state) } {
         return HOUNDEYE_HOP_CLIP;
     }
+    if unsafe { PROP_KIND[pi] == 7 && state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] & 96 == 96 } {
+        return SQUID_WHIP_CLIP;
+    }
     let alt = unsafe {
         match PROP_KIND[pi] {
             6 => state == PROP_STATE_IDLE && PROP_ATTACK_COOLDOWN[pi] != 0,
@@ -15703,6 +15708,23 @@ fn prop_anim_frame(
             (0, 0, 0)
         };
     }
+    if unsafe { PROP_KIND[pi] == 7 && PROP_AI_TIMER[pi] & 32 != 0 }
+        && state == PROP_STATE_ATTACK
+        && hit_flash == 0
+    {
+        // The bite and the whip play once from the start of their bout.
+        let (bout, left) = unsafe { species::squid_melee_window(pi) };
+        forget_clip();
+        return if pose {
+            md.one_shot_clip_phase(
+                clip,
+                md.clip_hold_ticks(clip) as usize,
+                bout.saturating_sub(left) as usize,
+            )
+        } else {
+            (0, 0, 0)
+        };
+    }
     if unsafe { PROP_KIND[pi] } == 8 && matches!(state, 6 | 7) && hit_flash == 0 {
         let duration = if state == 7 {
             hecu_grenades::LAUNCH_ANIMATION_TICKS
@@ -15775,8 +15797,9 @@ fn prop_anim_frame(
     if !pose {
         return (0, 0, 0);
     }
-    if hopping {
-        // jumpback plays once from the hop's start and holds its landing pose.
+    if hopping || unsafe { PROP_KIND[pi] } == 12 && state == PROP_STATE_MOVE {
+        // jumpback plays once from the hop's start and holds its landing pose; a
+        // barnacle's attack1 once from the grab while it hauls.
         return md.one_shot_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed);
     }
     md.looped_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed)

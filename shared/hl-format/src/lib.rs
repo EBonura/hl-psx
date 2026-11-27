@@ -797,7 +797,10 @@ pub mod setpiece_audio {
     pub const SEQ_STAYBACK: u8 = 77;
     pub const SEQ_CATSCREAM: u8 = 78;
     pub const SEQ_DRAGOFF: u8 = 79;
-    pub const COUNT: usize = 80;
+    // The barnacle's cry as its tongue takes hold and its chewing (CBarnacle::BarnacleThink).
+    pub const BCL_ALERT: u8 = 80;
+    pub const BCL_CHEW: u8 = 81;
+    pub const COUNT: usize = 82;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -929,6 +932,8 @@ pub mod setpiece_audio {
         sc("@seq:c1a0_catwalk", "scientist/c1a0_sci_stayback.wav", 3),
         sc("@seq:c1a0_catwalk", "scientist/c1a0_sci_catscream.wav", 3),
         sc("@seq:ceiling_dangle", "scientist/sci_dragoff.wav", 3),
+        sc("monster_barnacle", "barnacle/bcl_alert2.wav", 3),
+        sc("monster_barnacle", "barnacle/bcl_chew1.wav", 3),
     ];
 }
 

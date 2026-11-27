@@ -951,43 +951,59 @@ unsafe fn tick_squid(
     };
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);
-    let t = PROP_AI_TIMER[pi]; // low 5 bits: animation ticks left, bit 5: whip, bits 6-7: spits so far
-    let left = t & 31;
+    // Low 5 bits: animation ticks left (bit 7 adds 32 for the whip's long bout), bit 5: a
+    // melee bout, bit 6: the whip rather than the bite.
+    let t = PROP_AI_TIMER[pi];
+    let left = (t & 31) | ((t >> 2) & 32);
     if left > 0 {
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        PROP_AI_TIMER[pi] = t - 1;
+        let next = left - 1;
+        PROP_AI_TIMER[pi] = (t & 0x60) | (next & 31) | ((next & 32) << 2);
         let from = prop_eye(m, pi);
+        let fwd = dir_q12(pos, aim);
+        let near = d2 <= 85 * 85;
         if t & 32 == 0 && left == 25 {
             let dir = dir_q12(from, aim);
             spawn_projectile_dir(PROJ_SPIT, skill_hit(Sk::SquidSpit), from, dir, true);
             cue_or(SP::BC_SPIT, sfx::HC_ATTACK, pos);
-        } else if t & 32 != 0 && left == 20 && d2 <= 85 * 85 {
+        } else if t & 96 == 96 && left == SQUID_WHIP_TICKS - 16 && near {
+            // BSQUID_AE_TAILWHIP (whip frame 23): the whip's damage, the punch
+            // (x 20, z -20) and a shove 200 to the squid's right and 100 up.
             cue(SP::BC_BITE, pos);
-            // The tail whip is the finisher: used when it would kill, the bite
-            // otherwise (CheckMeleeAttack1 and 2).
-            let victim = if target == PROP_TARGET_PLAYER {
-                *health
-            } else {
-                PROP_HEALTH[target as usize] as u16
-            };
-            let whip = skill_hit(Sk::SquidWhip);
-            damage_target(
-                target,
-                if victim <= whip as u16 {
-                    whip
-                } else {
-                    skill_hit(Sk::SquidBite)
-                },
-                pos,
-                health,
-                armor,
-            );
-            let dir = dir_q12(pos, aim);
-            KNOCK = [(dir[0] * 14) >> 12, 15, (dir[2] * 14) >> 12];
+            damage_target(target, skill_hit(Sk::SquidWhip), pos, health, armor);
+            if target == PROP_TARGET_PLAYER {
+                set_view_punch(Some(20), None, Some(-20));
+                KNOCK = [(fwd[2] * 10) >> 12, 5, -(fwd[0] * 10) >> 12];
+            }
+        } else if t & 96 == 32 && left == SQUID_BITE_TICKS - 5 && near {
+            // BSQUID_AE_BITE (bite frame 7): the bite pulls the prey 100 in and 100 up.
+            cue(SP::BC_BITE, pos);
+            damage_target(target, skill_hit(Sk::SquidBite), pos, health, armor);
+            if target == PROP_TARGET_PLAYER {
+                KNOCK = [-(fwd[0] * 5) >> 12, 5, -(fwd[2] * 5) >> 12];
+            }
+        } else if t & 96 == 32 && left == SQUID_BITE_TICKS - 7 && near {
+            // BSQUID_AE_THROW (bite frame 10): it flings a player 300 away and 300 up
+            // and shakes his view (UTIL_ScreenShake 25, 0.7 s).
+            if target == PROP_TARGET_PLAYER {
+                crate::garg::shake(LOGIC_PLAYER_POS, 25, 14, 2);
+                KNOCK = [(fwd[0] * 15) >> 12, 15, (fwd[2] * 15) >> 12];
+            }
         }
     } else if visible && d2 <= 64 * 64 {
+        // CheckMeleeAttack1 (the whip) is the finisher, used when it would kill;
+        // CheckMeleeAttack2 (the bite) otherwise.
+        let victim = if target == PROP_TARGET_PLAYER {
+            *health
+        } else {
+            PROP_HEALTH[target as usize] as u16
+        };
         PROP_STATE[pi] = PROP_STATE_ATTACK;
-        PROP_AI_TIMER[pi] = (t & 0xC0) | 32 | 24;
+        PROP_AI_TIMER[pi] = if victim <= skill_hit(Sk::SquidWhip) as u16 {
+            32 | 64 | (SQUID_WHIP_TICKS & 31) | ((SQUID_WHIP_TICKS & 32) << 2)
+        } else {
+            32 | SQUID_BITE_TICKS
+        };
         cue(SP::BC_GROWL, pos);
     } else if visible
         && d2 <= 784 * 784
@@ -1007,6 +1023,18 @@ unsafe fn tick_squid(
     } else {
         PROP_STATE[pi] = PROP_STATE_IDLE;
     }
+}
+
+/// The bullsquid's bite (29 frames at 30 fps, kept at its old 24-tick bout) and
+/// its whip (55 frames at 30 fps).
+const SQUID_BITE_TICKS: u8 = 24;
+const SQUID_WHIP_TICKS: u8 = 37;
+
+/// A bullsquid melee bout's length and the ticks it has left.
+pub(crate) unsafe fn squid_melee_window(pi: usize) -> (u8, u8) {
+    let t = PROP_AI_TIMER[pi];
+    let bout = if t & 64 != 0 { SQUID_WHIP_TICKS } else { SQUID_BITE_TICKS };
+    (bout, (t & 31) | ((t >> 2) & 32))
 }
 
 /// The hop back's AI timer runs from `HOUND_HOP_END + HOUND_HOP_TICKS` down to

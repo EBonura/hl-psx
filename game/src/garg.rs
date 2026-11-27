@@ -162,7 +162,7 @@ pub(crate) unsafe fn gesture_clip(pi: usize) -> Option<(usize, usize, usize)> {
 /// UTIL_ScreenShake as the player feels it, keeping a stronger shake.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn shake(from: [i32; 3], amplitude: i32, ticks: u16, radius: i32) {
+pub(crate) unsafe fn shake(from: [i32; 3], amplitude: i32, ticks: u16, radius: i32) {
     let amp = sl::shake_amplitude(
         amplitude,
         isqrt_i32(dist2_3(from, LOGIC_PLAYER_POS)),
