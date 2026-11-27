@@ -1080,6 +1080,8 @@ unsafe fn tick_hound(
             PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;
             PROP_NEAR_COUNT[pi] = 0xff;
             prop_set_pos_exact(m, pi, [pos[0], pos[1] + 1, pos[2]]);
+            // The AI sleeps through the 12 airborne ticks; 3 are left after the landing.
+            PROP_AI_TIMER[pi] = HOUND_HOP_END + 3;
         } else if left == HOUND_HOP_END + 1 {
             PROP_AI_TIMER[pi] = 30;
         }

@@ -15527,6 +15527,10 @@ fn prop_anim_frame(
         let clip = SLOTS[sequence].min(md.clip_count().saturating_sub(1));
         return md.one_shot_clip_phase(clip, DURATIONS[sequence], phase);
     }
+    // The houndeye's hop back replaces its flinch (CHoundeye::GetSchedule in combat).
+    let hopping =
+        unsafe { PROP_KIND[pi] == PROP_TYPE_HOUNDEYE && species::houndeye_hopping(pi, state) };
+    let hit_flash = if hopping { 0 } else { hit_flash };
     let clip = prop_clip(pi, state, hit_flash > 0);
     // Scripted override: one-shot gesture while its window runs, else the
     // scripted idle pose while the prop is idle (sit1, standing_idle, ...).
@@ -15761,6 +15765,10 @@ fn prop_anim_frame(
     };
     if !pose {
         return (0, 0, 0);
+    }
+    if hopping {
+        // jumpback plays once from the hop's start and holds its landing pose.
+        return md.one_shot_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed);
     }
     md.looped_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed)
 }
