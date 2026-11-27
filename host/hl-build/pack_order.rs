@@ -22,8 +22,9 @@
 //!
 //! Anything this module does not recognise goes last in id order.
 //!
-//! Room clusters (cook switch `HLPSX_ROOM_CLUSTERS=1`, game feature
-//! `room-clusters`): each room's cluster also gets its own copy of the shared
+//! Room clusters (`HLPSX_ROOM_CLUSTERS=1`, which also turns on the game feature
+//! `room-clusters`; the standalone ship build in psoxide-test.toml sets it, a plain pack and
+//! the demo disc member build do not): each room's cluster also gets its own copy of the shared
 //! chunks its load reads, under alias ids (`room_alias`), in read order: the
 //! core sound bank before the textures, then after the world the glock and the
 //! models the room places, in the order the game streams them. A load then

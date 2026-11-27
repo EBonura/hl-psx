@@ -968,6 +968,19 @@ fn parse_args() -> Options {
             _ => usage(),
         }
     }
+    // The room-cluster layout and the game's alias lookups go together: one switch
+    // (HLPSX_ROOM_CLUSTERS=1) turns on both, so a pack can never carry the copies without the
+    // game asking for them, or the other way round.
+    if pack_order::clusters_enabled() {
+        let mut features = options.features.take().unwrap_or_default();
+        if !features.split(',').any(|f| f.trim() == "room-clusters") {
+            if !features.trim().is_empty() {
+                features.push(',');
+            }
+            features.push_str("room-clusters");
+        }
+        options.features = Some(features);
+    }
     options
 }
 
