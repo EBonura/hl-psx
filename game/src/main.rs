@@ -33890,8 +33890,10 @@ unsafe fn draw_sonic_rings(
         }
         let col = SONIC_RING_COLOURS[colour as usize & 3];
         // The wide ring (384 at the end of its life) and the half one.
-        for full in [384i32, 192] {
-            let radius = full * elapsed_q12 / (SONIC_RING_TICKS << 12);
+        let mut half = 0;
+        while half < 2 {
+            let radius = (384 >> half) * elapsed_q12 / (SONIC_RING_TICKS << 12);
+            half += 1;
             if radius < 4 {
                 continue;
             }
@@ -33910,15 +33912,22 @@ unsafe fn draw_sonic_rings(
     SONIC_RINGS_LIVE = live;
 }
 
-/// Point `i` of a sonic ring's `SONIC_RING_SEGMENTS` around `feet` at `radius`.
+/// (sin, cos) in Q12 of each of a sonic ring's `SONIC_RING_SEGMENTS` points.
+const SONIC_RING_DIRS: [(i16, i16); 16] = [
+    (0, 4096), (1567, 3784), (2896, 2896), (3784, 1567), (4096, 0), (3784, -1567),
+    (2896, -2896), (1567, -3784), (0, -4096), (-1567, -3784), (-2896, -2896),
+    (-3784, -1567), (-4096, 0), (-3784, 1567), (-2896, 2896), (-1567, 3784),
+];
+
+/// Point `i` of a sonic ring around `feet` at `radius`, 16 units above them.
 #[inline(never)]
 #[optimize(size)]
 fn sonic_ring_point(feet: [i32; 3], radius: i32, i: i32) -> [i32; 3] {
-    let a = ((i * 4096 / SONIC_RING_SEGMENTS) & 0xfff) as u16;
+    let (s, c) = SONIC_RING_DIRS[(i & 15) as usize];
     [
-        feet[0] + (sincos::sin_q12(a) * radius >> 12),
+        feet[0] + (s as i32 * radius >> 12),
         feet[1] + 16,
-        feet[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * radius >> 12),
+        feet[2] + (c as i32 * radius >> 12),
     ]
 }
 
