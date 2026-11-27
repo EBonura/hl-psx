@@ -1032,13 +1032,6 @@ unsafe fn tick_squid(
 const SQUID_BITE_TICKS: u8 = 24;
 const SQUID_WHIP_TICKS: u8 = 37;
 
-/// A bullsquid melee bout's length and the ticks it has left.
-pub(crate) unsafe fn squid_melee_window(pi: usize) -> (u8, u8) {
-    let t = PROP_AI_TIMER[pi];
-    let bout = if t & 64 != 0 { SQUID_WHIP_TICKS } else { SQUID_BITE_TICKS };
-    (bout, (t & 31) | ((t >> 2) & 32))
-}
-
 /// The hop back's AI timer runs from `HOUND_HOP_END + HOUND_HOP_TICKS` down to
 /// `HOUND_HOP_END`; the slide's stays at 30 and under.
 const HOUND_HOP_END: u8 = 100;
@@ -1054,12 +1047,21 @@ pub(crate) unsafe fn houndeye_hopping(pi: usize, state: u8) -> bool {
 #[inline(never)]
 #[optimize(size)]
 unsafe fn hound_clear_behind(m: &Map, pi: usize, aim: [i32; 3]) -> bool {
+    let back = hound_back(pi, aim);
+    let from = prop_target(PROP_KIND[pi], PROP_POS[pi]);
+    blast_line_clear(
+        m,
+        from,
+        [from[0] + (back[0] >> 5), from[1], from[2] + (back[2] >> 5)],
+    )
+}
+
+/// The level direction straight away from `aim`, in Q12.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn hound_back(pi: usize, aim: [i32; 3]) -> [i32; 3] {
     let pos = PROP_POS[pi];
-    let (dx, dz) = (pos[0] - aim[0], pos[2] - aim[2]);
-    let len = isqrt_i32(dx * dx + dz * dz).max(1);
-    let from = prop_target(PROP_KIND[pi], pos);
-    let to = [from[0] + dx * 128 / len, from[1], from[2] + dz * 128 / len];
-    phys::line_clear_world(m, from, to)
+    dir_q12([aim[0], pos[1], aim[2]], pos)
 }
 
 /// monster_houndeye: runs in to 190 units, charges for 49 ticks and lets go at
@@ -1100,11 +1102,10 @@ unsafe fn tick_hound(
         // last 3 ticks run after the landing; then it takes cover (the slide).
         PROP_AI_TIMER[pi] = left - 1;
         if left == HOUND_HOP_END + HOUND_HOP_TICKS - 4 {
-            let (dx, dz) = (pos[0] - aim[0], pos[2] - aim[2]);
-            let len = isqrt_i32(dx * dx + dz * dz).max(1);
+            let back = hound_back(pi, aim);
             PROP_JUMP[pi].start();
             PROP_JUMP[pi].launch(
-                [(dx * 160 / len) as i16, 192, (dz * 160 / len) as i16],
+                [(back[0] * 160 >> 12) as i16, 192, (back[2] * 160 >> 12) as i16],
                 true,
             );
             PROP_DORMANT[pi] |= PROP_RUNTIME_AIRBORNE;

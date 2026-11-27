@@ -15708,23 +15708,6 @@ fn prop_anim_frame(
             (0, 0, 0)
         };
     }
-    if unsafe { PROP_KIND[pi] == 7 && PROP_AI_TIMER[pi] & 32 != 0 }
-        && state == PROP_STATE_ATTACK
-        && hit_flash == 0
-    {
-        // The bite and the whip play once from the start of their bout.
-        let (bout, left) = unsafe { species::squid_melee_window(pi) };
-        forget_clip();
-        return if pose {
-            md.one_shot_clip_phase(
-                clip,
-                md.clip_hold_ticks(clip) as usize,
-                bout.saturating_sub(left) as usize,
-            )
-        } else {
-            (0, 0, 0)
-        };
-    }
     if unsafe { PROP_KIND[pi] } == 8 && matches!(state, 6 | 7) && hit_flash == 0 {
         let duration = if state == 7 {
             hecu_grenades::LAUNCH_ANIMATION_TICKS
@@ -15797,9 +15780,18 @@ fn prop_anim_frame(
     if !pose {
         return (0, 0, 0);
     }
-    if hopping || unsafe { PROP_KIND[pi] } == 12 && state == PROP_STATE_MOVE {
+    if hopping
+        || unsafe {
+            match PROP_KIND[pi] {
+                12 => state == PROP_STATE_MOVE,
+                7 => state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] & 32 != 0,
+                _ => false,
+            }
+        }
+    {
         // jumpback plays once from the hop's start and holds its landing pose; a
-        // barnacle's attack1 once from the grab while it hauls.
+        // barnacle's attack1 once from the grab while it hauls; a bullsquid's bite or
+        // whip once from the start of its bout.
         return md.one_shot_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed);
     }
     md.looped_clip_phase(clip, md.clip_hold_ticks(clip) as usize, elapsed)
@@ -33937,23 +33929,18 @@ unsafe fn draw_sonic_rings(
             if radius < 4 {
                 continue;
             }
-            let point = |i: i32, y: i32| {
-                let a = ((i * 4096 / SONIC_RING_SEGMENTS) & 0xfff) as u16;
-                [
-                    feet[0] + (sincos::sin_q12(a) * radius >> 12),
-                    y,
-                    feet[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * radius >> 12),
-                ]
-            };
             let mut i = 0i32;
+            let mut prev = sonic_ring_point(feet, radius, 0);
             while i < SONIC_RING_SEGMENTS {
-                let low = project_beam_segment(point(i, feet[1]), point(i + 1, feet[1]), rot, base_t);
+                let next = sonic_ring_point(feet, radius, i + 1);
+                let low = project_beam_segment(prev, next, rot, base_t);
                 let high = project_beam_segment(
-                    point(i, feet[1] + 32),
-                    point(i + 1, feet[1] + 32),
+                    [prev[0], prev[1] + 32, prev[2]],
+                    [next[0], next[1] + 32, next[2]],
                     rot,
                     base_t,
                 );
+                prev = next;
                 i += 1;
                 let (Some((l0, l1)), Some((h0, h1))) = (low, high) else {
                     continue;
@@ -33978,6 +33965,18 @@ unsafe fn draw_sonic_rings(
         }
     }
     SONIC_RINGS_LIVE = live;
+}
+
+/// Point `i` of a sonic ring's `SONIC_RING_SEGMENTS` around `feet` at `radius`.
+#[inline(never)]
+#[optimize(size)]
+fn sonic_ring_point(feet: [i32; 3], radius: i32, i: i32) -> [i32; 3] {
+    let a = ((i * 4096 / SONIC_RING_SEGMENTS) & 0xfff) as u16;
+    [
+        feet[0] + (sincos::sin_q12(a) * radius >> 12),
+        feet[1],
+        feet[2] + (sincos::sin_q12(a.wrapping_add(1024) & 0xfff) * radius >> 12),
+    ]
 }
 
 /// Queue every world-space beam before the world OT is submitted. Static map
