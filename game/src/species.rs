@@ -65,36 +65,32 @@ unsafe fn acquire(
     Some((target, visible, aim))
 }
 
-/// CISlave::ArmBeam for both hands: from the hand (36 up, 16 to the side, 32
-/// ahead) toward a random point out to the side, up to 512 units; a beam only
-/// when that line meets a wall.
+/// CISlave::ArmBeam, one hand a call (the hands take turns): from the hand (36
+/// up, 16 to the side, 32 ahead) toward a random point out to that side, up to
+/// 512 units; a beam only when that line meets a wall.
 #[inline(never)]
 #[optimize(size)]
-unsafe fn slave_arm_beams(m: &Map, movers: &[phys::Mover], pi: usize) {
+unsafe fn slave_arm_beam(m: &Map, movers: &[phys::Mover], pi: usize, right: bool) {
     let pos = PROP_POS[pi];
     let yaw = prop_yaw_value(PROP_YAW[pi]);
     let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
-    let mut side = -1i32;
-    while side <= 1 {
-        let (rx, rz) = (fz * side, -fx * side);
-        let src = [
-            pos[0] + ((rx * 16 + fx * 32) >> 12),
-            pos[1] + 36,
-            pos[2] + ((rz * 16 + fz * 32) >> 12),
-        ];
-        // A hash of the tick and the hand, so the shared RNG streams stay as they were.
-        let h = (SIM_NOW as u32 ^ (pi as u32) << 8 ^ (side as u32) << 16).wrapping_mul(0x9E37_79B1);
-        let out = (h >> 20) as i32;
-        let up = ((h >> 7) & 0x1fff) as i32 - 4096;
-        let end = [
-            src[0] + ((rx * out >> 12) * 512 >> 12),
-            src[1] + (up * 512 >> 12),
-            src[2] + ((rz * out >> 12) * 512 >> 12),
-        ];
-        if let Some(hit) = phys::trace_line(m, movers, src, end) {
-            push_tracer_styled(src, hit.pos, TRACER_BEAM);
-        }
-        side += 2;
+    let side = if right { 1 } else { -1 };
+    let (rx, rz) = (fz * side, -fx * side);
+    let src = [
+        pos[0] + ((rx * 16 + fx * 32) >> 12),
+        pos[1] + 36,
+        pos[2] + ((rz * 16 + fz * 32) >> 12),
+    ];
+    // A hash of the tick and the prop, so the shared RNG streams stay as they were.
+    let h = (SIM_NOW as u32 ^ (pi as u32) << 8).wrapping_mul(0x9E37_79B1);
+    let out = (h >> 23) as i32;
+    let end = [
+        src[0] + ((rx * out) >> 12),
+        src[1] + ((h >> 7) & 0x3ff) as i32 - 512,
+        src[2] + ((rz * out) >> 12),
+    ];
+    if let Some(hit) = phys::trace_line(m, movers, src, end) {
+        push_tracer_styled(src, hit.pos, TRACER_BEAM);
     }
 }
 
@@ -359,7 +355,7 @@ pub(crate) unsafe fn tick_slave(
         // ISLAVE_AE_ZAP_POWERUP's ArmBeams: lightning from each hand to a wall the
         // hand can reach, crackling while the charge builds.
         if k >= 2 && k < 33 && k & 1 == 0 {
-            slave_arm_beams(m, movers, pi);
+            slave_arm_beam(m, movers, pi, k & 2 != 0);
         }
         if k >= 33 && k <= 40 && visible {
             let from = [pos[0], pos[1] + 30, pos[2]];
