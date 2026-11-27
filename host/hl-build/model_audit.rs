@@ -709,6 +709,11 @@ fn audit_map_clip_manifests(
     Ok(report)
 }
 
+/// Model types a cooked map places (its props), in prop order.
+pub(crate) fn map_actor_types(path: &Path) -> Result<Vec<u8>> {
+    Ok(parse_map_actors(path)?.into_iter().map(|actor| actor.ty).collect())
+}
+
 fn parse_map_actors(path: &Path) -> Result<Vec<Actor>> {
     let data = fs::read(path)?;
     let what = path.display().to_string();

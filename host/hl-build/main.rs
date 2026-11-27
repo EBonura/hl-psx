@@ -2952,6 +2952,7 @@ fn pack_disc_into(
     fs::create_dir_all(dist)?;
     let image = dist.join("hl-psx.bin");
     let staged_pack = stage_world_pack(repository)?;
+    let room_clusters = pack_order::stage_room_clusters(repository, &staged_pack)?;
     let movie = intro.then(|| intro::cooked(repository)).flatten();
     if intro && movie.is_none() {
         return Err(
@@ -2996,7 +2997,12 @@ fn pack_disc_into(
     if DIAG_BUILD.load(Ordering::Relaxed) {
         command.arg("--diag");
     }
-    for directory in ["modelpack", "sfx", "voices", "sprites"] {
+    let extra_dirs: &[&str] = if room_clusters {
+        &["modelpack", "sfx", "voices", "sprites", "clusters"]
+    } else {
+        &["modelpack", "sfx", "voices", "sprites"]
+    };
+    for directory in extra_dirs {
         command
             .arg("--world-pack-extra-dir")
             .arg(staged_pack.join(directory));

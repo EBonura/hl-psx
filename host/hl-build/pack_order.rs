@@ -21,6 +21,17 @@
 //!    sprites, world.
 //!
 //! Anything this module does not recognise goes last in id order.
+//!
+//! Room clusters (cook switch `HLPSX_ROOM_CLUSTERS=1`, game feature
+//! `room-clusters`): each room's cluster also gets its own copy of the shared
+//! chunks its load reads, under alias ids (`room_alias`), in read order: the
+//! core sound bank before the textures, then after the world the glock and the
+//! models the room places, in the order the game streams them. A load then
+//! seeks once to the cluster and reads on from there; every read that starts
+//! where the previous one ended costs about 1.6 VBlanks of drive time instead of
+//! about 20 for any other (PSoXide drive model, lane hl-loads 11-27). The disc
+//! grows by the copies. Carried actors and the player's own weapon models are
+//! not predictable from the cook and keep reading the shared chunk.
 
 use super::Result;
 use std::collections::{BTreeMap, BTreeSet};
@@ -108,8 +119,166 @@ fn within_type(id: u32) -> (u32, u32) {
     }
 }
 
-/// The chunk ids in disc order.
-pub fn layout(contents: &PackContents) -> Vec<u32> {
+/// Alias ids of the room-cluster copies: `ROOM_ALIAS_BASE + room * ROOM_ALIAS_STRIDE +
+/// (id - 1000)` for a shared chunk `id` in `1000..3100` (`game/src/main.rs` has the twin).
+pub const ROOM_ALIAS_BASE: u32 = 1 << 20;
+pub const ROOM_ALIAS_STRIDE: u32 = 4096;
+/// Most copies one room may get; `game/build.rs` sizes the pack-table cache with it.
+pub const ROOM_ALIAS_MAX: usize = 48;
+/// The per-map core sound bank table (`sfx::CORE_TABLE_CHUNK`, "HCPT").
+const CORE_TABLE_CHUNK: u32 = 3052;
+
+/// The alias id of room `room`'s copy of shared chunk `id`.
+pub fn room_alias(room: u32, id: u32) -> u32 {
+    ROOM_ALIAS_BASE + room * ROOM_ALIAS_STRIDE + (id - VIEWMODEL_FIRST)
+}
+
+/// One room's copies, as pack ids in read order: `head` before its textures, `tail` after
+/// its world. Entries are alias ids, or the real id of a variant only this room uses.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct Cluster {
+    pub head: Vec<u32>,
+    pub tail: Vec<u32>,
+}
+
+/// Whether the room-cluster layout is switched on for this pack.
+pub fn clusters_enabled() -> bool {
+    std::env::var("HLPSX_ROOM_CLUSTERS").is_ok_and(|v| v == "1")
+}
+
+/// Every room's cluster copies, from the cooked maps (their props), the variant table and
+/// the core-bank table. The model order is the game's (`stream_map_models`: importance
+/// pass, then largest stream first, geometry then its split texture).
+pub fn cluster_plan(repository: &Path, contents: &PackContents) -> Result<BTreeMap<u32, Cluster>> {
+    let core_table = fs::read(repository.join(format!("data/sfx/chunk_{CORE_TABLE_CHUNK}.psxa")))
+        .unwrap_or_default();
+    let core_profile = |room: u32| -> Option<u32> {
+        if core_table.len() < 8 || &core_table[..4] != b"HCPT" {
+            return None;
+        }
+        let count = u16::from_le_bytes([core_table[4], core_table[5]]) as u32;
+        let at = 8 + 2 * room as usize;
+        if room >= count || at + 2 > core_table.len() {
+            return None;
+        }
+        let id = u32::from(u16::from_le_bytes([core_table[at], core_table[at + 1]]));
+        (id != 0 && contents.ids.contains(&id)).then_some(id)
+    };
+    // (map, type) -> variant chunk, for the rows a map's own props use.
+    let mut variant_of: BTreeMap<(u32, u8), u32> = BTreeMap::new();
+    let variants = repository.join("data/modelpack/map-model-variants.txt");
+    if let Ok(text) = fs::read_to_string(&variants) {
+        for line in text.lines().filter(|l| !l.is_empty() && !l.starts_with('#')) {
+            let f: Vec<&str> = line.split('|').collect();
+            let (Some(map), Some(ty), Some(chunk)) = (
+                f.first().and_then(|v| v.parse::<u32>().ok()),
+                f.get(2).and_then(|v| v.parse::<u8>().ok()),
+                f.get(3).and_then(|v| v.parse::<u32>().ok()),
+            ) else {
+                continue;
+            };
+            if f.get(4).map(|v| v.trim()) != Some("1") {
+                variant_of.insert((map, ty), chunk);
+            }
+        }
+    }
+    let rank = |ty: u8| {
+        let bytes = contents.stream_bytes.get(&ty).copied().unwrap_or(0);
+        (tier(ty), std::cmp::Reverse(bytes), ty)
+    };
+    let rooms: BTreeSet<u32> = contents
+        .ids
+        .iter()
+        .filter(|&&id| id < VIEWMODEL_FIRST)
+        .map(|&id| id / 2)
+        .collect();
+    let mut plan = BTreeMap::new();
+    for room in rooms {
+        let world = repository.join(format!("data/rooms/room_{}.psxc", 2 * room));
+        let Ok(placed) = super::model_audit::map_actor_types(&world) else {
+            continue;
+        };
+        let mut cluster = Cluster::default();
+        if let Some(profile) = core_profile(room) {
+            cluster.head.push(room_alias(room, profile));
+        }
+        if contents.ids.contains(&VIEWMODEL_FIRST) {
+            cluster.tail.push(room_alias(room, VIEWMODEL_FIRST));
+        }
+        let mut types: Vec<u8> = placed.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
+        types.sort_by_key(|&ty| rank(ty));
+        for ty in types {
+            let geometry = variant_of
+                .get(&(room, ty))
+                .copied()
+                .unwrap_or(GEOMETRY_BASE + u32::from(ty));
+            if contents.ids.contains(&geometry) {
+                cluster.tail.push(if exclusive_map(geometry, contents) == Some(room) {
+                    geometry
+                } else {
+                    room_alias(room, geometry)
+                });
+            }
+            let texture = TEXTURE_BASE + u32::from(ty);
+            if contents.ids.contains(&texture) {
+                cluster.tail.push(room_alias(room, texture));
+            }
+        }
+        let copies = cluster.head.len() + cluster.tail.len();
+        if copies > ROOM_ALIAS_MAX {
+            return Err(format!("room {room} wants {copies} cluster copies, more than {ROOM_ALIAS_MAX}").into());
+        }
+        plan.insert(room, cluster);
+    }
+    Ok(plan)
+}
+
+/// The shared chunk an alias id stands for.
+pub fn alias_source(alias: u32) -> Option<u32> {
+    let rel = alias.checked_sub(ROOM_ALIAS_BASE)?;
+    Some(VIEWMODEL_FIRST + rel % ROOM_ALIAS_STRIDE)
+}
+
+/// Stage the room-cluster copies into `staged/clusters` (when switched on): each alias is
+/// a copy of the staged shared chunk's file. Returns whether the directory was written.
+pub fn stage_room_clusters(repository: &Path, staged: &Path) -> Result<bool> {
+    if !clusters_enabled() {
+        return Ok(false);
+    }
+    let contents = contents(repository, staged)?;
+    let plan = cluster_plan(repository, &contents)?;
+    let dir = staged.join("clusters");
+    fs::create_dir_all(&dir)?;
+    let mut files: BTreeMap<u32, std::path::PathBuf> = BTreeMap::new();
+    for family in ["modelpack", "sfx"] {
+        for entry in fs::read_dir(staged.join(family))? {
+            let path = entry?.path();
+            if let Some(id) = id_of(&path, "chunk_") {
+                files.insert(id, path);
+            }
+        }
+    }
+    let (mut copies, mut bytes) = (0usize, 0u64);
+    for cluster in plan.values() {
+        for &alias in cluster.head.iter().chain(&cluster.tail) {
+            let Some(source) = alias_source(alias).filter(|_| alias >= ROOM_ALIAS_BASE) else {
+                continue;
+            };
+            let from = files
+                .get(&source)
+                .ok_or_else(|| format!("cluster copy of chunk {source}: no staged file"))?;
+            let ext = from.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+            fs::copy(from, dir.join(format!("chunk_{alias}.{ext}")))?;
+            copies += 1;
+            bytes += fs::metadata(from)?.len();
+        }
+    }
+    println!("room clusters: {copies} copies over {} rooms, {bytes} bytes staged", plan.len());
+    Ok(true)
+}
+
+/// The chunk ids in disc order (`clusters` empty: no room-cluster copies).
+pub fn layout(contents: &PackContents, clusters: &BTreeMap<u32, Cluster>) -> Vec<u32> {
     let mut placed = BTreeSet::new();
     let mut order = Vec::with_capacity(contents.ids.len());
     let mut place = |id: u32, order: &mut Vec<u32>| {
@@ -172,13 +341,21 @@ pub fn layout(contents: &PackContents) -> Vec<u32> {
         .filter(|&&id| id < VIEWMODEL_FIRST)
         .map(|&id| id / 2)
         .collect();
+    let no_cluster = Cluster::default();
     for room in rooms {
+        let cluster = clusters.get(&room).unwrap_or(&no_cluster);
+        for &id in &cluster.head {
+            place(id, &mut order);
+        }
         for id in [
             2 * room + 1,
             VOICE_BASE + room,
             SPRITE_BASE + room,
             2 * room,
         ] {
+            place(id, &mut order);
+        }
+        for &id in &cluster.tail {
             place(id, &mut order);
         }
         // Variants only this room uses follow its world chunk, in streaming order.
@@ -224,8 +401,12 @@ pub fn contents(repository: &Path, staged: &Path) -> Result<PackContents> {
         ("sfx", "chunk_"),
         ("voices", "chunk_"),
         ("sprites", "chunk_"),
+        ("clusters", "chunk_"),
     ] {
-        for entry in fs::read_dir(staged.join(family))? {
+        let Ok(dir) = fs::read_dir(staged.join(family)) else {
+            continue; // clusters only exists with the switch on
+        };
+        for entry in dir {
             let path = entry?.path();
             let Some(id) = id_of(&path, prefix) else {
                 continue;
@@ -277,7 +458,13 @@ pub fn contents(repository: &Path, staged: &Path) -> Result<PackContents> {
 
 /// Write the `--world-pack-order-file` for the staged pack and return its path.
 pub fn write_order_file(repository: &Path, staged: &Path) -> Result<std::path::PathBuf> {
-    let order = layout(&contents(repository, staged)?);
+    let contents = contents(repository, staged)?;
+    let clusters = if clusters_enabled() {
+        cluster_plan(repository, &contents)?
+    } else {
+        BTreeMap::new()
+    };
+    let order = layout(&contents, &clusters);
     let mut text = String::from("# WORLD.PAK chunk order (host/hl-build/pack_order.rs)\n");
     for id in &order {
         text.push_str(&format!("{id}\n"));
@@ -311,14 +498,14 @@ mod tests {
     #[test]
     fn layout_places_every_chunk_once() {
         let contents = sample();
-        let order = layout(&contents);
+        let order = layout(&contents, &BTreeMap::new());
         assert_eq!(order.len(), contents.ids.len());
         assert_eq!(order.iter().copied().collect::<BTreeSet<_>>(), contents.ids);
     }
 
     #[test]
     fn layout_follows_the_load_order() {
-        let order = layout(&sample());
+        let order = layout(&sample(), &BTreeMap::new());
         let pos = |id: u32| order.iter().position(|&x| x == id).unwrap();
         // Common chunks first, in the order a load reads them, then models, then rooms.
         assert!(pos(3001) < pos(3002) && pos(3002) < pos(3004) && pos(3004) < pos(3003));
@@ -336,11 +523,34 @@ mod tests {
     }
 
     #[test]
+    fn cluster_copies_follow_the_room_read_order() {
+        let mut contents = sample();
+        let (core, glock, model) = (room_alias(1, 3050), room_alias(1, 1000), room_alias(1, 1306));
+        contents.ids.extend([core, glock, model]);
+        let clusters = BTreeMap::from([(
+            1,
+            Cluster {
+                head: vec![core],
+                tail: vec![glock, model],
+            },
+        )]);
+        let order = layout(&contents, &clusters);
+        let pos = |id: u32| order.iter().position(|&x| x == id).unwrap();
+        assert_eq!(order.len(), contents.ids.len());
+        // Room 1: core copy, textures, voices, sprites, world, glock copy, model copy.
+        let run = [core, 3, 3101, 3301, 2, glock, model];
+        for pair in run.windows(2) {
+            assert_eq!(pos(pair[1]), pos(pair[0]) + 1);
+        }
+        assert_eq!(alias_source(model), Some(1306));
+    }
+
+    #[test]
     fn unknown_chunks_land_last() {
         let mut contents = sample();
         contents.ids.insert(2999);
         contents.ids.insert(4000);
-        let order = layout(&contents);
+        let order = layout(&contents, &BTreeMap::new());
         assert_eq!(&order[order.len() - 2..], &[2999, 4000]);
     }
 }

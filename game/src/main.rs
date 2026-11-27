@@ -35368,6 +35368,10 @@ fn main() {
         // The title menu uploads its own art over VRAM: the next play() uploads the
         // load-resident textures again.
         unsafe { LOAD_RESIDENT = false };
+        #[cfg(feature = "room-clusters")]
+        unsafe {
+            LOAD_ALIAS_ROOM = u32::MAX
+        };
         // Instrumented direct-map discs never need the interactive menu. Making
         // the timeout fall back to map zero lets LTO discard menu-only code and
         // leaves enough executable RAM for profiler hooks; shipping still takes
@@ -35555,9 +35559,33 @@ fn retry_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::Chun
 /// the menu runs again (its art overwrites VRAM).
 static mut LOAD_RESIDENT: bool = false;
 
+/// Room-cluster layout (feature `room-clusters`, host/hl-build/pack_order.rs): while a map
+/// loads, the room whose cluster holds its own copies of the shared chunks it reads; none
+/// (`u32::MAX`) outside a load, so a weapon switch keeps its primed entries.
+#[cfg(feature = "room-clusters")]
+static mut LOAD_ALIAS_ROOM: u32 = u32::MAX;
+
+/// The id of the loading room's copy of shared chunk `chunk_id` (pack_order.rs
+/// `room_alias`), for ids in 1000..3100.
+#[cfg(feature = "room-clusters")]
+#[inline]
+fn room_alias(chunk_id: u32) -> Option<u32> {
+    let room = unsafe { LOAD_ALIAS_ROOM };
+    (room != u32::MAX && (1000..3100).contains(&chunk_id))
+        .then(|| (1 << 20) + room * 4096 + (chunk_id - 1000))
+}
+
 #[inline]
 fn load_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::ChunkLoad> {
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
+    // The room's own copy first: a miss is a table scan in RAM (the table is resident
+    // for the whole load), then the shared chunk as always.
+    #[cfg(feature = "room-clusters")]
+    if let Some(load) = room_alias(chunk_id).and_then(|a| cdstream::load_chunk_decompressed(a, dst))
+    {
+        telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
+        return Some(load);
+    }
     let mut loaded = cdstream::load_chunk_decompressed(chunk_id, dst);
     if loaded.is_none() {
         loaded = retry_streamed_chunk(chunk_id, dst);
@@ -36243,6 +36271,10 @@ fn play(
     telemetry::task_begin(telemetry::task::FIXED_UPDATE);
     let texture_chunk_id = room_texture_chunk_id(launch.room_id as u32);
     let world_chunk_id = room_world_chunk_id(launch.room_id as u32);
+    #[cfg(feature = "room-clusters")]
+    unsafe {
+        LOAD_ALIAS_ROOM = launch.room_id as u32
+    };
     let map_name = menu::MAPS
         .get(launch.room_id as usize)
         .copied()
@@ -36647,6 +36679,10 @@ fn play(
         // the allocators so each switch can free the selected weapon's textures;
         // only the glock slot prefix survives as a cheap failure fallback.
         vram::vm_checkpoint();
+        #[cfg(feature = "room-clusters")]
+        {
+            LOAD_ALIAS_ROOM = u32::MAX;
+        }
         VM_FILL_BASE_SLOT = VM_FILL_SLOT;
         VM_CACHED_WM = VM_NONE;
         VM_CACHED_CHUNK_WORDS = 0;

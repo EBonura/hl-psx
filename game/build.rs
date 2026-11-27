@@ -1931,7 +1931,20 @@ fn main() {
     } = scan_model_budget(repo_root);
     let (viewmodel_verts, viewmodel_tris) = scan_viewmodel_signatures(repo_root);
     let (model_variant_offsets, model_variant_bytes) = scan_model_variant_index(repo_root);
-    let pack_cache_entries = scan_pack_cache_budget(repo_root);
+    let mut pack_cache_entries = scan_pack_cache_budget(repo_root);
+    if env::var_os("CARGO_FEATURE_ROOM_CLUSTERS").is_some() {
+        // Room-cluster copies: at most 48 per room (pack_order.rs ROOM_ALIAS_MAX), alias ids
+        // outside the scanned data/ dirs.
+        let rooms = fs::read_dir(repo_root.join("data/rooms"))
+            .map(|dir| {
+                dir.flatten()
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "psxc"))
+                    .count()
+                    / 2 // a world and a texture chunk per room
+            })
+            .unwrap_or(0);
+        pack_cache_entries += round_up(rooms * 48, 32);
+    }
     let regression_viewpoints = [64usize, 23, 18, 94, 6, 9, 11, 97]
         .map(|map_index| regression_viewpoint(repo_root, map_index));
     assert_eq!(max_face_groups % 32, 0);
