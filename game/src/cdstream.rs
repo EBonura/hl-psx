@@ -75,8 +75,10 @@ pub mod core {
     use psx_pack::cd::SECTOR_WORDS;
     use psx_pack::{entry_location, parse_entry_at, parse_header, PackEntry, ENTRY_BYTES, SECTOR_BYTES};
 
-    /// `psx_core_stream_open` flag: today's implicit seek (Setloc, ReadN), as HL reads now.
-    const IMPLICIT_SEEK: u32 = 1;
+    /// `psx_core_stream_open` flags: none, so every read starts seek first (Setloc, SeekL waited
+    /// to completion, ReadN). The implicit seek (flag bit 0, Setloc then ReadN) corrupts
+    /// sustained streams on a console drive.
+    const SEEK_FIRST: u32 = 0;
 
     extern "C" {
         fn psx_core_read(lba: u32, sectors: u32, dst: *mut u32, hook: Option<extern "C" fn(u32)>) -> u32;
@@ -198,7 +200,7 @@ pub mod core {
                     *core::ptr::addr_of_mut!(FROM_TAIL) = Some((words, lba));
                     true
                 }
-                _ => psx_core_stream_open(lba, IMPLICIT_SEEK) == 0,
+                _ => psx_core_stream_open(lba, SEEK_FIRST) == 0,
             }
         }
         unsafe fn read_sector(&mut self, dst: &mut [u32; SECTOR_WORDS]) -> bool {
@@ -210,7 +212,7 @@ pub mod core {
                 }
                 // The tail is spent: the read goes on from the disc where the tail stopped.
                 *core::ptr::addr_of_mut!(FROM_TAIL) = None;
-                if psx_core_stream_open(lba, IMPLICIT_SEEK) != 0 {
+                if psx_core_stream_open(lba, SEEK_FIRST) != 0 {
                     return false;
                 }
             }
