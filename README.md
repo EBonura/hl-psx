@@ -209,7 +209,9 @@ ties going to more free RAM. A candidate more than 1% under the scores in
 `game/pgo/bench-scores.txt` (the build being replaced) on any window is not eligible.
 The per-rung table goes to `game/pgo/ladder.txt`; quote it in the commit message.
 `HLPSX_LADDER_CANDIDATES=1` takes the highest fit with no bench, for quick local runs
-(the full ladder costs about four layout collections and benches). The free RAM
+(the full ladder costs about four layout collections and benches).
+`HLPSX_PGO_THRESHOLD=N` skips the ladder and links at rung N, to refresh a profile without
+changing the rung. The free RAM
 `pgo` prints for the rung it ships is measured on the link that ships, and the build
 stops with both figures if the shipped link leaves a different amount. Plain builds
 link at exactly the committed threshold and fail, naming the stale profile, if that

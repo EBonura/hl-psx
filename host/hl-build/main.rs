@@ -3297,7 +3297,15 @@ fn profile_guided_pack(
     // ordinary build does.
     fs::create_dir_all(repository.join("game/pgo"))?;
     fs::copy(&profile, repository.join(SHIPPED_PROFILE))?;
-    let threshold = pick_threshold(repository, psoxide)?;
+    // HLPSX_PGO_THRESHOLD=N refreshes the profile at a fixed rung N (no ladder): a profile
+    // carried across many edits is collected again without changing how much is inlined.
+    let threshold = match env::var("HLPSX_PGO_THRESHOLD") {
+        Ok(rung) => rung
+            .trim()
+            .parse()
+            .map_err(|_| format!("HLPSX_PGO_THRESHOLD={rung} is not a threshold"))?,
+        Err(_) => pick_threshold(repository, psoxide)?,
+    };
     let _ = fs::remove_file(repository.join(SHIPPED_LAYOUT));
     let trial = link_rung(repository, psoxide, features, &profile, threshold)?;
     let mut shipped = trial.free;
