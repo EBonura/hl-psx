@@ -12,7 +12,16 @@ mod target {
     // across frames. The progress hook draws the loading strip and never
     // reenters the chunk streamer.
     unsafe impl PacketArena for Arena {
-        const CAPACITY: usize = crate::room_budget::PACK_CACHE_ENTRIES;
+        // The whole pack table when the arena holds it. A diagnostic build's smaller arena
+        // caches what fits; a pack with more chunks than that reads its table per lookup.
+        const CAPACITY: usize = {
+            let fits = core::mem::size_of::<crate::RenderPacketScratch>() / CACHE_ENTRY_BYTES;
+            if crate::room_budget::PACK_CACHE_ENTRIES < fits {
+                crate::room_budget::PACK_CACHE_ENTRIES
+            } else {
+                fits
+            }
+        };
         #[inline(always)]
         unsafe fn storage() -> *mut u8 {
             core::ptr::addr_of_mut!(crate::PRIMITIVE_PACKETS).cast()
