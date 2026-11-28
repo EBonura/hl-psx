@@ -133,7 +133,16 @@ wait = 15
 [[step]]
 press = ["cross"]
 hold = 8
-wait = 1180
+wait = 15
+
+# The entry pose holds until the player drops at map tick ~205, and a build that loads sooner
+# reaches it sooner, so the checkpoint is taken at a map tick, not a fixed frame. SIM_NOW still
+# holds the Hazard Course's count (above 300) until the chapter starts counting again.
+[[step]]
+label = "wait for Interloper's map tick 100"
+sync = "poll"
+wait_until = { kind = "ram", sym = "SIM_NOW", size = 2, op = "between", value = 100, value_hi = 160 }
+timeout = 1500
 
 [[step]]
 checkpoint = "interloper-entry"
