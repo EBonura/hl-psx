@@ -1151,7 +1151,24 @@ fn scan_model_budget(repo_root: &std::path::Path) -> ModelBudget {
     };
     let vm_pool_words =
         viewmodel_pool_words(max_viewmodel_words, max_viewmodel_geom_words, model_verts);
-    let model_pool_words = NPC_MODEL_POOL_WORDS + vm_pool_words;
+    // A development-board build (feature devkit-ram) may grow the NPC pool by
+    // HLPSX_DEVKIT_POOL_WORDS: its arena lies above the retail 2 MiB. The cook's audit reads the
+    // same variable, so both must see it.
+    println!("cargo:rerun-if-env-changed=HLPSX_DEVKIT_POOL_WORDS");
+    let devkit_pool_words: usize = env::var("HLPSX_DEVKIT_POOL_WORDS")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value
+                .parse()
+                .expect("HLPSX_DEVKIT_POOL_WORDS: a word count")
+        })
+        .unwrap_or(0);
+    assert!(
+        devkit_pool_words == 0 || env::var_os("CARGO_FEATURE_DEVKIT_RAM").is_some(),
+        "HLPSX_DEVKIT_POOL_WORDS is for devkit-ram builds only"
+    );
+    let model_pool_words = NPC_MODEL_POOL_WORDS + devkit_pool_words + vm_pool_words;
     let model_words = if max_bytes == 0 {
         FALLBACK_MODEL_WORDS.max(model_pool_words)
     } else {
@@ -1889,6 +1906,18 @@ fn main() {
         format!("pub const MENU_OVERLAY_BYTES: usize = {MENU_OVERLAY_BYTES:#x};\n"),
     )
     .expect("write the menu overlay size");
+    // Development-board builds (feature devkit-ram, 8 MiB): the world arena is the absolute
+    // symbol `WORLD_ARENA` above the retail 2 MiB (main.rs), so the retail RAM keeps only the
+    // program. Never a shipping build: a retail console mirrors that address onto its own RAM.
+    if env::var_os("CARGO_FEATURE_DEVKIT_RAM").is_some() {
+        let devkit_ld = out_dir.join("devkit-ram.ld");
+        fs::write(
+            &devkit_ld,
+            "WORLD_ARENA = 0x80200000;\nASSERT(WORLD_ARENA >= __heap_end, \"the devkit arena overlaps the program\")\n",
+        )
+        .expect("write the devkit RAM script");
+        println!("cargo:rustc-link-arg=-T{}", devkit_ld.display());
+    }
     println!("cargo:rustc-link-arg=-T{}", ld.display());
     println!("cargo:rerun-if-changed={}", ld.display());
     // Optional linker map for PC-sample attribution. A link-only argument

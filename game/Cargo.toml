@@ -82,6 +82,10 @@ probe-fixes = ["interaction-probe"]
 # the trimmed probe one, so a heavy view draws the actors the shipping disc draws. It links only
 # when the packed maps leave the RAM (a probe of one or two rooms does; the gate's probe does not).
 probe-full-arena = ["interaction-probe"]
+# Development-board RAM (8 MiB): the world arena moves above the retail 2 MiB so feature work
+# links and runs before it fits a console. Emulators built with emulator-core's devkit-ram only;
+# never a shipping or console disc.
+devkit-ram = []
 # SDK crates from the PSoXide source tree hydrated by the root Rust build
 # driver. Keeping one pinned source snapshot makes the linker, runtime decoder,
 # audio encoder, and disc writer a reproducible set. `--psoxide` can seed this

@@ -13,6 +13,25 @@ use hl_format::room_budget;
 // The model pool is the live viewmodel's reserve (`viewmodel_pool_words`)
 // followed by this NPC share.
 const NPC_MODEL_POOL_WORDS: usize = 20_334;
+
+/// The NPC model pool the audit holds every map to: game/build.rs's, plus the words
+/// `HLPSX_DEVKIT_POOL_WORDS` adds for a development-board cook (feature devkit-ram), whose
+/// arena lies above the retail 2 MiB. Unset for every retail cook.
+fn npc_model_pool_words() -> usize {
+    NPC_MODEL_POOL_WORDS + devkit_pool_words()
+}
+
+fn devkit_pool_words() -> usize {
+    std::env::var("HLPSX_DEVKIT_POOL_WORDS")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value
+                .parse()
+                .expect("HLPSX_DEVKIT_POOL_WORDS: a word count")
+        })
+        .unwrap_or(0)
+}
 const FALLBACK_VM_POOL_WORDS: usize = 20_224;
 const FALLBACK_VM_GEOM_WORDS: usize = 15_800;
 const VIEWMODEL_BACKUP_BUDGET_WORDS: usize = 1_536;
@@ -1630,7 +1649,7 @@ fn audit_weapon_cache_tail(
     model_chunks: &[Option<ModelChunk>],
     vm_pool_words: usize,
 ) -> Result<PathBuf> {
-    let model_pool_words = NPC_MODEL_POOL_WORDS + vm_pool_words;
+    let model_pool_words = npc_model_pool_words() + vm_pool_words;
     let rooms = repository.join("data/rooms");
     let map_pool_words = room_staging_words(&rooms)?;
 
@@ -2277,7 +2296,7 @@ pub fn audit_model_residency(
         audit_map_clip_manifests(repository, maps, &chunks, &map_variants)?;
     }
     let vm_pool_words = viewmodel_pool_words(&model_pack)?;
-    let model_pool_words = NPC_MODEL_POOL_WORDS + vm_pool_words;
+    let model_pool_words = npc_model_pool_words() + vm_pool_words;
     let budgets = map_pool_budgets(repository, maps.len(), model_pool_words)?;
     let mut static_actors = Vec::with_capacity(maps.len());
     let mut rows = Vec::with_capacity(maps.len() + 256);

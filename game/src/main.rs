@@ -237,8 +237,23 @@ const MODEL_WORDS: usize = room_budget::MODEL_WORDS;
 // from the arena's end stop where the blocks start (`FACE_USED_WORDS`).
 const FACE_REGION_WORDS: usize = hl_format::room_budget::FACE_REGION_WORDS;
 const ARENA_WORDS: usize = MAP_WORDS + MODEL_WORDS + FACE_REGION_WORDS;
+#[cfg(not(feature = "devkit-ram"))]
 #[link_section = ".bss.overlay_host"]
 static mut WORLD_ARENA: [u32; ARENA_WORDS] = [0; ARENA_WORDS];
+// Development-board builds (8 MiB) put the arena above the retail 2 MiB, at the address
+// game/build.rs gives `WORLD_ARENA`, so feature work can be verified before it fits a console.
+// The title menu overlay keeps a host of its own in the retail RAM: MENU.OVL and the pack
+// header sectors its read carries on into (`cdstream::core::load_menu`).
+#[cfg(feature = "devkit-ram")]
+#[used]
+#[link_section = ".bss.overlay_host"]
+static mut MENU_OVERLAY_HOST: [u32; DEVKIT_MENU_HOST_WORDS] = [0; DEVKIT_MENU_HOST_WORDS];
+#[cfg(feature = "devkit-ram")]
+const DEVKIT_MENU_HOST_WORDS: usize = 0x2_0000 / 4;
+#[cfg(feature = "devkit-ram")]
+extern "C" {
+    static mut WORLD_ARENA: [u32; ARENA_WORDS];
+}
 // On the scene core the arena is the title menu overlay's host (psoxide-overlay.ld): MENU.OVL
 // runs at its start (`__overlay_vma`), which no map holds while a menu runs, and the link allows
 // that overlap and no other. The host starts where the stored bytes the program still needs end
