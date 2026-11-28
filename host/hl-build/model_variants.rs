@@ -275,14 +275,21 @@ fn scripted_only_variant(ty: u8) -> bool {
 fn base_clip_count(ty: u8) -> usize {
     match ty {
         14 => 2,
-        // Barney's draw sequence follows his five.
-        1 => 6,
-        // The bullsquid's bite and tail whip follow its five.
-        7 => 7,
-        // The houndeye's rest and its hop back (jumpback) follow its five.
-        6 => 7,
-        // The vortigaunt's claw follows its five.
-        9 => 6,
+        // Barney's draw and run follow his five.
+        1 => 7,
+        // The scientist's scared run (run1), his crouch, crouch idle and stand (the cover
+        // and hide schedules, CScientist) and his run follow his five.
+        0 => 10,
+        // The bullsquid's bite, tail whip, ACT_DIESIMPLE death (die1), and its meal's eat,
+        // sniff and walk (game/src/squid_meal.rs) follow its five.
+        7 => 11,
+        // The houndeye's rest, its hop back (jumpback) and its four other deaths follow its
+        // five (game/src/pose_variants.rs).
+        6 => 11,
+        // The vortigaunt's claw, three other deaths and four limb flinches follow its five.
+        9 => 13,
+        // The zombie's heavy swing (attack2), four other deaths and four limb flinches.
+        5 => 14,
         // HECU hand toss and grenade-launcher attack events.
         8 => 7,
         // The gargantua's swipe and stomp sequences follow its five AI clips.
@@ -341,7 +348,23 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
         ),
         ("c1a2b", 5) => (
             "--mdl7",
-            &["0:4", "10:4", "8:5", "3:2", "17:3", "eatbody:2"],
+            &[
+                "0:4",
+                "10:4",
+                "8:5",
+                "3:2",
+                "17:3",
+                "attack2:2",
+                "diebackward:2",
+                "dieforward:2",
+                "dieheadshot:2",
+                "dieheadshot2:2",
+                "laflinch:1",
+                "raflinch:1",
+                "llflinch:1",
+                "rlflinch:1",
+                "eatbody:2",
+            ],
         ),
         // The fleet's tightest weapon-cache margin (about 1.5 KB) cannot hold
         // Barney's draw sequence here: its slot keeps a single idle pose, so
@@ -355,6 +378,7 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
                 "17:3",
                 "25:4",
                 "0:1",
+                "4:1",
                 "sit1:6",
                 "standing_idle:2",
                 "intropush:8",
@@ -365,7 +389,22 @@ fn special_fields(map: &str, ty: u8) -> Option<(&'static str, Vec<String>)> {
         ),
         ("c1a2b" | "c4a3", 9) => (
             "--mdl7",
-            &["0:4", "4:4", "12:4", "13:2", "19:3", "attack1:2", "grab:2"],
+            &[
+                "0:4",
+                "4:4",
+                "12:4",
+                "13:2",
+                "19:3",
+                "attack1:2",
+                "diebackward:2",
+                "dieforward:2",
+                "dieheadshot:2",
+                "laflinch:1",
+                "raflinch:1",
+                "llflinch:1",
+                "rlflinch:1",
+                "grab:2",
+            ],
         ),
         _ => return None,
     };

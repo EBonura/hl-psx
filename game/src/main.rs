@@ -118,6 +118,8 @@ mod leech;
 mod mapsnap;
 mod monster_voice;
 mod monster_damage;
+mod pose_variants;
+mod squid_meal;
 mod monsterjump;
 mod prop_pool;
 mod mortar;
@@ -4022,6 +4024,29 @@ static mut PROP_HIT_FLASH: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 /// The hit group of the bullet about to land (`hit_group_damage`), taken by
 /// `damage_prop`.
 static mut NEXT_HIT_GROUP: u8 = 0;
+/// The death or limb flinch an actor plays instead of its slot-4 death or slot-3 flinch
+/// (`pose_variants`): a slot with the variant's bits, 0 for none.
+static mut PROP_POSE_VARIANT: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
+/// Nonzero while a corpse fades out (SUB_StartFadeOut), from its PROP_DEATH_START.
+static mut PROP_FADING: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
+/// SUB_FadeOut: renderamt 255 down by 15 every 0.1 s think, 17 thinks.
+const CORPSE_FADE_TICKS: u16 = 34;
+
+/// The blend and shade a fading corpse draws with (kRenderTransTexture at the fade's
+/// renderamt, in the GPU's three steps): opaque for the first quarter, half and half to the
+/// last quarter, then a quarter added at half shade. None once it is gone.
+unsafe fn corpse_fade_blend(pi: usize, shade: u8) -> Option<(BlendMode, u8)> {
+    if pi >= LIVE_PROPS || PROP_FADING[pi] == 0 {
+        return Some((BlendMode::Opaque, shade));
+    }
+    let elapsed = SIM_NOW.wrapping_sub(PROP_DEATH_START[pi]);
+    match elapsed {
+        e if e < CORPSE_FADE_TICKS / 4 => Some((BlendMode::Opaque, shade)),
+        e if e < CORPSE_FADE_TICKS * 3 / 4 => Some((BlendMode::Average, shade)),
+        e if e < CORPSE_FADE_TICKS => Some((BlendMode::AddQuarter, shade / 2)),
+        _ => None,
+    }
+}
 /// Actor types whose cooked pain clip is their small flinch (ACT_SMALL_FLINCH):
 /// scientists, Barney, headcrabs, zombies, houndeye, bullsquid, HECU,
 /// vortigaunt, alien grunt, controller, ichthyosaur.
@@ -4909,6 +4934,13 @@ unsafe fn model_visible_bodies(
     }
     if ty == PROP_TYPE_SODACAN as usize {
         return 0x3f;
+    }
+    // The blink skins (`blink_skin`): the houndeye's skins 0 to 3, the bullsquid's 0 and 1.
+    if ty == PROP_TYPE_HOUNDEYE as usize {
+        return 0x0f;
+    }
+    if ty == PROP_TYPE_BULLSQUID as usize {
+        return 0x03;
     }
     if ty == PROP_TYPE_BARNEY as usize && !carry_variant {
         return 0x07;
@@ -9647,6 +9679,9 @@ unsafe fn restore_transition_actors(
             );
         }
         PROP_HIT_FLASH[pi] = 0;
+        PROP_POSE_VARIANT[pi] = 0;
+        PROP_FADING[pi] = 0;
+        species::SQUID_MEAL[pi] = squid_meal::Meal::NONE;
         PROP_DEATH_START[pi] = if health == 0 {
             0u16.wrapping_sub(300)
         } else {
@@ -11551,7 +11586,7 @@ unsafe fn tick_scripted_actor(
 /// health 0 since the event): the corpse keeps the play clip's last frame
 /// (kept in PROP_SCRIPT_PLAY_CLIP, which `prop_anim_frame` reads for a dead
 /// actor with no script), and without SF_SCRIPT_LEAVECORPSE the body goes
-/// (SUB_StartFadeOut; the port has no model fade, so it goes at once).
+/// (SUB_StartFadeOut: it fades over CORPSE_FADE_TICKS, then goes).
 #[cold]
 #[inline(never)]
 unsafe fn script_lay_corpse(pi: usize, play_clip: u8, spawnflags: u16) {
@@ -11560,7 +11595,7 @@ unsafe fn script_lay_corpse(pi: usize, play_clip: u8, spawnflags: u16) {
         PROP_DEATH_START[pi] = SIM_NOW;
         PROP_SCRIPT_PLAY_CLIP[pi] = play_clip;
         if spawnflags & SF_SCRIPT_LEAVECORPSE == 0 {
-            PROP_ACTIVE[pi] = 0;
+            PROP_FADING[pi] = 1;
         }
     }
 }
@@ -12278,6 +12313,7 @@ unsafe fn maker_make(
             {
                 PROP_HEALTH[pi] = prop_start_health(PROP_KIND[pi]);
                 PROP_DEATH_START[pi] = 0; // alive: no flinch remembered yet
+                PROP_POSE_VARIANT[pi] = 0;
                 PROP_STATE[pi] = PROP_STATE_IDLE;
                 PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
                 PROP_AI_TIMER[pi] = 0;
@@ -15452,11 +15488,32 @@ unsafe fn invalidate_actor_occlusion(have_pvs: bool, cam_leaf: i32, eye: [i32; 3
 }
 
 fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
+    let variant = unsafe { PROP_POSE_VARIANT[pi] };
     if state == PROP_STATE_DEAD {
-        return PROP_CLIP_DEAD;
+        return if variant & pose_variants::DEATH != 0 {
+            (variant & pose_variants::SLOT) as usize
+        } else {
+            PROP_CLIP_DEAD
+        };
     }
     if hit_flash {
-        return PROP_CLIP_PAIN;
+        return if variant != 0
+            && variant & pose_variants::DEATH == 0
+            && unsafe { PROP_HIT_FLASH[pi] } & monster_damage::FLINCH != 0
+        {
+            (variant & pose_variants::SLOT) as usize
+        } else {
+            PROP_CLIP_PAIN
+        };
+    }
+    if unsafe { PROP_KIND[pi] } == PROP_TYPE_BULLSQUID {
+        if let Some(clip) = unsafe { species::squid_meal_clip(pi) } {
+            return clip;
+        }
+    }
+    // The zombie's lone heavy swing (bit 6 of its bout timer) plays attack2.
+    if unsafe { PROP_KIND[pi] == 5 && state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] & 64 != 0 } {
+        return pose_variants::ZOMBIE_ATTACK2 as usize;
     }
     if unsafe { PROP_KIND[pi] == 8 || PROP_KIND[pi] == PROP_TYPE_BIGMOMMA } {
         if state == 6 {
@@ -15498,14 +15555,42 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     }
 }
 
+/// The eye skin a living houndeye or bullsquid shows this think. CHoundeye::PrescheduleThink
+/// starts a blink one think in 128 (skin 3, which the model's three families show as open,
+/// then 2 closed and 1 half shut, one a think); CBullsquid::RunAI closes the eye for one think
+/// in 40. A hash of the actor and the think stands in for RANDOM_LONG, so the blink costs no
+/// state and draws the same on every frame of a think.
+#[inline(never)]
+unsafe fn blink_skin(pi: usize, ty: u8) -> u8 {
+    if PROP_HEALTH[pi] == 0 {
+        return 0;
+    }
+    let think = (SIM_NOW / 2) as u32;
+    let roll = |t: u32| {
+        (t.wrapping_mul(0x9E37_79B1) ^ (pi as u32).wrapping_mul(0x85EB_CA6B)).rotate_right(13)
+    };
+    if ty == PROP_TYPE_BULLSQUID {
+        return (roll(think) % 40 == 0) as u8;
+    }
+    let mut back = 0u32;
+    while back < 3 {
+        if roll(think.wrapping_sub(back)) % 128 == 0 {
+            return (3 - back) as u8;
+        }
+        back += 1;
+    }
+    0
+}
+
+
 /// The c1a1b jumpwindow studio sequence carries the houndeye roughly 200 units
 /// away from its actor origin. Expanding every houndeye's sphere would undo
 /// useful culling campaign-wide, so pay for the larger bound only on the actor
-/// whose scripted play clip is present. Slot 7 is fixed by the type-6 roster
-/// (five states, madidle2, jumpback, then jumpwindow).
+/// whose scripted play clip is present. Slot 11 is fixed by the type-6 roster
+/// (five states, madidle2, jumpback, four deaths, then jumpwindow).
 #[inline]
 unsafe fn prop_render_radius(pi: usize, ty: u8) -> i32 {
-    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 7;
+    const HOUNDEYE_JUMPWINDOW_CLIP: u8 = 11;
     const HOUNDEYE_JUMPWINDOW_RADIUS: i32 = 208;
     if ty == PROP_TYPE_HOUNDEYE && PROP_SCRIPT_PLAY_CLIP[pi] == HOUNDEYE_JUMPWINDOW_CLIP {
         HOUNDEYE_JUMPWINDOW_RADIUS
@@ -15635,7 +15720,7 @@ fn prop_anim_frame(
         // final pose before ordinary state playback resumes on the next tick.
         // A flinch plays the pain clip at its authored length.
         let total = if hit_flash & monster_damage::FLINCH != 0 {
-            pain_clip_ticks(md)
+            clip_pain_ticks(md, clip)
         } else {
             PROP_HIT_FLASH_TICKS
         };
@@ -17791,6 +17876,9 @@ unsafe fn release_loot(
             PROP_STATE[pi] = PROP_STATE_IDLE;
             PROP_HEALTH[pi] = 0;
             PROP_HIT_FLASH[pi] = 0;
+            PROP_POSE_VARIANT[pi] = 0;
+            PROP_FADING[pi] = 0;
+            species::SQUID_MEAL[pi] = squid_meal::Meal::NONE;
             PROP_DEATH_START[pi] = 0;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
             PROP_AI_TIMER[pi] = 0;
@@ -18248,7 +18336,33 @@ unsafe fn alert_friends(m: &Map, movers: &[phys::Mover], nprops: usize, vi: usiz
 #[inline(never)]
 #[optimize(size)]
 fn pain_clip_ticks(md: &Model) -> u8 {
-    md.clip_hold_ticks(PROP_CLIP_PAIN).min(127) as u8
+    clip_pain_ticks(md, PROP_CLIP_PAIN)
+}
+
+/// A flinch clip's length in ticks, as the hit flash counts it.
+fn clip_pain_ticks(md: &Model, clip: usize) -> u8 {
+    md.clip_hold_ticks(clip).min(127) as u8
+}
+
+/// Where the attacker of the hit being applied stands seen from actor `pi`: the player for
+/// the player's hits, else unknown (a side hit). `GetDeathActivity`'s dot of the facing with
+/// the attack direction, against 0.3.
+unsafe fn attacker_side(pi: usize, player_inflicted: bool) -> pose_variants::Attacker {
+    if !player_inflicted {
+        return pose_variants::Attacker::Side;
+    }
+    const COS_03: i32 = 1229;
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let (fx, fz) = (sincos::sin_q12(yaw), sincos::sin_q12((yaw + 1024) & 0x0fff));
+    let p = PROP_POS[pi];
+    let (dx, dz) = (p[0] - LOGIC_PLAYER_POS[0], p[2] - LOGIC_PLAYER_POS[2]);
+    if senses::within_cone(COS_03, fx, fz, dx, dz) {
+        pose_variants::Attacker::Behind
+    } else if senses::within_cone(COS_03, fx, fz, -dx, -dz) {
+        pose_variants::Attacker::Front
+    } else {
+        pose_variants::Attacker::Side
+    }
 }
 
 /// How long actor `pi` flinches from this hit (its pain clip), or 0 when it
@@ -18311,7 +18425,27 @@ unsafe fn prop_flinch_ticks(pi: usize, player_inflicted: bool) -> u8 {
     if !prop_is_human(ty) {
         PROP_DEATH_START[pi] = 1;
     }
-    pain_clip_ticks(loaded_model(slot as usize))
+    let md = loaded_model(slot as usize);
+    if PROP_HIT_FLASH[pi] & monster_damage::FLINCH != 0 {
+        // A running flinch is not restarted (flash_after_hit): keep its clip.
+        return pain_clip_ticks(md);
+    }
+    match pose_variants::flinch(ty, NEXT_HIT_GROUP) {
+        Some(limb) if (limb as usize) < md.clip_count() => {
+            #[cfg(feature = "interaction-probe")]
+            reference_trace::probe_vals(
+                SIM_NOW as u32,
+                "flinch",
+                &[pi as i32, ty as i32, limb as i32],
+            );
+            PROP_POSE_VARIANT[pi] = limb;
+            clip_pain_ticks(md, limb as usize)
+        }
+        _ => {
+            PROP_POSE_VARIANT[pi] = 0;
+            pain_clip_ticks(md)
+        }
+    }
 }
 
 #[optimize(size)]
@@ -18411,6 +18545,7 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         prop_flinch_ticks(pi, player_inflicted),
         PROP_HIT_FLASH_TICKS,
     );
+    let death_group = NEXT_HIT_GROUP;
     NEXT_HIT_GROUP = 0;
     if MONSTER_TRIGGER_END != 0 {
         monster_damage_ai_triggers(pi);
@@ -18428,6 +18563,24 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         (*core::ptr::addr_of_mut!(PROP_FLIGHT)).release(pi);
         PROP_STATE[pi] = PROP_STATE_DEAD;
         PROP_DEATH_START[pi] = SIM_NOW; // play the death clip forward from now
+        PROP_POSE_VARIANT[pi] = pose_variants::death(
+            PROP_KIND[pi],
+            death_group,
+            attacker_side(pi, player_inflicted),
+            impact_rng().below(16),
+        )
+        .unwrap_or(0);
+        #[cfg(feature = "interaction-probe")]
+        reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "dpose",
+            &[
+                pi as i32,
+                PROP_KIND[pi] as i32,
+                death_group as i32,
+                PROP_POSE_VARIANT[pi] as i32,
+            ],
+        );
         if PROP_KIND[pi] == 59 {
             species::gonarch_child_died();
         }
@@ -18453,7 +18606,11 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         {
             gib_prop(pi);
         }
-        sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
+        // The body hits the floor on its death clip's body drop event (tick_props); a clip
+        // without one drops it now.
+        if bodydrop_tick(pi).is_none() {
+            sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
+        }
         let v = prop_voice(PROP_KIND[pi], true);
         if monster_voice::cue(PROP_KIND[pi], monster_voice::DIE, PROP_POS[pi]) {
         } else if v != SFX_NONE {
@@ -21064,6 +21221,9 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_AI_TARGET[i] = PROP_TARGET_NONE;
         PROP_HEALTH[i] = 0;
         PROP_HIT_FLASH[i] = 0;
+        PROP_POSE_VARIANT[i] = 0;
+        PROP_FADING[i] = 0;
+        species::SQUID_MEAL[i] = squid_meal::Meal::NONE;
         PROP_DEATH_START[i] = 0;
         PROP_OCC_VIS[i] = PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
         PROP_DORMANT[i] = 0;
@@ -21320,6 +21480,51 @@ unsafe fn trace_prop_hotlist_state(stage: u8) {
     reference_trace::prop_hotlist(0, stage, nprops, count, entries);
 }
 
+/// The tick of actor `pi`'s death clip that carries its body drop event
+/// (MONSTER_EVENT_BODYDROP_LIGHT or _HEAVY), if it has one.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn bodydrop_tick(pi: usize) -> Option<u8> {
+    let ty = PROP_KIND[pi];
+    let clip = prop_clip(pi, PROP_STATE_DEAD, false) as u8;
+    let mut i = 0;
+    while i < skill_table::BODYDROPS.len() {
+        let (t, slot, tick) = skill_table::BODYDROPS[i];
+        if t == ty && slot == clip {
+            return Some(tick);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `GetDeathActivity`'s room check, the first tick after the death: a fall forward or
+/// backward needs 64 units clear that way from the body's centre, else the simple death.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn death_pose_room_check(m: &Map, movers: &[phys::Mover], pi: usize) {
+    let v = PROP_POSE_VARIANT[pi];
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let sign = if v & pose_variants::ROOM_FORWARD != 0 {
+        64
+    } else {
+        -64
+    };
+    let p = PROP_POS[pi];
+    let from = [p[0], p[1] + 24, p[2]];
+    let to = [
+        from[0] + (sincos::sin_q12(yaw) * sign >> 12),
+        from[1],
+        from[2] + (sincos::sin_q12((yaw + 1024) & 0x0fff) * sign >> 12),
+    ];
+    PROP_POSE_VARIANT[pi] =
+        if phys::line_clear_world(m, from, to) && phys::line_clear_movers(m, movers, from, to) {
+            v & !(pose_variants::ROOM_FORWARD | pose_variants::ROOM_BACKWARD)
+        } else {
+            pose_variants::simple(PROP_KIND[pi], SIM_NOW as u32)
+        };
+}
+
 #[optimize(size)]
 unsafe fn tick_props(
     m: &Map,
@@ -21367,6 +21572,25 @@ unsafe fn tick_props(
                 continue;
             }
             prop_scientist_set_flag(pi, PROP_SCI_FOLLOWING, false);
+            if PROP_POSE_VARIANT[pi] & (pose_variants::ROOM_FORWARD | pose_variants::ROOM_BACKWARD)
+                != 0
+            {
+                death_pose_room_check(m, movers, pi);
+            }
+            if PROP_FADING[pi] != 0
+                && SIM_NOW.wrapping_sub(PROP_DEATH_START[pi]) >= CORPSE_FADE_TICKS
+            {
+                PROP_FADING[pi] = 0;
+                PROP_ACTIVE[pi] = 0;
+                pi += 1;
+                continue;
+            }
+            if PROP_STATE[pi] == PROP_STATE_DEAD
+                && bodydrop_tick(pi)
+                    .is_some_and(|tick| SIM_NOW.wrapping_sub(PROP_DEATH_START[pi]) == tick as u16)
+            {
+                sfx::play_world(sfx::BODYDROP, PROP_POS[pi]);
+            }
             PROP_STATE[pi] = PROP_STATE_DEAD;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
             PROP_AI_TIMER[pi] = 0;
@@ -24641,6 +24865,23 @@ unsafe fn explode_inner(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
     radius_damage(m, pos, damage, radius, player_inflicted);
 }
 
+/// The centre a blast measures a damageable brush entity from: its live brush, moved with
+/// its mover.
+#[inline(never)]
+unsafe fn blast_brush_center(ei: usize) -> [i32; 3] {
+    let e = ENT_CACHE[ei];
+    if e.kind == ENT_KIND_PUSHABLE {
+        pushable_world_center(e, e.origin)
+    } else {
+        let off = ent_draw_offset(ei);
+        [
+            e.center[0] + off[0],
+            e.center[1] + off[1],
+            e.center[2] + off[2],
+        ]
+    }
+}
+
 /// CBaseEntity RadiusDamage: the damage half of an explosion, without its
 /// sound and fireball (the Tau Cannon's bounce and exit blasts are silent).
 #[inline(never)]
@@ -24661,17 +24902,7 @@ unsafe fn radius_damage(m: &Map, pos: [i32; 3], damage: u8, radius: i32, player_
                 ei += 1;
                 continue;
             }
-            let e = ENT_CACHE[ei];
-            let c = if e.kind == ENT_KIND_PUSHABLE {
-                pushable_world_center(e, e.origin)
-            } else {
-                let off = ent_draw_offset(ei);
-                [
-                    e.center[0] + off[0],
-                    e.center[1] + off[1],
-                    e.center[2] + off[2],
-                ]
-            };
+            let c = blast_brush_center(ei);
             let d2 = dist2_3(c, pos);
             if d2 < r2 {
                 let line_clear =
@@ -24838,6 +25069,27 @@ unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8, pack: i32) {
             }
         }
         q += 1;
+    }
+    // CHoundeye::SonicAttack: a breakable or pushable in reach takes the falloff damage even
+    // where the houndeye cannot see it (only monsters need the line of sight).
+    let nents = m.n_ents;
+    let mut ei = 0usize;
+    while ei < nents {
+        if ENT_ACTIVE[ei] != 0 && ENT_BRUSH_LOGIC[ei] != u16::MAX {
+            let li = ENT_BRUSH_LOGIC[ei] as usize;
+            if li < m.n_logic && LOGIC_KIND[li] == map::LOGIC_FUNC_BREAKABLE {
+                let d = isqrt_i32(dist2_3(blast_brush_center(ei), src));
+                let scaled = if d < radius {
+                    falloff(d, dmg as i32)
+                } else {
+                    0
+                };
+                if scaled != 0 {
+                    damage_brush_ent(m, m.n_logic, nents, ei, scaled, false, SIM_NOW);
+                }
+            }
+        }
+        ei += 1;
     }
     spawn_sonic_rings(PROP_POS[pi], pack);
 }
@@ -40994,6 +41246,9 @@ fn play(
                     } else {
                         0
                     }
+                } else if ty == PROP_TYPE_HOUNDEYE || ty == PROP_TYPE_BULLSQUID {
+                    // The eye's skin family rides on the body index (the cooker's skin masks).
+                    blink_skin(pi, ty)
                 } else {
                     prop_body_value(packed_yaw)
                 };
@@ -41051,6 +41306,10 @@ fn play(
                     eye,
                     &rot,
                 );
+                let Some((fade_blend, shade)) = corpse_fade_blend(pi, shade) else {
+                    CROSSFADE = (0, 0, 0);
+                    continue;
+                };
                 model_projected_vertices = model_projected_vertices.saturating_add(draw_model(
                     &mut model_packets,
                     md,
@@ -41071,7 +41330,7 @@ fn play(
                     if ty == PROP_TYPE_HOLO {
                         BlendMode::Add
                     } else {
-                        BlendMode::Opaque
+                        fade_blend
                     },
                     shade,
                     eye,

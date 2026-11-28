@@ -964,6 +964,110 @@ unsafe fn tick_zombie(
     }
 }
 
+/// Each bullsquid's meal (`squid_meal`).
+pub(crate) static mut SQUID_MEAL: [squid_meal::Meal; LIVE_PROPS] =
+    [squid_meal::Meal::NONE; LIVE_PROPS];
+
+/// The nearest carcass scent within the squid's smell range: a monster or person that died
+/// in play within the last 30 s (a body burst to gibs leaves its meat there, bits_SOUND_MEAT
+/// for 25 s, taken as the same scent; a corpse placed dead leaves none), and whether it is in
+/// the squid's view cone and sight.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn nearest_carcass(
+    m: &Map,
+    sight: &[phys::Mover],
+    pi: usize,
+    nprops: usize,
+) -> Option<([i32; 3], bool)> {
+    let pos = PROP_POS[pi];
+    let mut best: Option<([i32; 3], i32)> = None;
+    let mut q = 0usize;
+    while q < nprops {
+        if q != pi
+            && PROP_ACTIVE[q] != 0
+            && PROP_HEALTH[q] == 0
+            && PROP_STATE[q] == PROP_STATE_DEAD
+            && senses::class_of(PROP_KIND[q]) != 0
+            && senses::class_of(PROP_KIND[q]) != senses::CLASS_MACHINE
+            && !(q < m.n_props && m.prop(q).0 & PROP_DEAD_BIT != 0)
+            && SIM_NOW.wrapping_sub(PROP_DEATH_START[q]) < squid_meal::CARCASS_TICKS
+        {
+            let d2 = dist2_3(PROP_POS[q], pos);
+            if d2 <= squid_meal::SMELL_RANGE * squid_meal::SMELL_RANGE
+                && best.is_none_or(|(_, b)| d2 < b)
+            {
+                best = Some((PROP_POS[q], d2));
+            }
+        }
+        q += 1;
+    }
+    let (food, _) = best?;
+    let yaw = prop_yaw_value(PROP_YAW[pi]);
+    let in_cone = senses::in_view_cone(
+        PROP_KIND[pi],
+        sincos::sin_q12(yaw),
+        sincos::sin_q12((yaw + 1024) & 0x0fff),
+        food[0] - pos[0],
+        food[2] - pos[2],
+    );
+    let seen = in_cone && {
+        let eye = prop_eye(m, pi);
+        actor_line_clear(m, sight, eye, [food[0], food[1] + 8, food[2]])
+    };
+    Some((food, seen))
+}
+
+/// A bullsquid with no enemy: its meal (SCHED_SQUID_EAT, SCHED_SQUID_SNIFF_AND_EAT).
+#[inline(never)]
+#[optimize(size)]
+unsafe fn squid_forage(
+    m: &Map,
+    movers: &[phys::Mover],
+    sight: &[phys::Mover],
+    pi: usize,
+    nprops: usize,
+) {
+    let meal = SQUID_MEAL[pi];
+    let scent = if meal.phase == squid_meal::Phase::None && ai_reacquire(pi) {
+        nearest_carcass(m, sight, pi, nprops)
+    } else {
+        None
+    };
+    let at_food = dist2_xz(PROP_POS[pi], meal.food) <= squid_meal::REACH * squid_meal::REACH;
+    let next = squid_meal::step(meal, SIM_NOW, scent, at_food);
+    SQUID_MEAL[pi] = next;
+    #[cfg(feature = "interaction-probe")]
+    if next.phase != meal.phase {
+        crate::reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "meal",
+            &[pi as i32, next.phase as i32, next.food[0], next.food[2]],
+        );
+    }
+    match next.phase {
+        squid_meal::Phase::Walk => {
+            PROP_STATE[pi] = PROP_STATE_MOVE;
+            prop_move_towards_point(m, movers, pi, next.food, squid_meal::WALK_SPEED);
+        }
+        squid_meal::Phase::Sniff | squid_meal::Phase::Eat => {
+            PROP_STATE[pi] = PROP_STATE_IDLE;
+            prop_face_point(pi, next.food);
+        }
+        squid_meal::Phase::None => {}
+    }
+}
+
+/// The clip a bullsquid's meal plays (eat, sniff and walk follow its die1 in the roster).
+pub(crate) unsafe fn squid_meal_clip(pi: usize) -> Option<usize> {
+    match SQUID_MEAL[pi].phase {
+        squid_meal::Phase::Eat => Some(8),
+        squid_meal::Phase::Sniff => Some(9),
+        squid_meal::Phase::Walk => Some(10),
+        squid_meal::Phase::None => None,
+    }
+}
+
 /// monster_bullchicken: spits twice from 65 to 780 units (10 damage, a 30-tick
 /// stationary animation each), then runs in and bites (25, the cvar the retail
 /// close attack reads) every 44 ticks or so, knocking the player back. Far targets are approached at 15 units per tick.
@@ -981,7 +1085,13 @@ unsafe fn tick_squid(
 ) {
     let Some((target, visible, aim)) = acquire(m, sight, pi, player_pos, nprops, 900) else {
         PROP_AI_TIMER[pi] = 0;
+        squid_forage(m, movers, sight, pi, nprops);
         return;
+    };
+    // An enemy (or the damage that brings one) breaks a meal.
+    SQUID_MEAL[pi] = squid_meal::Meal {
+        phase: squid_meal::Phase::None,
+        ..SQUID_MEAL[pi]
     };
     let pos = PROP_POS[pi];
     let d2 = dist2_xz(pos, aim);

@@ -1427,6 +1427,10 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
         )
     });
     let mut events: Vec<(u8, u8, u8, u8)> = Vec::new();
+    // MONSTER_EVENT_BODYDROP_LIGHT and _HEAVY (2001, 2002) of every cooked clip: the tick a
+    // falling body hits the floor (CBaseMonster::HandleAnimEvent).
+    const BODYDROP_EVENTS: [u16; 2] = [2001, 2002];
+    let mut bodydrops: Vec<(u8, u8, u8)> = Vec::new();
     for line in events_text.lines() {
         let f: Vec<&str> = line.split('|').collect();
         let [t, slot, tick, event] = f[..] else { continue };
@@ -1436,6 +1440,9 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
             tick.parse().expect("anim event tick"),
             event.parse().expect("anim event id"),
         );
+        if BODYDROP_EVENTS.contains(&event) && !bodydrops.iter().any(|b| (b.0, b.1) == (t, slot)) {
+            bodydrops.push((t, slot, tick));
+        }
         if anim_event::RULES.contains(&(t, slot)) {
             events.push((t, slot, tick, u8::try_from(event).expect("anim event id past 255")));
         }
@@ -1454,10 +1461,13 @@ fn write_skill_tables(repo_root: &std::path::Path, out_dir: &std::path::Path) {
          /// (actor type, hit group, hitbox mask) for each `hitgroup::RULES` pair.\n\
          pub const HIT_MASKS: [(u8, u8, u32); {}] = {masks:?};\n\
          /// (actor type, clip slot, tick, event) for each `anim_event::RULES` clip.\n\
-         pub const ANIM_EVENTS: [(u8, u8, u8, u8); {}] = {events:?};\n",
+         pub const ANIM_EVENTS: [(u8, u8, u8, u8); {}] = {events:?};\n\
+         /// (actor type, clip slot, tick) of each clip's first body drop event.\n\
+         pub const BODYDROPS: [(u8, u8, u8); {}] = {bodydrops:?};\n",
         skill::SK_RUNTIME,
         masks.len(),
-        events.len()
+        events.len(),
+        bodydrops.len()
     );
     fs::write(out_dir.join("skill_table.rs"), generated).expect("write generated skill tables");
 }

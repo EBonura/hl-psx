@@ -17805,8 +17805,10 @@ fn cook_mdl(
     let human_bodygroups = model_name == "scientist" || model_name == "barney";
     let scientist_bodygroups = model_name == "scientist";
     // Reuse the existing body visibility masks for the can's six skin
-    // families. Geometry is shared; only texture face runs differ.
-    let can_skins = model_name == "can";
+    // families, and for the eye families the houndeye and bullsquid blink
+    // through (the runtime passes the skin as the body index). Geometry is
+    // shared; only texture face runs differ.
+    let can_skins = matches!(model_name.as_str(), "can" | "houndeye" | "bullsquid");
 
     // Bone metadata: parent + value[6] (pos/rot defaults) + scale[6] (anim deltas).
     let (numbones, boneindex) = (i(140) as usize, i(144) as usize);

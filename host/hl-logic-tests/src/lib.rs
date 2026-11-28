@@ -128,3 +128,7 @@ mod sweep_oracles;
 
 #[path = "../../../game/src/monster_damage.rs"]
 pub mod monster_damage;
+#[path = "../../../game/src/pose_variants.rs"]
+pub mod pose_variants;
+#[path = "../../../game/src/squid_meal.rs"]
+pub mod squid_meal;
