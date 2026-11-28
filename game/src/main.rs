@@ -33767,37 +33767,30 @@ unsafe fn insert_model_depth_stream(first: *mut u32, end: *mut u32) {
     }
 }
 
-/// Camera-facing sprite quad (env_sprite / env_glow / env_spark / env_explosion).
-/// Projects the world center, sizes the quad by perspective (world extent x
-/// active projection plane / depth), and emits an additive textured quad into the OT at the
-/// center's depth so it sorts with the world. Screen-aligned (VP_PARALLEL);
-/// upright/oriented sprite types collapse to this, which reads fine at PS1 scale.
-#[inline(always)]
-unsafe fn draw_billboard(
-    packets: &mut PrimitivePacketArena<'_>,
-    np: &mut usize,
-    center: [i32; 3],
-    world_half_w: i32,
-    world_half_h: i32,
-    id: usize,
-    frame: usize,
-    rot: &Mat3I16,
-    base_t: [i32; 3],
-) {
-    let d = sprite::def(id);
-    emit_billboard(
-        packets,
-        np,
-        center,
-        world_half_w,
-        world_half_h,
-        sprite::slot_for(id, frame),
-        d.crush_w,
-        d.crush_h,
-        rot,
-        base_t,
-        255,
-    );
+
+/// A placed sprite's tint and size (sixteenths) from its cooked draw word
+/// (`Map::sprite_render`): rendercolor times renderamt in every mode but kRenderNormal,
+/// which draws the texture as it is. kRenderGlow (3) keeps a constant screen size (scale
+/// times distance x 0.005) and dims with distance (19000 / distance squared, 0.05 to 1),
+/// as GoldSrc's glow sprites do; the port does not test the glow's occlusion.
+fn sprite_tint(render: u32, org: [i32; 3], eye: [i32; 3]) -> ((u8, u8, u8), i32) {
+    let mode = (render >> 16) & 0xff;
+    if mode == 0 {
+        return ((255, 255, 255), 16);
+    }
+    let c8 = |shift: u32| (((render >> shift) & 31) * 255 / 31) as i32;
+    let (mut r, mut g, mut b) = (c8(0), c8(5), c8(10));
+    let mut scale = 16;
+    if mode == 3 {
+        let d = isqrt_i32(dist2_3(org, eye).max(1)).max(1);
+        scale = (d * 16 / 200).clamp(4, 160);
+        // brightness = 19000 / d^2, in 256ths.
+        let k = (19_000 * 256 / (d * d).max(1)).clamp(13, 256);
+        r = r * k >> 8;
+        g = g * k >> 8;
+        b = b * k >> 8;
+    }
+    ((r as u8, g as u8, b as u8), scale)
 }
 
 /// Emit one camera-facing additive billboard for an explicit texture slot +
@@ -41636,16 +41629,22 @@ fn play(
                     } else {
                         half
                     };
-                    draw_billboard(
+                    let (tint, scale) = sprite_tint(m.sprite_render(i), org, eye);
+                    if tint == (0, 0, 0) {
+                        continue;
+                    }
+                    emit_billboard_rgb(
                         &mut packets,
                         &mut np,
                         org,
-                        half,
-                        hh,
-                        id,
-                        sprite_frame,
+                        half * scale / 16,
+                        hh * scale / 16,
+                        sprite::slot_for(id, sprite_frame),
+                        d.crush_w,
+                        d.crush_h,
                         &rot,
                         base_t,
+                        tint,
                     );
                 }
             }

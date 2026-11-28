@@ -5285,8 +5285,25 @@ fn intern_logic_name(names: &mut Vec<String>, name: &str) -> Result<u16, String>
     Ok(names.len() as u16)
 }
 
-/// env_sprite / env_glow / cycler_sprite -> compact 12-byte SpriteRec payloads:
-/// `(origin i16[3], leaf i16, targetname u16, packed u16)`. GoldSrc starts an
+/// A placed sprite's draw: `rendercolor` scaled by `renderamt` as RGB555 in bits 0..15
+/// (GoldSrc draws a sprite whose colour is 0 0 0 white), `rendermode` in 16..23 and
+/// `renderfx` in 24..31.
+fn sprite_render_word(block: &str) -> u32 {
+    let mode = parse_f32_key(block, "rendermode", 0.0).clamp(0.0, 255.0) as u32;
+    let fx = parse_f32_key(block, "renderfx", 0.0).clamp(0.0, 255.0) as u32;
+    let amt = parse_f32_key(block, "renderamt", 255.0).clamp(0.0, 255.0);
+    let mut color = ent_value(block, "rendercolor")
+        .and_then(parse_vec3)
+        .unwrap_or([0.0; 3]);
+    if color == [0.0; 3] {
+        color = [255.0; 3];
+    }
+    let c5 = |c: f32| ((c.clamp(0.0, 255.0) * amt / 255.0).round() as u32 >> 3) & 31;
+    c5(color[0]) | c5(color[1]) << 5 | c5(color[2]) << 10 | mode << 16 | fx << 24
+}
+
+/// env_sprite / env_glow / cycler_sprite -> compact 16-byte SpriteRec payloads:
+/// `(origin i16[3], leaf i16, targetname u16, packed u16, render u32)`. GoldSrc starts an
 /// env_sprite OFF only when it is named and lacks STARTON; unnamed sprites are
 /// visible. Packed bits: id 0..3, initial-on 4, once 5, half-width 6..15.
 fn collect_sprite_props(
@@ -5297,7 +5314,7 @@ fn collect_sprite_props(
     map_idx: u16,
     sprites: &std::collections::HashMap<(u16, String), (u16, u16, u16)>,
     logic_names: &mut Vec<String>,
-) -> Result<Vec<([i16; 3], i16, u16, u16)>, String> {
+) -> Result<Vec<([i16; 3], i16, u16, u16, u32)>, String> {
     const SF_SPRITE_STARTON: u16 = 1;
     const SF_SPRITE_ONCE: u16 = 2;
     const PACK_INITIAL_ON: u16 = 1 << 4;
@@ -5356,6 +5373,7 @@ fn collect_sprite_props(
             point_leaf(origin_hl, nodes, planes),
             name,
             packed,
+            sprite_render_word(block),
         ));
     }
     Ok(out)
@@ -15683,7 +15701,7 @@ fn cook_pass(
     }
 
     // ---- Actors/items + independent sprite placements ----
-    // u32 split counts | ActorRec[24B] | SpriteRec[12B].
+    // u32 split counts | ActorRec[24B] | SpriteRec[16B].
     let prop_off = o.len() as u32;
     o[prop_off_pos..prop_off_pos + 4].copy_from_slice(&prop_off.to_le_bytes());
     let mut trigger_links = Vec::new();
@@ -15961,15 +15979,16 @@ fn cook_pass(
         o.len() - prop_records_start,
         props.len() * cooked::PROP_RECORD_SIZE
     );
-    // SpriteRec 12B: origin i16[3] | leaf i16 | targetname u16 | packed u16.
+    // SpriteRec 16B: origin i16[3] | leaf i16 | targetname u16 | packed u16 | render u32.
     let sprite_records_start = o.len();
-    for (org, leaf, name, packed) in &sprite_props {
+    for (org, leaf, name, packed, render) in &sprite_props {
         for c in org {
             o.extend_from_slice(&c.to_le_bytes());
         }
         o.extend_from_slice(&leaf.to_le_bytes());
         o.extend_from_slice(&name.to_le_bytes());
         o.extend_from_slice(&packed.to_le_bytes());
+        o.extend_from_slice(&render.to_le_bytes());
     }
     debug_assert_eq!(
         o.len() - sprite_records_start,
@@ -24142,6 +24161,16 @@ mod tests {
         assert_eq!(sprites[0].3 >> 6, 10);
         assert_eq!(names, vec!["lamp".to_string(), "flash".to_string()]);
         assert_eq!(sprites[1].2, sprites[2].2, "same targetname shares id");
+        assert_eq!(sprites[0].4 & 0x7fff, 0x7fff, "no rendercolor draws white");
+    }
+
+    #[test]
+    fn sprite_render_word_scales_the_colour_by_the_amount() {
+        // c1a0c's red alarm flare: 238 14 2 at 80, glow mode.
+        let w = sprite_render_word(r#""rendercolor" "238 14 2" "renderamt" "80" "rendermode" "3""#);
+        assert_eq!(w & 31, (238 * 80 / 255) >> 3);
+        assert_eq!(w >> 5 & 31, 0);
+        assert_eq!(w >> 16 & 0xff, 3);
     }
 
     #[test]

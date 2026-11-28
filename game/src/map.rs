@@ -62,7 +62,7 @@
 //!     i32 way[3] × n_way | u16 way_speed × n_way | u16 way_pass × n_way
 //!   props/items:
 //!     u32 0x80000000|(n_sprites<<16)|n_props |
-//!     PropRec[24B] × n_props | SpriteRec[12B] × n_sprites
+//!     PropRec[24B] × n_props | SpriteRec[16B] × n_sprites
 //!   nav (18-byte packed nodes in both modes):
 //!     exact retail route: u16 n_nav,0x8000|route_bytes |
 //!       (i32 origin[3],i16 leaf,u16 route_off,u8 node_type,u8 pad) × n_nav |
@@ -1073,6 +1073,14 @@ impl Map {
             rd_u16(self.data, o + 8),
             rd_u16(self.data, o + 10),
         )
+    }
+
+    /// Placed sprite `i`'s draw word: rendercolor x renderamt as RGB555 (bits 0..15),
+    /// rendermode (16..23), renderfx (24..31).
+    #[inline]
+    pub fn sprite_render(&self, i: usize) -> u32 {
+        let o = self.sprites_off + i * SPRITE_REC_SZ + 12;
+        rd_u16(self.data, o) as u32 | (rd_u16(self.data, o + 2) as u32) << 16
     }
 
     #[inline]

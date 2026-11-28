@@ -209,7 +209,7 @@ pub mod map {
     pub const CLIPNODE_RECORD_SIZE: usize = 6;
     pub const ENTITY_RECORD_SIZE: usize = 56;
     pub const PROP_RECORD_SIZE: usize = 24;
-    pub const SPRITE_RECORD_SIZE: usize = 12;
+    pub const SPRITE_RECORD_SIZE: usize = 16;
     pub const NAV_NODE_RECORD_SIZE: usize = 18;
     pub const LOGIC_RECORD_SIZE: usize = 64;
 
