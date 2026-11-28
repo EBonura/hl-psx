@@ -18442,12 +18442,9 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
         if player_inflicted && prop_is_human(PROP_KIND[pi]) {
             ALERT_FRIENDS = pi as u8; // CTalkMonster::Killed, run by tick_props
         }
-        // GoldSrc leaves no blood pool at a corpse: its decals come only from
-        // TraceBleed on each hit (fire_hitscan). Actors that do not bleed
-        // throw no gore either.
-        if prop_blood_kind(PROP_KIND[pi]) != IMPACT_KIND_NONE {
-            spawn_gibs(PROP_POS[pi], 3); // gore chunks arc out from the corpse
-        }
+        // GoldSrc leaves no blood pool and throws no gore at an ordinary death: its
+        // decals come only from TraceBleed on each hit (fire_hitscan), its gibs only from
+        // GibMonster below.
         // ShouldGibMonster: health below -30 bursts the body (no u8 health goes
         // negative; the overkill is the damage past the last hit point).
         if (DMG_ALWAYSGIB || dmg as i32 - health_before as i32 > 30)
