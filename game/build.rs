@@ -1933,7 +1933,7 @@ fn main() {
     let (viewmodel_verts, viewmodel_tris) = scan_viewmodel_signatures(repo_root);
     let (model_variant_offsets, model_variant_bytes) = scan_model_variant_index(repo_root);
     let mut pack_cache_entries = scan_pack_cache_budget(repo_root);
-    if env::var_os("CARGO_FEATURE_ROOM_CLUSTERS").is_some() {
+    {
         // Room-cluster copies: at most 48 per room (pack_order.rs ROOM_ALIAS_MAX), alias ids
         // outside the scanned data/ dirs.
         let rooms = fs::read_dir(repo_root.join("data/rooms"))

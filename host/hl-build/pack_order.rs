@@ -22,15 +22,13 @@
 //!
 //! Anything this module does not recognise goes last in id order.
 //!
-//! Room clusters (`HLPSX_ROOM_CLUSTERS=1`, which also turns on the game feature
-//! `room-clusters`; the standalone ship build in psoxide-test.toml sets it, a plain pack and
-//! the demo disc member build do not): each room's cluster also gets its own copy of the shared
+//! Room clusters: each room's cluster also gets its own copy of the shared
 //! chunks its load reads, under alias ids (`room_alias`), in read order: the
 //! core sound bank before the textures, then after the world the glock and the
 //! models the room places, in the order the game streams them. A load then
 //! seeks once to the cluster and reads on from there; every read that starts
 //! where the previous one ended costs about 1.6 VBlanks of drive time instead of
-//! about 20 for any other (PSoXide drive model, lane hl-loads 11-27). The disc
+//! about 20 for any other (PSoXide drive model, measured 2026-11-27). The disc
 //! grows by the copies. Carried actors and the player's own weapon models are
 //! not predictable from the cook and keep reading the shared chunk.
 
@@ -142,17 +140,20 @@ pub struct Cluster {
     pub tail: Vec<u32>,
 }
 
-/// Whether the room-cluster layout is switched on for this pack.
-pub fn clusters_enabled() -> bool {
-    std::env::var("HLPSX_ROOM_CLUSTERS").is_ok_and(|v| v == "1")
-}
-
 /// Every room's cluster copies, from the cooked maps (their props), the variant table and
 /// the core-bank table. The model order is the game's (`stream_map_models`: importance
 /// pass, then largest stream first, geometry then its split texture).
 pub fn cluster_plan(repository: &Path, contents: &PackContents) -> Result<BTreeMap<u32, Cluster>> {
-    let core_table = fs::read(repository.join(format!("data/sfx/chunk_{CORE_TABLE_CHUNK}.psxa")))
-        .unwrap_or_default();
+    let table = repository.join(format!("data/sfx/chunk_{CORE_TABLE_CHUNK}.psxa"));
+    let core_table = fs::read(&table).map_err(|error| {
+        format!(
+            "room clusters need the core-bank table {}: {error}",
+            table.display()
+        )
+    })?;
+    if core_table.len() < 8 || &core_table[..4] != b"HCPT" {
+        return Err(format!("{} is not a core-bank table (HCPT)", table.display()).into());
+    }
     let core_profile = |room: u32| -> Option<u32> {
         if core_table.len() < 8 || &core_table[..4] != b"HCPT" {
             return None;
@@ -199,9 +200,12 @@ pub fn cluster_plan(repository: &Path, contents: &PackContents) -> Result<BTreeM
     let mut plan = BTreeMap::new();
     for room in rooms {
         let world = repository.join(format!("data/rooms/room_{}.psxc", 2 * room));
-        let Ok(placed) = super::model_audit::map_actor_types(&world) else {
-            continue;
-        };
+        let placed = super::model_audit::map_actor_types(&world).map_err(|error| {
+            format!(
+                "room clusters: cooked map {} does not read: {error}",
+                world.display()
+            )
+        })?;
         let mut cluster = Cluster::default();
         if let Some(profile) = core_profile(room) {
             cluster.head.push(room_alias(room, profile));
@@ -252,12 +256,9 @@ pub fn alias_source(alias: u32) -> Option<u32> {
     Some(VIEWMODEL_FIRST + rel % ROOM_ALIAS_STRIDE)
 }
 
-/// Stage the room-cluster copies into `staged/clusters` (when switched on): each alias is
-/// a copy of the staged shared chunk's file. Returns whether the directory was written.
-pub fn stage_room_clusters(repository: &Path, staged: &Path) -> Result<bool> {
-    if !clusters_enabled() {
-        return Ok(false);
-    }
+/// Stage the room-cluster copies into `staged/clusters`: each alias is a copy of the staged
+/// shared chunk's file.
+pub fn stage_room_clusters(repository: &Path, staged: &Path) -> Result<()> {
     let contents = contents(repository, staged)?;
     let plan = cluster_plan(repository, &contents)?;
     let dir = staged.join("clusters");
@@ -290,7 +291,7 @@ pub fn stage_room_clusters(repository: &Path, staged: &Path) -> Result<bool> {
         "room clusters: {copies} copies over {} rooms, {bytes} bytes staged",
         plan.len()
     );
-    Ok(true)
+    Ok(())
 }
 
 /// The chunk ids in disc order (`clusters` empty: no room-cluster copies).
@@ -475,11 +476,7 @@ pub fn contents(repository: &Path, staged: &Path) -> Result<PackContents> {
 /// Write the `--world-pack-order-file` for the staged pack and return its path.
 pub fn write_order_file(repository: &Path, staged: &Path) -> Result<std::path::PathBuf> {
     let contents = contents(repository, staged)?;
-    let clusters = if clusters_enabled() {
-        cluster_plan(repository, &contents)?
-    } else {
-        BTreeMap::new()
-    };
+    let clusters = cluster_plan(repository, &contents)?;
     let order = layout(&contents, &clusters);
     let mut text = String::from("# WORLD.PAK chunk order (host/hl-build/pack_order.rs)\n");
     for id in &order {

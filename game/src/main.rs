@@ -185,7 +185,7 @@ use psx_gpu::material::{
 };
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{
-    QuadGouraudBlended, QuadTexturedGouraud, RectFlat, Sprite, TriFlat, TriTextured, TriTexturedGouraud,
+    QuadTexturedGouraud, RectFlat, Sprite, TriFlat, TriTextured, TriTexturedGouraud,
 };
 use psx_gpu::Gpu;
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
@@ -1004,6 +1004,8 @@ const PROP_TYPE_SCIENTIST: u8 = 0;
 const PROP_TYPE_BARNEY: u8 = 1;
 const PROP_TYPE_HEADCRAB: u8 = 2;
 const PROP_TYPE_HOUNDEYE: u8 = 6; // sonic-blast ranged AoE
+const PROP_TYPE_BULLSQUID: u8 = 7;
+const PROP_TYPE_BARNACLE: u8 = 12;
 const PROP_TYPE_ITEM_SUIT: u8 = 3;
 const PROP_TYPE_ITEM_BATTERY: u8 = 4;
 const PROP_TYPE_CONTROLLER: u8 = 11; // flies: exempt from walker floor checks
@@ -1256,14 +1258,14 @@ const PROP_CLIP_PAIN: usize = 3;
 const PROP_CLIP_DEAD: usize = 4;
 const PLAYER_START_HEALTH: u16 = 100;
 /// Death window before a press is taken. PlayerDeathThink waits while the
-/// player model's death sequence plays (4 s cap, player.cpp:1361-1367); the
+/// player model's death sequence plays (4 s cap, CBasePlayer::PlayerDeathThink); the
 /// port draws no player model, so the window is die_simple's length (18
 /// frames at 22 fps, 0.82 s), the sequence a plain death picks.
 const DEATH_TICKS: u8 = 16;
-/// PM_DEAD_VIEWHEIGHT (pm_shared.c:81): the eye 8 units under the hull centre,
+/// PM_DEAD_VIEWHEIGHT (pm_shared): the eye 8 units under the hull centre,
 /// 36 below the standing eye.
 const DEAD_VIEW_HEIGHT: i32 = -8;
-/// The dead view's roll (view.cpp:414-419: 80 degrees), in Q12 turns.
+/// The dead view's roll (V_CalcViewRoll: 80 degrees), in Q12 turns.
 const DEAD_VIEW_ROLL: i32 = 80 * 4096 / 360;
 const PLAYER_START_ARMOR: u16 = 0;
 const HEV_MAX_ARMOR: u16 = 100;
@@ -6770,7 +6772,7 @@ const SF_CHANGELEVEL_USE_ONLY: u16 = 2; // named/target-fired, never Touch()
 const SF_ROTATING_INSTANT: u16 = 1;
 const SF_ROTATING_ACCDCC: u16 = 16;
 const SF_ROTATING_NOT_SOLID: u16 = 64;
-/// SF_BRUSH_HURT (bmodels.cpp:31): touching the fan hurts (CFuncRotating::HurtTouch).
+/// SF_BRUSH_HURT: touching the fan hurts (CFuncRotating::HurtTouch).
 const SF_ROTATING_HURT: u16 = 32;
 // Ent.mv[2] high-half profile bits for allocation-free cosmetic fans. The
 // authored friction is only 1..100, leaving room for two cook-time GoldSrc
@@ -12668,7 +12670,7 @@ unsafe fn draw_screen_fx(m: &Map, suit_equipped: bool) {
     }
 
     // No death tint: CBasePlayer::Killed leaves its red fade commented out
-    // (player.cpp:993-994), so a death shows the room through the dead camera.
+    // there, so a death shows the room through the dead camera.
     // Screen fade: level 0..255. Subtractive gray = fade to black; additive =
     // fade to white. It covers world + HUD, but GoldSrc draws its HUD messages
     // after the fade (CL_DrawHUD: CL_DrawScreenFade, then the client Redraw),
@@ -15456,7 +15458,11 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
     if unsafe { PROP_KIND[pi] == PROP_TYPE_HOUNDEYE && species::houndeye_hopping(pi, state) } {
         return HOUNDEYE_HOP_CLIP;
     }
-    if unsafe { PROP_KIND[pi] == 7 && state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] & 96 == 96 } {
+    if unsafe {
+        PROP_KIND[pi] == PROP_TYPE_BULLSQUID
+            && state == PROP_STATE_ATTACK
+            && PROP_AI_TIMER[pi] & 96 == 96
+    } {
         return SQUID_WHIP_CLIP;
     }
     let alt = unsafe {
@@ -15783,8 +15789,8 @@ fn prop_anim_frame(
     if hopping
         || unsafe {
             match PROP_KIND[pi] {
-                12 => state == PROP_STATE_MOVE,
-                7 => state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] & 32 != 0,
+                PROP_TYPE_BARNACLE => state == PROP_STATE_MOVE,
+                PROP_TYPE_BULLSQUID => state == PROP_STATE_ATTACK && PROP_AI_TIMER[pi] & 32 != 0,
                 _ => false,
             }
         }
@@ -19625,7 +19631,7 @@ unsafe fn tick_alien_attack(
             damage_target(target, skill_hit(Sk::AgruntPunch), pos, health, armor);
             setpiece_sfx::play(hl_format::setpiece_audio::AG_PUNCH, pos);
             if target == PROP_TARGET_PLAYER {
-                // agrunt.cpp:512-513 (left punch) and 542-543 (right), alternated.
+                // CAGrunt::HandleAnimEvent's left and right punches, alternated.
                 let side = if (pi as u16 ^ SIM_NOW) & 1 == 0 { -25 } else { 25 };
                 set_view_punch(Some(8), Some(side), None);
             }
@@ -20070,7 +20076,7 @@ unsafe fn tick_headcrab(
                         setpiece_sfx::play(hl_format::setpiece_audio::HC_BITE, pos);
                     } else if kind == 19 {
                         setpiece_sfx::play(hl_format::setpiece_audio::ICHY_BITE, pos);
-                        // ichthyosaur.cpp:445-446.
+                        // CIchthyosaur::HandleAnimEvent's bite.
                         if target == PROP_TARGET_PLAYER {
                             set_view_punch(Some(5), None, Some(-18));
                         }
@@ -24776,8 +24782,8 @@ unsafe fn blast_sees(
 /// hurt inside `radius` except other houndeyes takes `damage` less its share of
 /// the distance. The player who is out of sight takes half; an actor out of
 /// sight takes nothing (so a houndeye next door hurts no one). Breakables and
-/// pushables, which retail hurts through walls, are not reached yet (ENEMIES.md
-/// finding 12). The two blast circles are coloured by `pack`.
+/// pushables, which retail hurts through walls, are not reached yet. The two
+/// blast circles are coloured by `pack`.
 #[inline(never)]
 #[optimize(size)]
 unsafe fn houndeye_blast(m: &Map, pi: usize, radius: i32, dmg: u8, pack: i32) {
@@ -33873,7 +33879,7 @@ unsafe fn draw_tripmine_beams(
     }
 }
 
-/// A houndeye's blast circles (`CHoundeye::SonicAttack`, houndeye.cpp:563-603):
+/// A houndeye's blast circles (`CHoundeye::SonicAttack`):
 /// two TE_BEAMCYLINDERs from 16 units above the hound, life 0.2 s, width 16,
 /// coloured by the pack (`WriteBeamColor`). The engine grows a cylinder's radius
 /// at the encoded height per second (1,920 and 960 u/s, so 384 and 192 at the
@@ -35411,10 +35417,7 @@ fn main() {
         // The title menu uploads its own art over VRAM: the next play() uploads the
         // load-resident textures again.
         unsafe { LOAD_RESIDENT = false };
-        #[cfg(feature = "room-clusters")]
-        unsafe {
-            LOAD_ALIAS_ROOM = u32::MAX
-        };
+        unsafe { LOAD_ALIAS_ROOM = u32::MAX };
         // Instrumented direct-map discs never need the interactive menu. Making
         // the timeout fall back to map zero lets LTO discard menu-only code and
         // leaves enough executable RAM for profiler hooks; shipping still takes
@@ -35602,15 +35605,13 @@ fn retry_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::Chun
 /// the menu runs again (its art overwrites VRAM).
 static mut LOAD_RESIDENT: bool = false;
 
-/// Room-cluster layout (feature `room-clusters`, host/hl-build/pack_order.rs): while a map
+/// Room-cluster layout (host/hl-build/pack_order.rs): while a map
 /// loads, the room whose cluster holds its own copies of the shared chunks it reads; none
 /// (`u32::MAX`) outside a load, so a weapon switch keeps its primed entries.
-#[cfg(feature = "room-clusters")]
 static mut LOAD_ALIAS_ROOM: u32 = u32::MAX;
 
 /// The id of the loading room's copy of shared chunk `chunk_id` (pack_order.rs
 /// `room_alias`), for ids in 1000..3100.
-#[cfg(feature = "room-clusters")]
 #[inline]
 fn room_alias(chunk_id: u32) -> Option<u32> {
     let room = unsafe { LOAD_ALIAS_ROOM };
@@ -35623,7 +35624,6 @@ fn load_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::Chunk
     telemetry::stage_begin(telemetry::stage::CD_WORLD_PACK_STREAM);
     // The room's own copy first: a miss is a table scan in RAM (the table is resident
     // for the whole load), then the shared chunk as always.
-    #[cfg(feature = "room-clusters")]
     if let Some(load) = room_alias(chunk_id).and_then(|a| cdstream::load_chunk_decompressed(a, dst))
     {
         telemetry::stage_end(telemetry::stage::CD_WORLD_PACK_STREAM);
@@ -36354,10 +36354,7 @@ fn play(
     telemetry::task_begin(telemetry::task::FIXED_UPDATE);
     let texture_chunk_id = room_texture_chunk_id(launch.room_id as u32);
     let world_chunk_id = room_world_chunk_id(launch.room_id as u32);
-    #[cfg(feature = "room-clusters")]
-    unsafe {
-        LOAD_ALIAS_ROOM = launch.room_id as u32
-    };
+    unsafe { LOAD_ALIAS_ROOM = launch.room_id as u32 };
     let map_name = menu::MAPS
         .get(launch.room_id as usize)
         .copied()
@@ -36711,7 +36708,6 @@ fn play(
         // the allocators so each switch can free the selected weapon's textures;
         // only the glock slot prefix survives as a cheap failure fallback.
         vram::vm_checkpoint();
-        #[cfg(feature = "room-clusters")]
         {
             LOAD_ALIAS_ROOM = u32::MAX;
         }
@@ -37589,7 +37585,8 @@ fn play(
                 restart_requested = true;
             }
             // Player death: the dead camera holds for DEATH_TICKS (input is
-            // ignored, the body keeps falling and sliding to a stop), then wait for a button press and reload the latest save point, or
+            // ignored, the body keeps falling and sliding to a stop), then wait for a
+            // button press and reload the latest save point, or
             // the immutable entry handoff when there is none. That handoff is either
             // the latest successful changelevel (full carried player state) or
             // the selected chapter start; the current room's pickups/damage

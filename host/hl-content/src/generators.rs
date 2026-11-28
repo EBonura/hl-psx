@@ -240,7 +240,7 @@ pub fn clips(models: &Path, roster: &Path, output: &Path) -> Result<()> {
 const SEQDESC_BYTES: usize = 176;
 const EVENT_BYTES: usize = 76;
 const SCRIPT_EVENT_DEAD: i32 = 1000;
-/// scriptevent.h:28. (1001 is SCRIPT_EVENT_NOINTERRUPT, which says nothing about death.)
+/// SCRIPT_EVENT_NOT_DEAD. (1001 is SCRIPT_EVENT_NOINTERRUPT, which says nothing about death.)
 const SCRIPT_EVENT_NOT_DEAD: i32 = 1010;
 const SCRIPT_EVENT_FIRE_TARGET: i32 = 1003;
 /// scriptevent.h: EMIT_SOUND on the body channel (1004) and the voice channel (1008).

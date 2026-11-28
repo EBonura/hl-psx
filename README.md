@@ -186,6 +186,10 @@ cargo hl-build pgo --tape "RECORDING.pxtape"           # profile-guided disc
 cargo hl-build --help                 # show every option
 ```
 
+Every disc lays `WORLD.PAK` out in room clusters (`host/hl-build/pack_order.rs`): each map's
+cluster carries its own copy of the shared chunks its load reads, in read order, so a level
+change seeks once and reads on. The copies make the disc larger.
+
 Before `pgo` or `regress`, set `HLPSX_FRONTEND` to the retained emulator
 frontend and `HLPSX_FRONTEND_SHA256` to its verified build receipt's digest.
 Both commands check that artifact before changing build or profile outputs.

@@ -164,7 +164,7 @@ pub(crate) unsafe fn tick_grunt(
                 hev::set_kind(hev::Kind::Generic);
                 damage_target(target, skill_hit(Sk::HgruntKick), pos, health, armor);
                 if target == PROP_TARGET_PLAYER {
-                    set_view_punch(Some(15), None, None); // hgrunt.cpp:953
+                    set_view_punch(Some(15), None, None); // CHGrunt::HandleAnimEvent (kick)
                 }
             }
         } else if mode == 3 {
@@ -386,7 +386,7 @@ pub(crate) unsafe fn tick_slave(
             hev::set_kind(hev::Kind::Slash);
             damage_target(target, claw, pos, health, armor);
             if target == PROP_TARGET_PLAYER {
-                set_view_punch(Some(5), None, Some(-18)); // islave.cpp:323-324, 344-345
+                set_view_punch(Some(5), None, Some(-18)); // CISlave::HandleAnimEvent (claws)
             }
             cue(SP::SLV_CLAW, pos);
         }
@@ -929,7 +929,7 @@ unsafe fn tick_zombie(
                 };
                 let len = isqrt_i32(dx * dx + dz * dz).max(1);
                 KNOCK = [(dx * 5 + dz * side) / len, 0, (dz * 5 - dx * side) / len];
-                // zombie.cpp:202-203 (right claw), 226-227 (left), 248 (both).
+                // CZombie::HandleAnimEvent: right claw, left claw, both.
                 set_view_punch(
                     Some(5),
                     None,
@@ -1086,8 +1086,9 @@ unsafe fn hound_back(pi: usize, aim: [i32; 3]) -> [i32; 3] {
 
 /// monster_houndeye: runs in to 190 units, charges for 49 ticks and lets go at
 /// +45 with 15 x (1 - distance / 384), multiplied by the pack (every living
-/// houndeye within 1,024 units, up to four, counted at the blast). A hit aborts the charge: it slides 140 units back
-/// over 30 ticks and rests 54. A blast every 80 ticks otherwise.
+/// houndeye within 1,024 units, up to four, counted at the blast). A hit aborts
+/// the charge: it slides 140 units back over 30 ticks and rests 54. A blast
+/// every 80 ticks otherwise.
 ///
 /// Animation and cries follow the retail sequences: an alert cry at first
 /// sight, a hunting cry as it sets off, the `attack` sequence for the charge

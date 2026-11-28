@@ -25,9 +25,6 @@ console-diag = []
 # Emits PSoXide-only MMIO telemetry so `frontend launch` can stop on guest
 # frames and write profile/counter CSVs. Keep it off for burn/shipping builds.
 emulator-telemetry = ["psx-goldsrc/emulator-telemetry"]
-# Room-cluster disc layout (host/hl-build/pack_order.rs): map loads ask for the room's own copy
-# of each shared chunk first. HLPSX_ROOM_CLUSTERS=1 turns on this feature and the layout together.
-room-clusters = []
 # Measurement builds: report CPU-projected vertices to PSoXide's warp probe.
 warp-probe = ["psx-goldsrc/warp-probe"]
 # Records the affine error histogram for every frame so tessellation changes

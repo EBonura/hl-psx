@@ -12,10 +12,6 @@ repository = "EBonura/hl-psx"
 [[build]]
 name = "ship"
 out = "build/ship"
-# The standalone disc lays WORLD.PAK out in room clusters (host/hl-build/pack_order.rs, Manny
-# 11-27: more disc space is fine). A plain `cargo hl-build pack` (the demo disc's member build)
-# keeps the flat layout.
-env = { HLPSX_ROOM_CLUSTERS = "1" }
 commands = [
   # The sample profile is rebound through the git blob it was collected from (psoxide-pgo
   # rebind): the clean stage's depth-1 clone needs the history first.

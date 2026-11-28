@@ -968,19 +968,6 @@ fn parse_args() -> Options {
             _ => usage(),
         }
     }
-    // The room-cluster layout and the game's alias lookups go together: one switch
-    // (HLPSX_ROOM_CLUSTERS=1) turns on both, so a pack can never carry the copies without the
-    // game asking for them, or the other way round.
-    if pack_order::clusters_enabled() {
-        let mut features = options.features.take().unwrap_or_default();
-        if !features.split(',').any(|f| f.trim() == "room-clusters") {
-            if !features.trim().is_empty() {
-                features.push(',');
-            }
-            features.push_str("room-clusters");
-        }
-        options.features = Some(features);
-    }
     options
 }
 
@@ -2145,9 +2132,7 @@ fn cook_assets(repository: &Path, valve: &Path, psoxide: &Path) -> Result<()> {
 /// Features a shipping build may carry. Any other feature (telemetry, trace
 /// streams, debug boot and gallery hooks, diagnostic tints) makes a
 /// diagnostic build, which keeps core's panic messages.
-const SHIPPING_FEATURES: [&str; 2] = [
-    // The room-cluster disc layout (pack_order.rs; pack with HLPSX_ROOM_CLUSTERS=1).
-    "room-clusters",
+const SHIPPING_FEATURES: [&str; 1] = [
     // Measurement only (psx-goldsrc reports soft-projected vertices to the
     // emulator's warp probe); with panic messages kept the image overflows
     // RAM by about 15 KB.
@@ -2967,7 +2952,7 @@ fn pack_disc_into(
     fs::create_dir_all(dist)?;
     let image = dist.join("hl-psx.bin");
     let staged_pack = stage_world_pack(repository)?;
-    let room_clusters = pack_order::stage_room_clusters(repository, &staged_pack)?;
+    pack_order::stage_room_clusters(repository, &staged_pack)?;
     let movie = intro.then(|| intro::cooked(repository)).flatten();
     if intro && movie.is_none() {
         return Err(
@@ -3012,12 +2997,7 @@ fn pack_disc_into(
     if DIAG_BUILD.load(Ordering::Relaxed) {
         command.arg("--diag");
     }
-    let extra_dirs: &[&str] = if room_clusters {
-        &["modelpack", "sfx", "voices", "sprites", "clusters"]
-    } else {
-        &["modelpack", "sfx", "voices", "sprites"]
-    };
-    for directory in extra_dirs {
+    for directory in ["modelpack", "sfx", "voices", "sprites", "clusters"] {
         command
             .arg("--world-pack-extra-dir")
             .arg(staged_pack.join(directory));
