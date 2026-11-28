@@ -35637,6 +35637,46 @@ fn load_streamed_chunk(chunk_id: u32, dst: &mut [u32]) -> Option<cdstream::Chunk
     loaded
 }
 
+/// A load's map-independent textures, ahead of the room's (see `play`): the HUD sheet
+/// (a fixed page outside the allocator), the explosion and weapon sprites and the decal
+/// sheet. When they are still in VRAM from the previous load their windows are only
+/// allocated again; otherwise the three chunks are read and uploaded. Out of line: it
+/// runs once a load, and inside `play` it only took executable RAM.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn load_shared_textures(
+    stream_chunks: &mut u32,
+    stream_bytes: &mut u32,
+    stream_sectors: &mut u32,
+) -> hud::Materials {
+    vram::begin_map();
+    if LOAD_RESIDENT && sprite::reserve_resident() {
+        return hud::materials();
+    }
+    vram::begin_map();
+    let mut read = |id: u32| {
+        load_accounted_map_chunk(id, stream_chunks, stream_bytes, stream_sectors)
+            .map(|load| load.raw_len)
+            .unwrap_or(0)
+    };
+    // A failed read leaves the stale VRAM copy from the previous map, which is the
+    // same sheet anyway.
+    let n = read(hud::HUD_CHUNK_ID);
+    LOAD_RESIDENT = n >= hud::HUD_BLOB_BYTES;
+    hud::upload(streamed_map_bytes(n.max(68)));
+    // Explosion (s_explod.spr) and the weapon effects' sprites: blasts happen on any map.
+    let en = read(sprite::EXPL_CHUNK_ID);
+    if en >= 20 {
+        sprite::load_explosion(streamed_map_bytes(en));
+    }
+    // Decals (decals.wad): shots and blood land on any map.
+    let dn = read(sprite::DECAL_CHUNK_ID);
+    if dn >= 8 {
+        sprite::load_decals(streamed_map_bytes(dn));
+    }
+    hud::materials()
+}
+
 #[inline]
 unsafe fn load_accounted_map_chunk(
     chunk_id: u32,
@@ -36337,60 +36377,8 @@ fn play(
     // only allocates their windows again (`sprite::reserve_resident` checks each lands
     // where its pixels are); otherwise it reads the three chunks, which lie one after
     // the other on the disc, and uploads them before the room's textures.
-    unsafe { vram::begin_map() };
-    let hud_mat = if unsafe { LOAD_RESIDENT && sprite::reserve_resident() } {
-        hud::materials()
-    } else {
-        unsafe { vram::begin_map() };
-        // A failed read leaves the stale VRAM copy from the previous map, which is
-        // the same sheet anyway.
-        let n = unsafe {
-            load_accounted_map_chunk(
-                hud::HUD_CHUNK_ID,
-                &mut stream_chunks,
-                &mut stream_bytes,
-                &mut stream_sectors,
-            )
-        }
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-        let blob = unsafe { streamed_map_bytes(n.max(68)) };
-        unsafe { LOAD_RESIDENT = n >= hud::HUD_BLOB_BYTES };
-        hud::upload(blob);
-        let mat = hud::materials();
-        // Explosion (s_explod.spr) and the weapon effects' sprites: blasts happen on
-        // any map.
-        let en = unsafe {
-            load_accounted_map_chunk(
-                sprite::EXPL_CHUNK_ID,
-                &mut stream_chunks,
-                &mut stream_bytes,
-                &mut stream_sectors,
-            )
-        }
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-        if en >= 20 {
-            let blob = unsafe { streamed_map_bytes(en) };
-            unsafe { sprite::load_explosion(blob) };
-        }
-        // Decals (decals.wad): shots and blood land on any map.
-        let dn = unsafe {
-            load_accounted_map_chunk(
-                sprite::DECAL_CHUNK_ID,
-                &mut stream_chunks,
-                &mut stream_bytes,
-                &mut stream_sectors,
-            )
-        }
-        .map(|load| load.raw_len)
-        .unwrap_or(0);
-        if dn >= 8 {
-            let blob = unsafe { streamed_map_bytes(dn) };
-            unsafe { sprite::load_decals(blob) };
-        }
-        mat
-    };
+    let hud_mat =
+        unsafe { load_shared_textures(&mut stream_chunks, &mut stream_bytes, &mut stream_sectors) };
 
     // The core bank goes before the room's textures: the textures, voices, sprites
     // and world that follow lie one after the other on the disc (pack_order.rs), so
