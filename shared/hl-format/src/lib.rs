@@ -802,7 +802,11 @@ pub mod setpiece_audio {
     pub const BCL_CHEW: u8 = 81;
     // The bullsquid's spit landing (CSquidSpit::Touch).
     pub const BC_SPITHIT: u8 = 82;
-    pub const COUNT: usize = 83;
+    // The scientist's fear: SC_SCREAM's first line (CScientist::Scream) and SC_FEAR's
+    // (TASK_SAY_FEAR), one sample each.
+    pub const SCI_SCREAM: u8 = 83;
+    pub const SCI_FEAR: u8 = 84;
+    pub const COUNT: usize = 85;
 
     /// Indexed by slot; within a tier, earlier slots are kept first.
     pub const SOUNDS: [Sound; COUNT] = [
@@ -937,6 +941,8 @@ pub mod setpiece_audio {
         sc("monster_barnacle", "barnacle/bcl_alert2.wav", 3),
         sc("monster_barnacle", "barnacle/bcl_chew1.wav", 3),
         sc("monster_bullchicken", "bullchicken/bc_spithit1.wav", 3),
+        sc("monster_scientist", "scientist/sci_fear1.wav", 3),
+        sc("monster_scientist", "scientist/nooo.wav", 3),
     ];
 }
 

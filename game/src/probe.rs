@@ -67,6 +67,11 @@ pub fn god() -> bool {
     unsafe { GOD != 0 }
 }
 
+/// `god 3`: god mode, and monsters do not take the player as an enemy (FL_NOTARGET).
+pub fn notarget() -> bool {
+    unsafe { GOD == 3 }
+}
+
 pub unsafe fn name_id(m: &crate::map::Map, name: &str) -> u16 {
     let mut id = 1usize;
     while id <= m.n_logic_names {
@@ -931,7 +936,7 @@ pub unsafe fn step(
             *pitch = PIN_POSE.2;
         }
     }
-    if GOD == 2 {
+    if GOD >= 2 {
         if *health < 1000 {
             crate::reference_trace::probe(now, "god_heal", "", *health as i32);
         }

@@ -956,6 +956,175 @@ pub const fn unpack_carry_state(state: u8) -> (u8, bool, bool, bool, bool) {
     )
 }
 
+/// CScientist's combat schedules, one actor's place in them: `slFear` (stop, face the
+/// enemy, TASK_SAY_FEAR), `slScientistCover` (TASK_RUN_PATH_SCARED away until out of the
+/// enemy's sight) and `slScientistHide` (ACT_CROUCH, then ACT_CROUCHIDLE for
+/// TASK_WAIT_RANDOM 10 s), interrupted by seeing the enemy again; then the stand. The enemy
+/// is forgotten after 15 s unseen (CTalkMonster's DisregardEnemy). Out of combat a scary
+/// noise startles a calm scientist (`slScientistStartle`: crouch, crouch idle up to 1 s),
+/// at most every 3 s.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FearPhase {
+    None,
+    Fear,
+    Cover,
+    Hide,
+    Startle,
+    Stand,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Fear {
+    pub phase: FearPhase,
+    /// Ticks in this phase.
+    pub ticks: u16,
+    /// The hide's length (the crouch plus the random wait).
+    pub wait: u16,
+    /// Ticks since the enemy was last seen.
+    pub unseen: u16,
+    /// Ticks since the last fear or startle ended.
+    pub calm: u16,
+}
+
+impl Fear {
+    pub const NONE: Fear = Fear {
+        phase: FearPhase::None,
+        ticks: 0,
+        wait: 0,
+        unseen: 0,
+        calm: u16::MAX,
+    };
+
+    const fn calm() -> Fear {
+        Fear {
+            calm: 0,
+            ..Fear::NONE
+        }
+    }
+}
+
+/// slFear's stop, face and fear sentence before the run (about a second).
+pub const FEAR_TICKS: u16 = 20;
+/// A run that finds no cover from the enemy's sight ends after this.
+pub const COVER_MAX_TICKS: u16 = 80;
+/// The crouch sequence: 21 frames at 18 fps.
+pub const CROUCH_TICKS: u16 = 23;
+/// crouchstand: 22 frames at 18 fps.
+pub const STAND_TICKS: u16 = 23;
+/// TASK_WAIT_RANDOM 10: up to ten seconds in the crouch.
+pub const HIDE_WAIT_MAX: u16 = 200;
+/// DisregardEnemy: fifteen seconds unseen.
+pub const FORGET_TICKS: u16 = 300;
+/// "Only cower every 3 seconds or so".
+pub const STARTLE_EVERY: u16 = 60;
+/// slScientistStartle's TASK_WAIT_RANDOM 1.0.
+pub const STARTLE_WAIT_MAX: u16 = 20;
+/// TASK_RANDOM_SCREAM 0.3: the scream as the startle begins, in tenths.
+pub const fn startle_screams(roll: u16) -> bool {
+    roll % 10 < 3
+}
+
+/// Units a tick of the scared run (run1: 179 units over 17 frames at 30 fps, 316 u/s).
+pub const COVER_SPEED: i32 = 16;
+
+/// One tick of the fear schedules. `threat` is whether the actor has an enemy at all (alive),
+/// `new_enemy` whether it was just acquired, `sees` whether it is in sight now, `heard`
+/// whether a combat or danger noise reaches it; `roll` any value for the random waits.
+pub const fn fear_step(
+    f: Fear,
+    threat: bool,
+    new_enemy: bool,
+    sees: bool,
+    heard: bool,
+    roll: u16,
+) -> Fear {
+    let stand = Fear {
+        phase: FearPhase::Stand,
+        ticks: 0,
+        wait: 0,
+        unseen: 0,
+        calm: 0,
+    };
+    if !threat {
+        return match f.phase {
+            FearPhase::Hide => stand,
+            FearPhase::Startle if f.ticks + 1 >= f.wait => stand,
+            FearPhase::Startle | FearPhase::Stand
+                if f.ticks + 1 < STAND_TICKS || f.ticks + 1 < f.wait =>
+            {
+                Fear {
+                    ticks: f.ticks + 1,
+                    ..f
+                }
+            }
+            FearPhase::None if heard && f.calm >= STARTLE_EVERY => Fear {
+                phase: FearPhase::Startle,
+                ticks: 0,
+                wait: CROUCH_TICKS + roll % (STARTLE_WAIT_MAX + 1),
+                unseen: 0,
+                calm: 0,
+            },
+            FearPhase::None => Fear {
+                calm: f.calm.saturating_add(1),
+                ..f
+            },
+            _ => Fear::calm(),
+        };
+    }
+    let unseen = if sees { 0 } else { f.unseen.saturating_add(1) };
+    if new_enemy
+        && matches!(
+            f.phase,
+            FearPhase::None | FearPhase::Stand | FearPhase::Startle
+        )
+    {
+        return Fear {
+            phase: FearPhase::Fear,
+            ticks: 0,
+            wait: 0,
+            unseen,
+            calm: 0,
+        };
+    }
+    if unseen >= FORGET_TICKS {
+        return fear_step(f, false, false, false, false, roll);
+    }
+    let ticks = f.ticks.saturating_add(1);
+    let hide = Fear {
+        phase: FearPhase::Hide,
+        ticks: 0,
+        wait: CROUCH_TICKS + roll % (HIDE_WAIT_MAX + 1),
+        unseen,
+        calm: 0,
+    };
+    let cover = Fear {
+        phase: FearPhase::Cover,
+        ticks: 0,
+        wait: 0,
+        unseen,
+        calm: 0,
+    };
+    match f.phase {
+        // Forgotten (or never feared): only a new enemy starts the schedules again.
+        FearPhase::None => Fear {
+            calm: f.calm.saturating_add(1),
+            ..f
+        },
+        FearPhase::Stand | FearPhase::Startle => fear_step(f, false, false, false, false, roll),
+        FearPhase::Fear if ticks >= FEAR_TICKS => cover,
+        FearPhase::Cover if !sees || ticks >= COVER_MAX_TICKS => hide,
+        // Seeing the enemy breaks the hide (slScientistHide's interrupts): run again.
+        FearPhase::Hide if sees && ticks > CROUCH_TICKS => cover,
+        // The wait ends unseen: the next cover search finds this spot again (still crouched).
+        FearPhase::Hide if ticks >= f.wait => Fear {
+            ticks: CROUCH_TICKS,
+            wait: CROUCH_TICKS + roll % (HIDE_WAIT_MAX + 1),
+            ..hide
+        },
+        _ => Fear { ticks, unseen, ..f },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1565,5 +1734,85 @@ mod tests {
         clock.start(9, 65_000);
         assert!(!clock.ready(9, 65_100));
         assert!(clock.ready(9, 65_000u16.wrapping_add(HEAL_COOLDOWN_TICKS)));
+    }
+
+    #[test]
+    fn fear_faces_runs_hides_and_forgets() {
+        let mut f = fear_step(Fear::NONE, true, true, true, false, 0);
+        assert_eq!(f.phase, FearPhase::Fear);
+        for _ in 0..FEAR_TICKS {
+            f = fear_step(f, true, false, true, false, 0);
+        }
+        assert_eq!(f.phase, FearPhase::Cover);
+        // Out of sight: the hide, crouch first.
+        f = fear_step(f, true, false, false, false, 40);
+        assert_eq!((f.phase, f.wait), (FearPhase::Hide, CROUCH_TICKS + 40));
+        // Seen again once crouched: run again.
+        for _ in 0..CROUCH_TICKS + 1 {
+            f = fear_step(f, true, false, false, false, 40);
+        }
+        assert_eq!(f.phase, FearPhase::Hide);
+        f = fear_step(f, true, false, true, false, 40);
+        assert_eq!(f.phase, FearPhase::Cover);
+        // Fifteen seconds unseen: forgotten, and the stand plays.
+        for _ in 0..FORGET_TICKS {
+            f = fear_step(f, true, false, false, false, 0);
+        }
+        assert_eq!(f.phase, FearPhase::Stand);
+        // The caller drops the forgotten enemy; a stand still running keeps going.
+        assert_eq!(
+            fear_step(f, true, false, false, false, 0).phase,
+            FearPhase::Stand
+        );
+        for _ in 0..STAND_TICKS {
+            f = fear_step(f, false, false, false, false, 0);
+        }
+        assert_eq!(f.phase, FearPhase::None);
+    }
+
+    #[test]
+    fn a_dead_enemy_ends_the_fear_and_a_run_without_cover_ends() {
+        let f = Fear {
+            phase: FearPhase::Cover,
+            ticks: 3,
+            wait: 0,
+            unseen: 0,
+            calm: 0,
+        };
+        assert_eq!(
+            fear_step(f, false, false, false, false, 0).phase,
+            FearPhase::None
+        );
+        let mut f = f;
+        for _ in 0..COVER_MAX_TICKS {
+            f = fear_step(f, true, false, true, false, 7);
+        }
+        assert_eq!(f.phase, FearPhase::Hide);
+    }
+
+    #[test]
+    fn a_noise_startles_a_calm_scientist_every_three_seconds() {
+        let f = fear_step(Fear::NONE, false, false, false, true, 5);
+        assert_eq!((f.phase, f.wait), (FearPhase::Startle, CROUCH_TICKS + 5));
+        let mut f = f;
+        for _ in 0..CROUCH_TICKS + 5 {
+            f = fear_step(f, false, false, false, true, 5);
+        }
+        assert_eq!(f.phase, FearPhase::Stand);
+        for _ in 0..STAND_TICKS {
+            f = fear_step(f, false, false, false, true, 5);
+        }
+        assert_eq!(f.phase, FearPhase::None);
+        // Too soon for another.
+        f = fear_step(f, false, false, false, true, 5);
+        assert_eq!(f.phase, FearPhase::None);
+        for _ in 0..STARTLE_EVERY {
+            f = fear_step(f, false, false, false, false, 5);
+        }
+        assert_eq!(
+            fear_step(f, false, false, false, true, 5).phase,
+            FearPhase::Startle
+        );
+        assert!(startle_screams(2) && !startle_screams(3));
     }
 }

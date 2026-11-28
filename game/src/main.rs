@@ -1320,12 +1320,15 @@ const PROP_CLIP_ALT: usize = 5;
 const HOUNDEYE_HOP_CLIP: usize = 6;
 /// The bullsquid's tail whip, after its bite (CheckMeleeAttack1).
 const SQUID_WHIP_CLIP: usize = 6;
+/// Barney's cover run: about the 2 s his TASK_RUN_PATH to a cover node takes in the c1a1
+/// offices, at his run's speed (217 units over 15 frames at 25 fps, 362 u/s).
+const BARNEY_COVER_TICKS: u16 = 40;
+const BARNEY_RUN_SPEED: i32 = 18;
 const BARNEY_DAMAGE: u8 = 5; // sk_9mm_bullet 5/5/8 (skill.cfg), scaled by skill
 const BARNEY_FOLLOW_RANGE2: i32 = 640 * 640;
 const BARNEY_STOP_RANGE2: i32 = 128 * 128;
 const SCIENTIST_FEAR_RANGE2: i32 = 896 * 896;
 const SCIENTIST_FEAR_TICKS: u8 = 80;
-const SCIENTIST_FLEE_SPEED: i32 = 7;
 const SCIENTIST_FACE_RANGE2: i32 = 192 * 192;
 const SCIENTIST_FOLLOW_STOP_RANGE2: i32 = 128 * 128;
 /// A follower has arrived when it is within the stop range on the plane and on
@@ -4029,6 +4032,39 @@ static mut NEXT_HIT_GROUP: u8 = 0;
 static mut PROP_POSE_VARIANT: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
 /// Nonzero while a corpse fades out (SUB_StartFadeOut), from its PROP_DEATH_START.
 static mut PROP_FADING: [u8; LIVE_PROPS] = [0; LIVE_PROPS];
+/// The scientist's cooked clips after his five (host/hl-content/model-roster.txt): the scared
+/// run, the crouch, the crouch idle, the stand and the run.
+const SCI_CLIP_RUN_SCARED: usize = 5;
+const SCI_CLIP_CROUCH: usize = 6;
+const SCI_CLIP_CROUCH_IDLE: usize = 7;
+const SCI_CLIP_STAND: usize = 8;
+const SCI_CLIP_RUN: usize = 9;
+
+/// The clip a scientist's fear schedules play, if one is running.
+unsafe fn scientist_fear_clip(pi: usize) -> Option<usize> {
+    use scientist_logic::FearPhase as P;
+    let f = SCI_FEAR[pi];
+    if PROP_KIND[pi] == PROP_TYPE_BARNEY {
+        return (f.phase == P::Cover).then_some(BARNEY_CLIP_RUN);
+    }
+    let crouched = |t: u16| {
+        if t < scientist_logic::CROUCH_TICKS {
+            SCI_CLIP_CROUCH
+        } else {
+            SCI_CLIP_CROUCH_IDLE
+        }
+    };
+    match f.phase {
+        P::Cover => Some(SCI_CLIP_RUN_SCARED),
+        P::Hide | P::Startle => Some(crouched(f.ticks)),
+        P::Stand => Some(SCI_CLIP_STAND),
+        _ => None,
+    }
+}
+
+/// Each scientist's place in CScientist's fear schedules (`scientist_logic::fear_step`).
+static mut SCI_FEAR: [scientist_logic::Fear; LIVE_PROPS] =
+    [scientist_logic::Fear::NONE; LIVE_PROPS];
 /// SUB_FadeOut: renderamt 255 down by 15 every 0.1 s think, 17 thinks.
 const CORPSE_FADE_TICKS: u16 = 34;
 
@@ -9681,6 +9717,7 @@ unsafe fn restore_transition_actors(
         PROP_HIT_FLASH[pi] = 0;
         PROP_POSE_VARIANT[pi] = 0;
         PROP_FADING[pi] = 0;
+        SCI_FEAR[pi] = scientist_logic::Fear::NONE;
         species::SQUID_MEAL[pi] = squid_meal::Meal::NONE;
         PROP_DEATH_START[pi] = if health == 0 {
             0u16.wrapping_sub(300)
@@ -15506,6 +15543,11 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
             PROP_CLIP_PAIN
         };
     }
+    if unsafe { PROP_KIND[pi] } <= 1 {
+        if let Some(clip) = unsafe { scientist_fear_clip(pi) } {
+            return clip;
+        }
+    }
     if unsafe { PROP_KIND[pi] } == PROP_TYPE_BULLSQUID {
         if let Some(clip) = unsafe { species::squid_meal_clip(pi) } {
             return clip;
@@ -15549,6 +15591,13 @@ fn prop_clip(pi: usize, state: u8, hit_flash: bool) -> usize {
         return PROP_CLIP_ALT;
     }
     match state {
+        PROP_STATE_MOVE if unsafe { follower_runs(pi) } => {
+            if unsafe { PROP_KIND[pi] } == 0 {
+                SCI_CLIP_RUN
+            } else {
+                BARNEY_CLIP_RUN
+            }
+        }
         PROP_STATE_MOVE | PROP_STATE_MOVE_AWAY => PROP_CLIP_MOVE,
         PROP_STATE_ATTACK => PROP_CLIP_ATTACK,
         _ => PROP_CLIP_IDLE,
@@ -15582,6 +15631,18 @@ unsafe fn blink_skin(pi: usize, ty: u8) -> u8 {
     0
 }
 
+/// Barney's run, after his draw.
+const BARNEY_CLIP_RUN: usize = 6;
+
+/// A scientist or Barney following the player at the run's gait
+/// (`scientist_logic::follow_move_speed`): it plays the run.
+#[inline]
+unsafe fn follower_runs(pi: usize) -> bool {
+    matches!(PROP_KIND[pi], 0 | 1)
+        && prop_scientist_flag(pi, PROP_SCI_FOLLOWING)
+        && dist2_xz(PROP_POS[pi], LOGIC_PLAYER_POS)
+            >= scientist_logic::FOLLOW_GAIT_SPLIT * scientist_logic::FOLLOW_GAIT_SPLIT
+}
 
 /// The c1a1b jumpwindow studio sequence carries the houndeye roughly 200 units
 /// away from its actor origin. Expanding every houndeye's sphere would undo
@@ -17878,6 +17939,7 @@ unsafe fn release_loot(
             PROP_HIT_FLASH[pi] = 0;
             PROP_POSE_VARIANT[pi] = 0;
             PROP_FADING[pi] = 0;
+            SCI_FEAR[pi] = scientist_logic::Fear::NONE;
             species::SQUID_MEAL[pi] = squid_meal::Meal::NONE;
             PROP_DEATH_START[pi] = 0;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
@@ -18552,6 +18614,20 @@ unsafe fn damage_prop(pi: usize, dmg: u8, player_inflicted: bool) {
     }
     if player_inflicted && prop_is_human(PROP_KIND[pi]) {
         talk_hurt_by_player(pi);
+    }
+    // CBarney::GetSchedule in combat: bits_COND_HEAVY_DAMAGE sends him to cover.
+    if PROP_KIND[pi] == PROP_TYPE_BARNEY
+        && PROP_HEALTH[pi] != 0
+        && dmg >= monster_damage::HEAVY_DAMAGE
+        && PROP_AI_TARGET[pi] != PROP_TARGET_NONE
+        && SCI_FEAR[pi].phase == scientist_logic::FearPhase::None
+    {
+        SCI_FEAR[pi] = scientist_logic::Fear {
+            phase: scientist_logic::FearPhase::Cover,
+            ..scientist_logic::Fear::NONE
+        };
+        #[cfg(feature = "interaction-probe")]
+        reference_trace::probe_vals(SIM_NOW as u32, "bcover", &[pi as i32, dmg as i32]);
     }
     // Damage cancels an interruptible cine without firing completion outputs.
     // NOINTERRUPT suppresses that break condition, but death always releases it.
@@ -19582,6 +19658,8 @@ unsafe fn pick_target(
     let mut best_d2 = wake2;
 
     let rel = senses::relation(kind, senses::KIND_PLAYER);
+    #[cfg(feature = "interaction-probe")]
+    let rel = if probe::notarget() { senses::R_NO } else { rel };
     if senses::is_enemy(rel) {
         let d2 = dist2_xz(pos, player_pos);
         if d2 < best_d2
@@ -20833,6 +20911,19 @@ unsafe fn tick_barney(
     if PROP_AI_TIMER[pi] > 0 {
         PROP_AI_TIMER[pi] -= 1;
     }
+    // CBarney in combat takes cover from his enemy after a heavy hit (SCHED_TAKE_COVER_FROM_
+    // ENEMY): he runs from it, then faces it again (damage_prop starts the run).
+    if SCI_FEAR[pi].phase == scientist_logic::FearPhase::Cover {
+        let ticks = SCI_FEAR[pi].ticks + 1;
+        match target_aim_point(PROP_AI_TARGET[pi], player_pos, nprops) {
+            Some(threat) if ticks < BARNEY_COVER_TICKS => {
+                SCI_FEAR[pi].ticks = ticks;
+                prop_run_from(m, movers, pi, threat, BARNEY_RUN_SPEED);
+                return;
+            }
+            _ => SCI_FEAR[pi] = scientist_logic::Fear::NONE,
+        }
+    }
     let had_target = PROP_AI_TARGET[pi] != PROP_TARGET_NONE;
 
     let reacquire = ai_reacquire(pi);
@@ -20999,6 +21090,39 @@ unsafe fn scientist_heal_tick(pi: usize, left: u8, player_pos: [i32; 3], health:
     }
 }
 
+/// TASK_RUN_PATH away from `threat_pos` (a cover search's run): straight away while the way
+/// is open, else toward the node graph's best flee goal.
+#[inline(never)]
+#[optimize(size)]
+unsafe fn prop_run_from(
+    m: &Map,
+    movers: &[phys::Mover],
+    pi: usize,
+    threat_pos: [i32; 3],
+    speed: i32,
+) {
+    let pos = PROP_POS[pi];
+    let mut dx = pos[0] - threat_pos[0];
+    let dz = pos[2] - threat_pos[2];
+    if dx == 0 && dz == 0 {
+        dx = 1;
+    }
+    // Slew toward the away-heading like every other actor (M40) instead of
+    // snapping -- a fleeing scientist was still teleport-rotating.
+    let yaw = turn_toward(
+        prop_yaw_value(PROP_YAW[pi]),
+        yaw_from_vec(dx, dz),
+        senses::turn_rate_q12(PROP_KIND[pi]),
+    );
+    PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
+    PROP_STATE[pi] = PROP_STATE_MOVE;
+    if !prop_try_step(m, movers, pi, dx, dz, speed, true) {
+        if let Some(goal) = nav_flee_goal(m, threat_pos, pos) {
+            prop_move_towards_point(m, movers, pi, goal, speed);
+        }
+    }
+}
+
 #[optimize(size)]
 unsafe fn tick_scientist(
     m: &Map,
@@ -21024,48 +21148,108 @@ unsafe fn tick_scientist(
     // 5 Hz staggered target acquisition instead of tracing every scientist
     // against every headcrab on every sim tick (at most 150 ms extra latency).
     let reacquire = ai_reacquire(pi);
+    let fear = SCI_FEAR[pi];
+    let idle = matches!(
+        fear.phase,
+        scientist_logic::FearPhase::None | scientist_logic::FearPhase::Stand
+    );
+    let mut new_enemy = false;
     if reacquire {
         let threat = find_scientist_threat(m, sight_movers, pi, nprops);
-        prop_ai_set_target_visible(pi, threat != PROP_TARGET_NONE);
-        if threat != PROP_TARGET_NONE {
+        let sees = if threat != PROP_TARGET_NONE {
+            new_enemy = idle || PROP_AI_TARGET[pi] != threat;
             PROP_AI_TARGET[pi] = threat;
             PROP_AI_TIMER[pi] = SCIENTIST_FEAR_TICKS;
-        }
+            true
+        } else if PROP_AI_TARGET[pi] == PROP_TARGET_PLAYER && !idle {
+            // An attacking player: in sight while the line to his eye is clear.
+            let eye = [PROP_POS[pi][0], PROP_POS[pi][1] + 64, PROP_POS[pi][2]];
+            actor_line_clear(
+                m,
+                sight_movers,
+                eye,
+                [player_pos[0], player_pos[1] + VIEW_HEIGHT, player_pos[2]],
+            )
+        } else {
+            false
+        };
+        prop_ai_set_target_visible(pi, sees);
+    }
+    // A hit or a nearby shot (PROP_AI_TIMER set elsewhere) frightens a calm scientist too.
+    if idle && PROP_AI_TIMER[pi] > 0 && PROP_AI_TARGET[pi] != PROP_TARGET_NONE {
+        new_enemy = true;
     }
 
     let remembered = PROP_AI_TARGET[pi];
-    let flee_from = if PROP_AI_TIMER[pi] > 0 {
+    let flee_from = if PROP_AI_TIMER[pi] > 0 || !idle {
         target_org(remembered, player_pos, nprops)
     } else {
         None
     };
-    if let Some(threat_pos) = flee_from {
-        let pos = PROP_POS[pi];
-        let mut dx = pos[0] - threat_pos[0];
-        let dz = pos[2] - threat_pos[2];
-        if dx == 0 && dz == 0 {
-            dx = 1;
-        }
-        // Slew toward the away-heading like every other actor (M40) instead of
-        // snapping -- a fleeing scientist was still teleport-rotating.
-        let yaw = turn_toward(
-            prop_yaw_value(PROP_YAW[pi]),
-            yaw_from_vec(dx, dz),
-            senses::turn_rate_q12(PROP_KIND[pi]),
+    // CScientist cowers from bits_SOUND_COMBAT and _DANGER: the fight noises.
+    let heard = flee_from.is_none()
+        && fear.phase == scientist_logic::FearPhase::None
+        && fear.calm >= scientist_logic::STARTLE_EVERY
+        && (*core::ptr::addr_of!(SOUNDS))
+            .heard([PROP_POS[pi][0], PROP_POS[pi][1] + 64, PROP_POS[pi][2]])
+            .is_some();
+    let roll = impact_rng().below(u16::MAX as u32) as u16;
+    let next = scientist_logic::fear_step(
+        fear,
+        flee_from.is_some(),
+        new_enemy,
+        prop_ai_target_visible(pi),
+        heard,
+        roll,
+    );
+    SCI_FEAR[pi] = next;
+    #[cfg(feature = "interaction-probe")]
+    if next.phase != fear.phase {
+        reference_trace::probe_vals(
+            SIM_NOW as u32,
+            "fear",
+            &[
+                pi as i32,
+                next.phase as i32,
+                next.wait as i32,
+                remembered as i32,
+                flee_from.is_some() as i32,
+            ],
         );
-        PROP_YAW[pi] = prop_with_yaw(PROP_YAW[pi], yaw);
-        PROP_STATE[pi] = PROP_STATE_MOVE;
-        if !prop_try_step(m, movers, pi, dx, dz, SCIENTIST_FLEE_SPEED, true) {
-            if let Some(goal) = nav_flee_goal(m, threat_pos, pos) {
-                prop_move_towards_point(m, movers, pi, goal, SCIENTIST_FLEE_SPEED);
-            }
+    }
+    if next.phase == scientist_logic::FearPhase::Startle {
+        if next.ticks == 0 && scientist_logic::startle_screams(roll) {
+            setpiece_sfx::play(hl_format::setpiece_audio::SCI_SCREAM, PROP_POS[pi]);
         }
-        if PROP_AI_TIMER[pi] > 0 {
-            PROP_AI_TIMER[pi] -= 1;
-        }
-        if PROP_AI_TIMER[pi] == 0 {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return;
+    }
+    if matches!(
+        next.phase,
+        scientist_logic::FearPhase::None | scientist_logic::FearPhase::Stand
+    ) {
+        // Forgotten, or the enemy is gone.
+        if !idle {
+            PROP_AI_TIMER[pi] = 0;
             PROP_AI_TARGET[pi] = PROP_TARGET_NONE;
         }
+    }
+    if next.phase == scientist_logic::FearPhase::Stand {
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        return;
+    }
+    if let (Some(threat_pos), scientist_logic::FearPhase::Fear | scientist_logic::FearPhase::Hide) =
+        (flee_from, next.phase)
+    {
+        // slFear faces the enemy; the hide turns 179 degrees from the run, toward it.
+        PROP_STATE[pi] = PROP_STATE_IDLE;
+        PROP_AI_TIMER[pi] = PROP_AI_TIMER[pi].max(1);
+        prop_face_point(pi, threat_pos);
+        return;
+    }
+    if let (Some(threat_pos), scientist_logic::FearPhase::Cover) = (flee_from, next.phase) {
+        PROP_AI_TIMER[pi] = PROP_AI_TIMER[pi].max(1);
+        prop_run_from(m, movers, pi, threat_pos, scientist_logic::COVER_SPEED);
         return;
     }
     // The remembered threat can die while the fear timer is active. Do not
@@ -21223,6 +21407,7 @@ unsafe fn init_prop_state(m: &Map, map_index: usize, standalone_launch: bool) {
         PROP_HIT_FLASH[i] = 0;
         PROP_POSE_VARIANT[i] = 0;
         PROP_FADING[i] = 0;
+        SCI_FEAR[i] = scientist_logic::Fear::NONE;
         species::SQUID_MEAL[i] = squid_meal::Meal::NONE;
         PROP_DEATH_START[i] = 0;
         PROP_OCC_VIS[i] = PROP_OCC_VISIBLE | PROP_OCC_DIRTY;
